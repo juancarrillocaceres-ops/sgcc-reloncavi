@@ -54,9 +54,12 @@ const getTaskStatus = (fecha) => {
   return { status: 'safe', bgClass: 'bg-emerald-100 text-emerald-800', textClass: 'text-emerald-600', showWarning: false };
 };
 
-const generateTextWithRetry = async (prompt, systemInstruction = "", retries = 5) => {
+// --- ACTUALIZADO: REPARACIÓN IA PARA SOPORTAR ARCHIVOS (PDF) Y TEXTO ---
+const generateTextWithRetry = async (prompt, systemInstruction = "", inlineData = null, retries = 5) => {
   const delays = [1000, 2000, 4000, 8000, 16000];
-  const payload = { contents: [{ parts: [{ text: prompt }] }] };
+  const parts = [{ text: prompt }];
+  if (inlineData) parts.push({ inlineData });
+  const payload = { contents: [{ parts }] };
   if (systemInstruction) payload.systemInstruction = { parts: [{ text: systemInstruction }] };
   for (let i = 0; i < retries; i++) {
     try {
@@ -66,7 +69,11 @@ const generateTextWithRetry = async (prompt, systemInstruction = "", retries = 5
       );
       if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
       const result = await response.json();
-      return result.candidates[0].content.parts[0].text;
+      if (result.candidates && result.candidates[0].content.parts[0].text) {
+        return result.candidates[0].content.parts[0].text;
+      } else {
+        throw new Error("No text returned from AI");
+      }
     } catch (error) {
       if (i === retries - 1) throw error;
       await new Promise(res => setTimeout(res, delays[i]));
@@ -323,17 +330,32 @@ export default function App() {
     setIsAuditModalOpen(false);
   };
 
+  // --- ACTUALIZADO: LECTURA EN BASE64 PARA IA ---
   const handlePdfUploadForAI = async (e) => {
     const file = e.target.files[0];
     if (!file) return;
     setIsDigitizing(true);
-    const prompt = `Actúa como auditor. Extrae los criterios a evaluar del documento "${file.name}". Devuelve ÚNICAMENTE los criterios encontrados, uno por línea, listos para un checklist de Sí/No.`;
-    try {
-      const result = await generateTextWithRetry(prompt);
-      const criteriosGenerados = result.split('\n').map(c => c.trim().replace(/^[-*•\d.)]+\s*/, '')).filter(c => c.length > 2);
-      setTemplateForm({...templateForm, nombre: `Evaluación: ${file.name}`, criterios: [...templateForm.criterios.filter(c=>c!==''), ...criteriosGenerados]});
-      alert(`¡Documento procesado!`);
-    } catch (err) { alert("Error al procesar con IA."); } finally { setIsDigitizing(false); }
+    
+    const reader = new FileReader();
+    reader.onloadend = async () => {
+      const base64Data = reader.result.split(',')[1];
+      const inlineData = { mimeType: file.type, data: base64Data };
+      const prompt = `Actúa como auditor técnico en salud. Extrae los criterios a evaluar del documento adjunto. Devuelve ÚNICAMENTE los criterios encontrados, uno por línea, listos para un checklist de Sí/No. Omite toda introducción o conclusión.`;
+      
+      try {
+        const result = await generateTextWithRetry(prompt, "", inlineData);
+        const criteriosGenerados = result.split('\n').map(c => c.trim().replace(/^[-*•\d.)]+\s*/, '')).filter(c => c.length > 2);
+        setTemplateForm({...templateForm, nombre: `Evaluación: ${file.name}`, criterios: [...templateForm.criterios.filter(c=>c!==''), ...criteriosGenerados]});
+        alert(`¡Documento procesado correctamente!`);
+      } catch (err) { 
+        console.error(err);
+        alert("Error al procesar con IA. Asegúrate de que el documento sea legible (PDF)."); 
+      } finally { 
+        setIsDigitizing(false); 
+      }
+    };
+    reader.onerror = () => { alert("Error al leer el archivo."); setIsDigitizing(false); };
+    reader.readAsDataURL(file); // Inicia la lectura a Base64
   };
 
   const handleSaveDir = async () => {
@@ -578,7 +600,7 @@ export default function App() {
           </div>
         )}
 
-        {/* PESTAÑA 3: CASOS DE RED */}
+        {/* PESTAÑA 3: CASOS DE RED (ACTUALIZADO TAMAÑO DE FUENTES) */}
         {activeTab === 'cases' && (
           <div className="space-y-6 animate-in fade-in mt-12 md:mt-0">
             <div className="flex flex-col md:flex-row justify-between items-start md:items-end gap-4">
@@ -589,24 +611,39 @@ export default function App() {
             <div className="bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden">
               <div className="overflow-x-auto">
                 <table className="w-full text-left border-collapse min-w-[800px]">
-                  <thead className="bg-slate-50 border-b border-slate-100"><tr className="text-[9px] font-black text-slate-400 uppercase tracking-[0.2em]"><th className="p-4">Paciente</th><th className="p-4">Ruta de Traslado</th><th className="p-4 text-center">Hitos Clínicos (A-B-C)</th><th className="p-4 text-center">Estado</th><th className="p-4 text-right">Acción</th></tr></thead>
+                  <thead className="bg-slate-50 border-b border-slate-100">
+                    <tr className="text-[10px] font-black text-slate-400 uppercase tracking-[0.2em]">
+                      <th className="p-4">Paciente</th>
+                      <th className="p-4">Ruta de Traslado</th>
+                      <th className="p-4 text-center">Hitos Clínicos (A-B-C)</th>
+                      <th className="p-4 text-center">Estado</th>
+                      <th className="p-4 text-right">Acción</th>
+                    </tr>
+                  </thead>
                   <tbody className="divide-y divide-slate-50">
                     {visibleCases.map(c => {
                       const daysC = diffInDays(c.fechaEgreso, c.fechaIngresoEfectivo);
                       const isOver = daysC !== null && daysC > targetDays;
                       return (
                         <tr key={c.id} className={`hover:bg-slate-50/80 transition-colors ${isOver ? 'bg-red-50/20' : ''}`}>
-                          <td className="p-4"><div className="font-black text-slate-800 text-xs uppercase">{c.nombre}</div><div className="text-[9px] font-bold text-slate-400 mt-1">{c.paciente}</div></td>
-                          <td className="p-4"><div className="text-[9px] font-black text-blue-600 bg-blue-50 px-2 py-1 rounded-lg w-fit flex items-center gap-1.5 uppercase tracking-widest border border-blue-100">{c.origen} <Timer size={10}/> {c.destino}</div></td>
+                          <td className="p-4">
+                            <div className="font-black text-slate-800 text-sm uppercase">{c.nombre}</div>
+                            <div className="text-[11px] font-bold text-slate-500 mt-1">{c.paciente}</div>
+                          </td>
+                          <td className="p-4">
+                            <div className="text-[10px] font-black text-blue-600 bg-blue-50 px-2.5 py-1.5 rounded-lg w-fit flex items-center gap-1.5 uppercase tracking-widest border border-blue-100">
+                              {c.origen} <Timer size={12}/> {c.destino}
+                            </div>
+                          </td>
                           <td className="p-4">
                             <div className="flex justify-center gap-6">
-                               <div className="text-center"><span className="text-[7px] font-black text-slate-300 block mb-0.5 uppercase tracking-tighter">EGRESO</span><span className="text-[10px] font-black text-slate-700">{c.fechaEgreso || '---'}</span></div>
-                               <div className="text-center border-l border-slate-100 pl-6"><span className="text-[7px] font-black text-indigo-300 block mb-0.5 uppercase tracking-tighter">RECEP</span><span className="text-[10px] font-black text-indigo-700">{c.fechaRecepcionRed || '---'}</span></div>
-                               <div className="text-center border-l border-slate-100 pl-6"><span className="text-[7px] font-black text-green-400 block mb-0.5 uppercase tracking-tighter">INGRESO</span><span className={`text-[10px] font-black ${isOver ? 'text-red-600' : 'text-green-600'}`}>{c.fechaIngresoEfectivo || '---'}</span></div>
+                               <div className="text-center"><span className="text-[9px] font-black text-slate-400 block mb-0.5 uppercase tracking-wider">EGRESO</span><span className="text-xs font-black text-slate-700">{c.fechaEgreso || '---'}</span></div>
+                               <div className="text-center border-l border-slate-100 pl-6"><span className="text-[9px] font-black text-indigo-400 block mb-0.5 uppercase tracking-wider">RECEP</span><span className="text-xs font-black text-indigo-700">{c.fechaRecepcionRed || '---'}</span></div>
+                               <div className="text-center border-l border-slate-100 pl-6"><span className="text-[9px] font-black text-green-500 block mb-0.5 uppercase tracking-wider">INGRESO</span><span className={`text-xs font-black ${isOver ? 'text-red-600' : 'text-green-600'}`}>{c.fechaIngresoEfectivo || '---'}</span></div>
                             </div>
                           </td>
                           <td className="p-4"><div className="flex justify-center"><StatusBadge status={c.estado}/></div></td>
-                          <td className="p-4 text-right"><button onClick={() => { setEditingCaseId(c.id); setCaseForm({ ...c, rut: c.paciente }); setIsCaseModalOpen(true); }} className="text-slate-400 hover:text-blue-600 bg-slate-50 hover:bg-blue-50 p-2 rounded-lg transition-all border border-slate-100 hover:border-blue-200"><Edit2 size={16}/></button></td>
+                          <td className="p-4 text-right"><button onClick={() => { setEditingCaseId(c.id); setCaseForm({ ...c, rut: c.paciente, tutor: c.tutor || {nombre:'', relacion:'', telefono:''}, referentes: c.referentes || [] }); setIsCaseModalOpen(true); }} className="text-slate-400 hover:text-blue-600 bg-slate-50 hover:bg-blue-50 p-2.5 rounded-lg transition-all border border-slate-100 hover:border-blue-200"><Edit2 size={18}/></button></td>
                         </tr>
                       );
                     })}
@@ -769,7 +806,7 @@ export default function App() {
 
       {/* ================= MODALES DE LA APLICACIÓN (COMPACTADOS Y CON TEXTAREAS) ================= */}
       
-      {/* 1. MODAL CASOS */}
+      {/* 1. MODAL CASOS (CON RED DE APOYO RESTAURADA) */}
       {isCaseModalOpen && (
         <div className="fixed inset-0 bg-[#0a2540]/90 backdrop-blur-sm flex items-center justify-center p-4 z-50 fade-in">
           <div className="bg-white rounded-3xl shadow-2xl w-full max-w-4xl max-h-[90vh] flex flex-col overflow-hidden border border-slate-200">
@@ -778,9 +815,9 @@ export default function App() {
               <div className="flex items-center gap-4 relative z-10"><div className="p-3 bg-white/20 rounded-xl backdrop-blur-sm border border-white/20"><FileIcon size={24}/></div><div><h3 className="font-black text-xl uppercase tracking-widest drop-shadow-md">{editingCaseId ? `${caseForm.nombre}` : 'Nuevo Seguimiento'}</h3><p className="text-[9px] font-black text-blue-200 uppercase tracking-[0.4em] mt-0.5">{editingCaseId || 'ASIGNANDO ID...'}</p></div></div>
               <button onClick={() => setIsCaseModalOpen(false)} className="text-white/60 hover:text-white font-bold text-3xl transition-colors relative z-10">&times;</button>
             </div>
-            <div className="flex bg-slate-50 border-b border-slate-200 shrink-0 px-6">
-              <button onClick={() => setActiveModalTab('datos')} className={`px-6 py-4 text-[9px] font-black uppercase tracking-[0.2em] border-b-4 transition-all ${activeModalTab === 'datos' ? 'border-blue-600 text-blue-600 bg-white shadow-inner' : 'border-transparent text-slate-400 hover:text-slate-600'}`}>1. Hitos Reales</button>
-              <button onClick={() => setActiveModalTab('bitacora')} className={`px-6 py-4 text-[9px] font-black uppercase tracking-[0.2em] border-b-4 transition-all ${activeModalTab === 'bitacora' ? 'border-blue-600 text-blue-600 bg-white shadow-inner' : 'border-transparent text-slate-400 hover:text-slate-600'}`}>2. Bitácora Clínica</button>
+            <div className="flex bg-slate-50 border-b border-slate-200 shrink-0 px-6 overflow-x-auto">
+              <button onClick={() => setActiveModalTab('datos')} className={`px-6 py-4 text-[9px] font-black uppercase tracking-[0.2em] border-b-4 transition-all whitespace-nowrap ${activeModalTab === 'datos' ? 'border-blue-600 text-blue-600 bg-white shadow-inner' : 'border-transparent text-slate-400 hover:text-slate-600'}`}>1. Hitos y Red de Apoyo</button>
+              <button onClick={() => setActiveModalTab('bitacora')} className={`px-6 py-4 text-[9px] font-black uppercase tracking-[0.2em] border-b-4 transition-all whitespace-nowrap ${activeModalTab === 'bitacora' ? 'border-blue-600 text-blue-600 bg-white shadow-inner' : 'border-transparent text-slate-400 hover:text-slate-600'}`}>2. Bitácora Clínica</button>
             </div>
             
             <div className="p-6 md:p-8 overflow-y-auto flex-1 bg-white">
@@ -818,6 +855,36 @@ export default function App() {
                       <div className="mt-2"><label className="text-[9px] font-black text-slate-400 uppercase tracking-widest">Dispositivo Receptor (Destino)</label><select value={caseForm.destino} onChange={e=>setCaseForm({...caseForm, destino: e.target.value})} className="w-full border-b-2 border-slate-100 py-2 outline-none focus:border-blue-500 font-black text-xs text-slate-700 bg-transparent transition-colors cursor-pointer mt-1"><option value="">Seleccione...</option>{centros.map(c => <option key={c} value={c}>{c}</option>)}</select></div>
                     </div>
                   </div>
+
+                  {/* NUEVO: SECCIÓN RED DE APOYO Y REFERENTES RESTAURADA */}
+                  <div className="space-y-4 border-t-2 border-slate-100 pt-6">
+                    <h4 className="text-[10px] font-black text-slate-400 uppercase tracking-widest border-b-2 border-slate-100 pb-2">Red de Apoyo y Referentes</h4>
+                    
+                    {/* Tutor Legal */}
+                    <div className="bg-slate-50 p-5 rounded-xl border border-slate-200 shadow-sm">
+                       <h5 className="text-[10px] font-black text-slate-600 uppercase tracking-widest mb-3 flex items-center gap-2"><User size={14}/> Tutor Legal / Familiar Responsable</h5>
+                       <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                          <div><label className="text-[9px] font-black text-slate-400 uppercase tracking-widest">Nombre</label><input type="text" value={caseForm.tutor?.nombre || ''} onChange={e=>setCaseForm({...caseForm, tutor: {...caseForm.tutor, nombre: e.target.value}})} className="w-full border-b-2 border-slate-200 py-1.5 outline-none focus:border-blue-500 font-bold text-xs text-slate-700 bg-transparent transition-colors" placeholder="Ej: María Cáceres"/></div>
+                          <div><label className="text-[9px] font-black text-slate-400 uppercase tracking-widest">Relación / Parentesco</label><input type="text" value={caseForm.tutor?.relacion || ''} onChange={e=>setCaseForm({...caseForm, tutor: {...caseForm.tutor, relacion: e.target.value}})} className="w-full border-b-2 border-slate-200 py-1.5 outline-none focus:border-blue-500 font-bold text-xs text-slate-700 bg-transparent transition-colors" placeholder="Ej: Madre"/></div>
+                          <div><label className="text-[9px] font-black text-slate-400 uppercase tracking-widest">Teléfono de Contacto</label><input type="text" value={caseForm.tutor?.telefono || ''} onChange={e=>setCaseForm({...caseForm, tutor: {...caseForm.tutor, telefono: e.target.value}})} className="w-full border-b-2 border-slate-200 py-1.5 outline-none focus:border-blue-500 font-bold text-xs text-slate-700 bg-transparent transition-colors" placeholder="+56 9..."/></div>
+                       </div>
+                    </div>
+
+                    {/* Referentes Institucionales */}
+                    <div className="bg-indigo-50/50 p-5 rounded-xl border border-indigo-100 shadow-sm">
+                       <h5 className="text-[10px] font-black text-indigo-800 uppercase tracking-widest mb-3 flex items-center gap-2"><BookOpen size={14}/> Referentes Institucionales y Clínicos</h5>
+                       {caseForm.referentes?.map((ref, idx) => (
+                          <div key={idx} className="flex flex-col md:flex-row gap-3 mb-4 items-end bg-white p-3 rounded-lg border border-indigo-50 shadow-sm">
+                             <div className="flex-1 w-full"><label className="text-[9px] font-black text-slate-400 uppercase tracking-widest">Nombre y Cargo</label><input type="text" value={ref.nombre} onChange={e=>{const newRefs=[...caseForm.referentes]; newRefs[idx].nombre=e.target.value; setCaseForm({...caseForm, referentes: newRefs});}} className="w-full border-b-2 border-indigo-100 py-1.5 outline-none focus:border-indigo-500 font-bold text-xs text-slate-700 bg-transparent transition-colors" placeholder="Ej: Ps. Andrea Silva"/></div>
+                             <div className="flex-1 w-full"><label className="text-[9px] font-black text-slate-400 uppercase tracking-widest">Dispositivo</label><input type="text" value={ref.dispositivo} onChange={e=>{const newRefs=[...caseForm.referentes]; newRefs[idx].dispositivo=e.target.value; setCaseForm({...caseForm, referentes: newRefs});}} className="w-full border-b-2 border-indigo-100 py-1.5 outline-none focus:border-indigo-500 font-bold text-xs text-slate-700 bg-transparent transition-colors" placeholder="Ej: COSAM Puerto Montt"/></div>
+                             <div className="flex-1 w-full"><label className="text-[9px] font-black text-slate-400 uppercase tracking-widest">Contacto</label><input type="text" value={ref.contacto} onChange={e=>{const newRefs=[...caseForm.referentes]; newRefs[idx].contacto=e.target.value; setCaseForm({...caseForm, referentes: newRefs});}} className="w-full border-b-2 border-indigo-100 py-1.5 outline-none focus:border-indigo-500 font-bold text-xs text-slate-700 bg-transparent transition-colors" placeholder="Teléfono o correo..."/></div>
+                             <button onClick={()=>{const newRefs=[...caseForm.referentes]; newRefs.splice(idx,1); setCaseForm({...caseForm, referentes: newRefs});}} className="p-2 text-slate-400 hover:text-red-500 bg-slate-50 rounded-lg shadow-sm border border-slate-100 transition-colors mb-1"><Trash2 size={14}/></button>
+                          </div>
+                       ))}
+                       <button onClick={()=>setCaseForm({...caseForm, referentes: [...(caseForm.referentes||[]), {nombre:'', dispositivo:'', contacto:''}]})} className="text-[9px] font-black text-indigo-600 uppercase tracking-widest flex items-center gap-1 mt-2 hover:text-indigo-800 transition-colors bg-indigo-100 px-3 py-1.5 rounded-lg w-fit"><Plus size={12}/> Añadir Referente de Red</button>
+                    </div>
+                  </div>
+
                 </div>
               )}
               {activeModalTab === 'bitacora' && (
@@ -828,7 +895,7 @@ export default function App() {
                       <div className="flex flex-col gap-1.5"><label className="text-[8px] font-black text-slate-400 uppercase tracking-widest">Tipo</label><select value={newBitacoraEntry.tipo} onChange={e=>setNewBitacoraEntry({...newBitacoraEntry, tipo: e.target.value})} className="border-2 border-white p-3 rounded-xl text-xs font-black uppercase tracking-widest shadow-sm outline-none focus:border-blue-300 cursor-pointer"><option value="Nota">📝 Nota Adm.</option><option value="Intervención">🗣️ Intervención</option><option value="Tarea">🎯 Tarea Enlace</option></select></div>
                       <div className="flex flex-col gap-1.5"><label className="text-[8px] font-black text-slate-400 uppercase tracking-widest">Responsable</label><input type="text" value={newBitacoraEntry.responsable} onChange={e=>setNewBitacoraEntry({...newBitacoraEntry, responsable: e.target.value})} className="border-2 border-white p-3 rounded-xl text-xs font-black shadow-sm outline-none focus:border-blue-300" placeholder="Ej: Ps. Silva" /></div>
                       
-                      {/* TEXTAREA REEMPLAZANDO INPUT PARA MEJOR ESCRITURA */}
+                      {/* TEXTAREA PARA MULTILINEAS */}
                       <div className="flex flex-col gap-1.5 md:col-span-2">
                         <label className="text-[8px] font-black text-slate-400 uppercase tracking-widest">Descripción / Acuerdos</label>
                         <textarea rows="2" value={newBitacoraEntry.descripcion} onChange={e=>setNewBitacoraEntry({...newBitacoraEntry, descripcion: e.target.value})} className="border-2 border-white p-3 rounded-xl text-xs font-medium shadow-sm outline-none focus:border-blue-300 resize-y" placeholder="Detalle de la acción... (Presiona Enter para nuevo párrafo)" />
