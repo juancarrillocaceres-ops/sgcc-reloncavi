@@ -6,7 +6,7 @@ import {
   LayoutDashboard, Users, FileText, AlertTriangle, CheckCircle, Clock, Plus, Activity, LogOut,
   Bell, Copy, Loader2, Edit2, Trash2, ListTodo, MessageSquare, CheckSquare, Square, Calendar,
   UploadCloud, Paperclip, File as FileIcon, Lock, User, ClipboardCheck, BookOpen, Download,
-  Wand2, Settings, UserPlus, Shield, Key, Timer, TrendingUp, BarChart3, Target, Printer
+  Wand2, Settings, UserPlus, Shield, Key, Timer, TrendingUp, BarChart3, Target, Printer, Search
 } from 'lucide-react';
 
 const firebaseConfig = typeof __firebase_config !== 'undefined' ? JSON.parse(__firebase_config) : {
@@ -24,14 +24,10 @@ const auth = getAuth(app);
 const db = getFirestore(app);
 const appId = typeof __app_id !== 'undefined' ? __app_id : "sgcc-reloncavi-v1";
 
-// --- UTILIDADES DE BLINDAJE ---
+// --- UTILIDADES ---
 const safeArr = (arr) => Array.isArray(arr) ? arr : [];
 const safeStr = (str) => (str !== null && str !== undefined) ? String(str) : '';
-
-const diffInDays = (d1, d2) => {
-  if (!d1 || !d2) return null;
-  return Math.ceil(Math.abs(new Date(d2) - new Date(d1)) / (1000 * 60 * 60 * 24));
-};
+const diffInDays = (d1, d2) => (!d1 || !d2) ? null : Math.ceil(Math.abs(new Date(d2) - new Date(d1)) / (1000 * 60 * 60 * 24));
 
 const getTaskStatus = (fecha) => {
   if (!fecha || typeof fecha !== 'string' || !fecha.includes('-')) return { status: 'none', bgClass: 'bg-slate-100 text-slate-700', showWarning: false };
@@ -56,7 +52,6 @@ const generateTextWithRetry = async (apiKey, prompt, sys = "", inlineData = null
   if (inlineData) parts.push({ inlineData });
   const payload = { contents: [{ parts }] };
   if (sys) payload.systemInstruction = { parts: [{ text: sys }] };
-  
   for (let i = 0; i < 5; i++) {
     try {
       const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${apiKey}`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) });
@@ -72,35 +67,17 @@ const generateTextWithRetry = async (apiKey, prompt, sys = "", inlineData = null
 };
 
 // --- COMPONENTES UI REUTILIZABLES ---
-const clsInp = "w-full border-2 border-slate-200 p-3 rounded-xl text-sm font-bold outline-none focus:border-blue-500 bg-white shadow-sm transition-colors";
+const clsInp = "w-full border-2 border-slate-200 p-3 rounded-xl text-sm font-bold outline-none focus:border-blue-500 bg-white transition-colors";
 const clsLbl = "block text-[10px] font-black text-slate-500 uppercase tracking-widest mb-1.5";
-const clsBtnP = "bg-blue-600 text-white px-5 py-3 rounded-xl text-[10px] font-black uppercase tracking-widest hover:bg-blue-700 shadow-md transition-all disabled:opacity-50 flex items-center justify-center gap-2 cursor-pointer";
-const clsBtnS = "px-5 py-3 text-slate-500 font-bold text-xs uppercase tracking-widest hover:bg-slate-200 bg-slate-100 rounded-xl transition-colors cursor-pointer";
-
+const clsBtnP = "bg-blue-600 text-white px-5 py-3 rounded-xl text-[10px] font-black uppercase tracking-widest hover:bg-blue-700 shadow-md transition-all disabled:opacity-50 flex items-center justify-center gap-2";
+const clsBtnS = "px-5 py-3 text-slate-500 font-bold text-xs uppercase tracking-widest hover:bg-slate-200 bg-slate-100 rounded-xl transition-colors";
 const Inp = (p) => <input {...p} className={`${clsInp} ${p.className||''}`} />;
 const Txt = (p) => <textarea {...p} className={`${clsInp} resize-y ${p.className||''}`} />;
 const Sel = (p) => <select {...p} className={`${clsInp} ${p.className||''}`}>{p.children}</select>;
 const Lbl = (p) => <label className={`${clsLbl} ${p.className||''}`}>{p.children}</label>;
-
-const ModalHdr = ({ t, onClose, icon: Icon }) => (
-  <div className="bg-slate-800 p-5 text-white flex justify-between items-center shrink-0">
-    <h3 className="font-black text-lg uppercase tracking-widest flex items-center gap-2">{Icon && <Icon size={20}/>} {t}</h3>
-    <button onClick={onClose} className="text-white/60 hover:text-white font-bold text-3xl cursor-pointer">&times;</button>
-  </div>
-);
-const ModalFtr = ({ onCancel, onSave, saveTxt, disableSave }) => (
-  <div className="bg-slate-50 p-5 border-t border-slate-200 flex justify-end gap-3 shrink-0">
-    <button onClick={onCancel} className={clsBtnS}>Cancelar</button>
-    <button onClick={onSave} disabled={disableSave} className={clsBtnP}>{saveTxt || 'Guardar'}</button>
-  </div>
-);
-const ModalWrap = ({ isOpen, children, mw }) => isOpen ? (
-  <div className="fixed inset-0 bg-[#0a2540]/90 backdrop-blur-sm flex items-center justify-center p-4 z-50 fade-in no-print">
-    <div className={`bg-white rounded-3xl shadow-2xl w-full flex flex-col overflow-hidden border border-slate-200 max-h-[90vh] ${mw || 'max-w-4xl'}`}>
-      {children}
-    </div>
-  </div>
-) : null;
+const ModalWrap = ({ isOpen, children, mw }) => isOpen ? (<div className="fixed inset-0 bg-[#0a2540]/90 backdrop-blur-sm flex items-center justify-center p-4 z-50 fade-in no-print"><div className={`bg-white rounded-3xl shadow-2xl w-full flex flex-col overflow-hidden border border-slate-200 max-h-[90vh] ${mw || 'max-w-4xl'}`}>{children}</div></div>) : null;
+const ModalHdr = ({ t, onClose, icon: Icon }) => (<div className="bg-slate-800 p-5 text-white flex justify-between items-center shrink-0"><h3 className="font-black text-lg uppercase tracking-widest flex items-center gap-2">{Icon && <Icon size={20}/>} {t}</h3><button onClick={onClose} className="text-white/60 hover:text-white font-bold text-3xl">&times;</button></div>);
+const ModalFtr = ({ onCancel, onSave, saveTxt, disableSave }) => (<div className="bg-slate-50 p-5 border-t border-slate-200 flex justify-end gap-3 shrink-0"><button onClick={onCancel} className={clsBtnS}>Cancelar</button><button onClick={onSave} disabled={disableSave} className={clsBtnP}>{saveTxt || 'Guardar'}</button></div>);
 
 export default function App() {
   const [firebaseUser, setFirebaseUser] = useState(null);
@@ -139,16 +116,19 @@ export default function App() {
   const [isAuditModalOpen, setIsAuditModalOpen] = useState(false);
   const [isTemplateModalOpen, setIsTemplateModalOpen] = useState(false);
   const [editingTemplateId, setEditingTemplateId] = useState(null);
-  
   const [auditForm, setAuditForm] = useState({ centro: '', templateId: '', headerAnswers: {}, answers: {}, tipo: 'Auditoría', observaciones: '', fecha: new Date().toISOString().split('T')[0], estadoManual: '' });
   const [templateForm, setTemplateForm] = useState({ nombre: '', metodoCalculo: 'Suma Automática', instruccionesDiagnostico: '', encabezados: [{ id: 'enc_1', label: 'Centro Evaluado', type: 'text' }, { id: 'enc_2', label: 'Fecha', type: 'date' }], criterios: [{ id: 'crit_1', pregunta: '', opciones: 'SÍ=1, NO=0' }], rangos: [], tipo: 'Ambos' });
   
   const [printingAudit, setPrintingAudit] = useState(null);
   const [rawTextForAI, setRawTextForAI] = useState('');
+  
+  // FILTROS
   const [centroFilterAuditorias, setCentroFilterAuditorias] = useState('Todos');
   const [centroFilterConsultorias, setCentroFilterConsultorias] = useState('Todos');
+  const [caseFilterCentro, setCaseFilterCentro] = useState('Todos');
+  const [caseSearch, setCaseSearch] = useState('');
+  
   const [isDigitizing, setIsDigitizing] = useState(false);
-
   const [isDirModalOpen, setIsDirModalOpen] = useState(false);
   const [editingDirId, setEditingDirId] = useState(null);
   const [dirForm, setDirForm] = useState({ nombre: '', cargo: '', institucion: '', telefono: '', correo: '' });
@@ -181,16 +161,16 @@ export default function App() {
 
   useEffect(() => {
     if (!firebaseUser) return;
-    const unsubCases = onSnapshot(collection(db, 'artifacts', appId, 'public', 'data', 'cases'), snap => setCases(safeArr(snap.docs.map(d => d.data()))), console.error);
-    const unsubDocs = onSnapshot(collection(db, 'artifacts', appId, 'public', 'data', 'docs'), snap => setDocs(safeArr(snap.docs.map(d => d.data()))), console.error);
-    const unsubAudits = onSnapshot(collection(db, 'artifacts', appId, 'public', 'data', 'audits'), snap => setAudits(safeArr(snap.docs.map(d => d.data()))), console.error);
-    const unsubTemplates = onSnapshot(collection(db, 'artifacts', appId, 'public', 'data', 'auditTemplates'), snap => setAuditTemplates(safeArr(snap.docs.map(d => d.data()))), console.error);
-    const unsubDir = onSnapshot(collection(db, 'artifacts', appId, 'public', 'data', 'directory'), snap => setDirectory(safeArr(snap.docs.map(d => d.data()))), console.error);
-    const unsubUsers = onSnapshot(collection(db, 'artifacts', appId, 'public', 'data', 'users'), snap => setUsers(safeArr(snap.docs.map(d => d.data()))), console.error);
-    const unsubCentros = onSnapshot(doc(db, 'artifacts', appId, 'public', 'data', 'settings', 'centros'), snap => { if (snap.exists() && safeArr(snap.data().list).length > 0) setCentros(snap.data().list); }, console.error);
+    const unsubCases = onSnapshot(collection(db, 'artifacts', appId, 'public', 'data', 'cases'), snap => setCases(safeArr(snap.docs.map(d => d.data()))));
+    const unsubDocs = onSnapshot(collection(db, 'artifacts', appId, 'public', 'data', 'docs'), snap => setDocs(safeArr(snap.docs.map(d => d.data()))));
+    const unsubAudits = onSnapshot(collection(db, 'artifacts', appId, 'public', 'data', 'audits'), snap => setAudits(safeArr(snap.docs.map(d => d.data()))));
+    const unsubTemplates = onSnapshot(collection(db, 'artifacts', appId, 'public', 'data', 'auditTemplates'), snap => setAuditTemplates(safeArr(snap.docs.map(d => d.data()))));
+    const unsubDir = onSnapshot(collection(db, 'artifacts', appId, 'public', 'data', 'directory'), snap => setDirectory(safeArr(snap.docs.map(d => d.data()))));
+    const unsubUsers = onSnapshot(collection(db, 'artifacts', appId, 'public', 'data', 'users'), snap => setUsers(safeArr(snap.docs.map(d => d.data()))));
+    const unsubCentros = onSnapshot(doc(db, 'artifacts', appId, 'public', 'data', 'settings', 'centros'), snap => { if (snap.exists() && safeArr(snap.data().list).length > 0) setCentros(snap.data().list); });
     const unsubConfig = onSnapshot(doc(db, 'artifacts', appId, 'public', 'data', 'settings', 'config'), snap => { 
       if (snap.exists()) { const data = snap.data(); setAppConfig({ targetDays: 7, plazos: {}, ...data }); if (data?.apiKey) setApiConfigKey(data.apiKey); } 
-    }, console.error);
+    });
 
     return () => { unsubCases(); unsubDocs(); unsubAudits(); unsubTemplates(); unsubDir(); unsubUsers(); unsubCentros(); unsubConfig(); };
   }, [firebaseUser]);
@@ -205,10 +185,21 @@ export default function App() {
   };
 
   const visibleCases = useMemo(() => {
-    if (currentUser?.rol === 'Admin') return safeArr(cases);
-    const assigned = safeArr(currentUser?.centrosAsignados);
-    return safeArr(cases).filter(c => assigned.includes(c.origen) || assigned.includes(c.destino));
+    let arr = safeArr(cases);
+    if (currentUser?.rol !== 'Admin') {
+      const assigned = safeArr(currentUser?.centrosAsignados);
+      arr = arr.filter(c => assigned.includes(c.origen) || assigned.includes(c.destino));
+    }
+    return arr;
   }, [cases, currentUser]);
+
+  const filteredCases = useMemo(() => {
+    return visibleCases.filter(c => {
+      const mC = caseFilterCentro === 'Todos' || c.origen === caseFilterCentro || c.destino === caseFilterCentro;
+      const mS = c.nombre.toLowerCase().includes(caseSearch.toLowerCase()) || c.paciente.includes(caseSearch);
+      return mC && mS;
+    });
+  }, [visibleCases, caseFilterCentro, caseSearch]);
 
   const visibleAudits = useMemo(() => {
     if (currentUser?.rol === 'Admin') return safeArr(audits);
@@ -226,19 +217,14 @@ export default function App() {
 
   const tareasCriticas = allPendingTasks.filter(t => getTaskStatus(t.fechaCumplimiento).status === 'upcoming' || getTaskStatus(t.fechaCumplimiento).status === 'overdue').length;
 
-  const notifications = useMemo(() => {
-    return [
+  const notifications = useMemo(() => [
       ...alertCases.map(c => ({ id: `alert-${c.id}`, type: 'alerta', title: 'Pérdida de Enlace', desc: `Paciente ${c.nombre} no se ha presentado.` })),
-      ...allPendingTasks.filter(t => getTaskStatus(t.fechaCumplimiento).status !== 'safe').map(t => {
-         const s = getTaskStatus(t.fechaCumplimiento);
-         return { id: `task-${t.id}`, type: s.status, title: s.status === 'overdue' ? 'Tarea Vencida' : 'Pronta a Vencer', desc: `(${t.parentName}) ${t.descripcion}` };
-      })
-    ];
-  }, [alertCases, allPendingTasks]);
+      ...allPendingTasks.filter(t => getTaskStatus(t.fechaCumplimiento).status !== 'safe').map(t => ({ id: `task-${t.id}`, type: getTaskStatus(t.fechaCumplimiento).status, title: getTaskStatus(t.fechaCumplimiento).status === 'overdue' ? 'Tarea Vencida' : 'Pronta a Vencer', desc: `(${t.parentName}) ${t.descripcion}` }))
+  ], [alertCases, allPendingTasks]);
 
   const redMetrics = useMemo(() => {
     let sumEnlace = 0, countEnlace = 0, sumIngreso = 0, countIngreso = 0, alertCount = 0;
-    safeArr(visibleCases).forEach(c => {
+    visibleCases.forEach(c => {
       const enlaceDays = diffInDays(c.fechaEgreso, c.fechaRecepcionRed);
       const ingresoDays = diffInDays(c.fechaEgreso, c.fechaIngresoEfectivo);
       const currentTarget = getTargetDaysForCase(c.destino);
@@ -274,15 +260,18 @@ export default function App() {
   };
 
   const handleExportCSV = () => {
-    const headers = ['ID_Seguimiento', 'RUT', 'Paciente', 'Origen', 'Destino', 'Estado', 'Fecha_Egreso', 'Fecha_Recepcion', 'Fecha_Ingreso_Efectivo', 'Plazo_Meta_Especifico'];
-    const rows = visibleCases.map(c => {
+    const BOM = '\uFEFF';
+    const headers = ['ID_Seguimiento', 'RUT', 'Paciente', 'Edad', 'Origen', 'Destino', 'Estado', 'Fecha_Egreso', 'Fecha_Recepcion', 'Fecha_Ingreso_Efectivo', 'Plazo_Meta_Dias', 'Brecha_Dias', 'Ultimo_Hito_Fecha', 'Ultimo_Hito_Tipo', 'Responsable_Hito'];
+    const rows = filteredCases.map(c => {
        const target = getTargetDaysForCase(c.destino);
-       return [c.id, c.paciente, c.nombre, c.origen, c.destino, c.estado, c.fechaEgreso||'', c.fechaRecepcionRed||'', c.fechaIngresoEfectivo||'', target];
+       const brecha = diffInDays(c.fechaEgreso, c.fechaIngresoEfectivo);
+       const ultBit = safeArr(c.bitacora)[0] || {};
+       return [c.id, c.paciente, c.nombre, c.edad||'', c.origen, c.destino, c.estado, c.fechaEgreso||'', c.fechaRecepcionRed||'', c.fechaIngresoEfectivo||'', target, brecha||'', ultBit.fecha||'', ultBit.tipo||'', ultBit.responsable||''];
     });
-    const csvContent = [headers.join(','), ...rows.map(r => r.join(','))].join('\n');
+    const csvContent = BOM + [headers.join(';'), ...rows.map(r => r.join(';'))].join('\n');
     const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
     const link = document.createElement("a");
-    link.href = URL.createObjectURL(blob); link.download = `Reporte.csv`; link.click();
+    link.href = URL.createObjectURL(blob); link.download = `Reporte_Red_${new Date().toISOString().split('T')[0]}.csv`; link.click();
   };
 
   const copyToClipboard = (text) => { navigator.clipboard.writeText(text); alert("Copiado al portapapeles"); };
@@ -298,7 +287,7 @@ export default function App() {
   const extractFormFromAI = async (prompt, inlineData = null) => {
     if (!appConfig.apiKey) return alert("Falta configurar la Clave API de IA en Configuración.");
     setIsDigitizing(true);
-    const fullPrompt = `${prompt}\n\nERES UN ANALISTA CLÍNICO. Analiza el documento y devuelve ÚNICAMENTE un objeto JSON válido con este formato exacto:\n{ \n  "nombre": "TÍTULO COMPLETO DEL DOCUMENTO", \n  "metodoCalculo": "Elige 'Suma Automática' si se calcula sumando puntos, o 'Juicio Clínico' si requiere interpretación del profesional o es un árbol de decisión (Ej: Escala Columbia)", \n  "instruccionesDiagnostico": "Si elegiste Juicio Clínico, redacta cómo el evaluador debe interpretar las respuestas para dar el diagnóstico", \n  "encabezados": [ {"id": "enc_1", "label": "Nombre del campo (Ej: Servicio, Fecha)", "type": "text"} ], \n  "criterios": [ {"id": "crit_1", "pregunta": "Criterio", "opciones": "Estructura opciones con puntaje numérico. Ej: SÍ=1, NO=0. O escala: Siempre=3, A veces=2, Nunca=1"} ] \n}`;
+    const fullPrompt = `${prompt}\n\nERES UN ANALISTA CLÍNICO. Analiza el documento y devuelve ÚNICAMENTE un objeto JSON válido con este formato exacto:\n{ \n  "nombre": "TÍTULO COMPLETO DEL DOCUMENTO", \n  "metodoCalculo": "Elige 'Suma Automática' si se calcula sumando puntos, o 'Juicio Clínico' si requiere interpretación del profesional o es un árbol de decisión", \n  "instruccionesDiagnostico": "Si elegiste Juicio Clínico, redacta cómo el evaluador debe interpretar las respuestas para dar el diagnóstico", \n  "encabezados": [ {"id": "enc_1", "label": "Nombre del campo (Ej: Servicio, Fecha)", "type": "text"} ], \n  "criterios": [ {"id": "crit_1", "pregunta": "Criterio", "opciones": "Estructura opciones con puntaje numérico. Ej: SÍ=1, NO=0. O escala: Siempre=3, A veces=2, Nunca=1"} ] \n}`;
     try {
       const result = await generateTextWithRetry(appConfig.apiKey, fullPrompt, "", inlineData);
       const jsonMatch = result.match(/\{[\s\S]*\}/);
@@ -317,11 +306,7 @@ export default function App() {
     finally { setIsDigitizing(false); setRawTextForAI(''); }
   };
 
-  const handleProcessRawTextForAI = () => {
-    if (!rawTextForAI.trim()) return;
-    extractFormFromAI(`Analiza este texto correspondiente a un instrumento de evaluación: \n\n${rawTextForAI}`);
-  };
-
+  const handleProcessRawTextForAI = () => { if (!rawTextForAI.trim()) return; extractFormFromAI(`Analiza este texto correspondiente a un instrumento de evaluación: \n\n${rawTextForAI}`); };
   const handlePdfUploadForAI = (e) => {
     const file = e.target.files[0];
     if (!file) return;
@@ -511,7 +496,7 @@ export default function App() {
                  else if (rawAns === 'si') { label = 'SÍ'; val = 1; }
                  else if (rawAns === 'no') { label = 'NO'; val = 0; }
                  return (
-                 <tr key={i} className="border-b border-gray-200">
+                 <tr key={i} className="border-b border-gray-200 break-inside-avoid">
                    <td className="p-2 text-center border-r border-gray-200">{i+1}</td>
                    <td className="p-2 border-r border-gray-200 leading-tight">{String(c.pregunta)}</td>
                    <td className="p-2 text-center font-bold border-r border-gray-200">{String(label)}</td>
@@ -545,7 +530,14 @@ export default function App() {
     );
   }
 
-  // ================= LOGIN =================
+  // ================= NAVEGACIÓN Y RENDER =================
+  const NavBtn = ({ id, icon: Icon, label, group }) => (
+    <React.Fragment>
+      {group && <div className="pt-5 pb-2 px-4 text-[10px] font-black text-blue-400 uppercase tracking-widest">{group}</div>}
+      <button onClick={() => setActiveTab(id)} className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl text-xs font-bold uppercase tracking-widest transition-all ${activeTab === id ? 'bg-blue-600 shadow-lg' : 'hover:bg-white/5 opacity-80'}`}><Icon size={18}/> {label}</button>
+    </React.Fragment>
+  );
+
   if (!currentUser) return (
     <div className="min-h-screen bg-[#0a2540] flex items-center justify-center p-4">
       <div className="max-w-md w-full bg-white rounded-3xl shadow-2xl p-8 text-center">
@@ -564,7 +556,8 @@ export default function App() {
 
   return (
     <div className="min-h-screen bg-slate-50 flex flex-col md:flex-row font-sans print:hidden">
-      {/* SIDEBAR */}
+      
+      {/* SIDEBAR COMPRIMIDO */}
       <aside className="w-full md:w-64 bg-[#0a2540] text-white flex flex-col h-screen sticky top-0 shrink-0 shadow-xl overflow-y-auto">
         <div className="p-5 border-b border-white/5">
           <div className="flex items-start gap-3 mb-1">
@@ -576,20 +569,18 @@ export default function App() {
           </div>
         </div>
         <nav className="flex-1 p-3 space-y-1">
-          <button onClick={() => setActiveTab('dashboard')} className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl text-xs font-bold uppercase tracking-widest transition-all ${activeTab === 'dashboard' ? 'bg-blue-600 shadow-lg' : 'hover:bg-white/5 opacity-80'}`}><LayoutDashboard size={18}/> Panel Principal</button>
-          <button onClick={() => setActiveTab('stats')} className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl text-xs font-bold uppercase tracking-widest transition-all ${activeTab === 'stats' ? 'bg-blue-600 shadow-lg' : 'hover:bg-white/5 opacity-80'}`}><BarChart3 size={18}/> Plazos Meta</button>
-          <button onClick={() => setActiveTab('cases')} className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl text-xs font-bold uppercase tracking-widest transition-all ${activeTab === 'cases' ? 'bg-blue-600 shadow-lg' : 'hover:bg-white/5 opacity-80'}`}><Users size={18}/> Casos de Red</button>
-          <button onClick={() => setActiveTab('docs')} className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl text-xs font-bold uppercase tracking-widest transition-all ${activeTab === 'docs' ? 'bg-blue-600 shadow-lg' : 'hover:bg-white/5 opacity-80'}`}><FileText size={18}/> Protocolos</button>
-          <div className="pt-5 pb-2 px-4 text-[10px] font-black text-blue-400 uppercase tracking-widest">Evaluación y Red</div>
-          <button onClick={() => setActiveTab('auditorias')} className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl text-xs font-bold uppercase tracking-widest transition-all ${activeTab === 'auditorias' ? 'bg-blue-600 shadow-lg' : 'hover:bg-white/5 opacity-80'}`}><ClipboardCheck size={18}/> Auditorías</button>
-          <button onClick={() => setActiveTab('consultorias')} className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl text-xs font-bold uppercase tracking-widest transition-all ${activeTab === 'consultorias' ? 'bg-blue-600 shadow-lg' : 'hover:bg-white/5 opacity-80'}`}><MessageSquare size={18}/> Consultorías</button>
-          <button onClick={() => setActiveTab('dir')} className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl text-xs font-bold uppercase tracking-widest transition-all ${activeTab === 'dir' ? 'bg-blue-600 shadow-lg' : 'hover:bg-white/5 opacity-80'}`}><BookOpen size={18}/> Directorio</button>
+          <NavBtn id="dashboard" icon={LayoutDashboard} label="Panel Principal" />
+          <NavBtn id="stats" icon={BarChart3} label="Plazos Meta" />
+          <NavBtn id="cases" icon={Users} label="Casos de Red" />
+          <NavBtn id="docs" icon={FileText} label="Protocolos" />
+          <NavBtn id="auditorias" icon={ClipboardCheck} label="Auditorías" group="Evaluación y Red" />
+          <NavBtn id="consultorias" icon={MessageSquare} label="Consultorías" />
+          <NavBtn id="dir" icon={BookOpen} label="Directorio" />
           {currentUser?.rol === 'Admin' && (
-             <>
-               <div className="pt-5 pb-2 px-4 text-[10px] font-black text-blue-400 uppercase tracking-widest">Administración</div>
-               <button onClick={() => setActiveTab('users')} className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl text-xs font-bold uppercase tracking-widest transition-all ${activeTab === 'users' ? 'bg-blue-600 shadow-lg' : 'hover:bg-white/5 opacity-80'}`}><UserPlus size={18}/> Usuarios</button>
-               <button onClick={() => setActiveTab('config')} className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl text-xs font-bold uppercase tracking-widest transition-all ${activeTab === 'config' ? 'bg-blue-600 shadow-lg' : 'hover:bg-white/5 opacity-80'}`}><Settings size={18}/> Ajustes</button>
-             </>
+            <>
+              <NavBtn id="users" icon={UserPlus} label="Usuarios" group="Administración" />
+              <NavBtn id="config" icon={Settings} label="Ajustes" />
+            </>
           )}
         </nav>
         <div className="p-4 border-t border-white/5 shrink-0 bg-[#071c31]">
@@ -641,7 +632,7 @@ export default function App() {
                     <thead><tr className="bg-slate-50 text-xs font-bold uppercase tracking-wider text-slate-400"><th className="p-3 rounded-l-lg">ID</th><th className="p-3">Paciente</th><th className="p-3">Destino</th><th className="p-3 rounded-r-lg">Estado</th></tr></thead>
                     <tbody>
                       {alertCases.map(c => (<tr key={c.id} className="border-b border-slate-50"><td className="p-3 text-xs font-bold text-slate-500">{String(c.id)}</td><td className="p-3 text-sm font-bold text-slate-800">{String(c.nombre)}</td><td className="p-3 text-xs font-bold text-indigo-600">{String(c.destino)}</td><td className="p-3"><StatusBadge status={c.estado}/></td></tr>))}
-                      {alertCases.length === 0 && (<tr><td colSpan="4" className="p-6 text-center text-slate-400 font-bold text-xs uppercase tracking-widest">No hay alertas activas en tu red.</td></tr>)}
+                      {alertCases.length === 0 && (<tr><td colSpan="4" className="p-6 text-center text-slate-400 font-bold text-xs uppercase tracking-widest">No hay alertas activas.</td></tr>)}
                     </tbody>
                   </table>
                 </div>
@@ -693,7 +684,6 @@ export default function App() {
           <div className="space-y-6 animate-in fade-in mt-12 md:mt-0">
             <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
               <div><h2 className="text-2xl font-black text-slate-800 tracking-tight">Estadísticas y Plazos</h2><p className="text-xs text-slate-500 font-medium mt-1">Análisis de respuesta en red</p></div>
-              <button onClick={handleExportCSV} className="bg-emerald-600 text-white px-5 py-2.5 rounded-xl text-[10px] font-black uppercase tracking-widest flex items-center gap-2 hover:bg-emerald-700 shadow-md"><Download size={14}/> Exportar Excel</button>
             </div>
             <div className="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm">
                <h3 className="font-black text-slate-800 uppercase text-xs tracking-widest mb-4 flex items-center gap-2"><Target size={16} className="text-blue-600"/> Configuración de Plazos Meta</h3>
@@ -711,8 +701,8 @@ export default function App() {
                     <p className="text-[10px] text-blue-600 mb-4 font-medium">Asigna plazos distintos según la realidad del centro.</p>
                     {currentUser?.rol === 'Admin' && (
                       <div className="flex gap-2 mb-4">
-                        <input type="text" list="centros-list" value={plazoCentroInput} onChange={e=>setPlazoCentroInput(e.target.value)} placeholder="Centro..." className="flex-1 p-2.5 border border-white rounded-xl text-xs font-bold outline-none"/>
-                        <datalist id="centros-list">{safeArr(centros).map(c=><option key={c} value={c}/>)}</datalist>
+                        <input type="text" list="centros-list-plazos" value={plazoCentroInput} onChange={e=>setPlazoCentroInput(e.target.value)} placeholder="Centro..." className="flex-1 p-2.5 border border-white rounded-xl text-xs font-bold outline-none"/>
+                        <datalist id="centros-list-plazos">{safeArr(centros).map(c=><option key={c} value={c}/>)}</datalist>
                         <input type="number" placeholder="Días" value={plazoDaysInput} onChange={e=>setPlazoDaysInput(e.target.value)} className="w-20 p-2.5 border border-white rounded-xl text-xs font-bold text-center outline-none"/>
                         <button onClick={handleAddPlazoCentro} className="bg-blue-600 text-white p-2.5 rounded-xl hover:bg-blue-700"><Plus size={16}/></button>
                       </div>
@@ -745,13 +735,25 @@ export default function App() {
         {/* PESTAÑA 3: CASOS DE RED */}
         {activeTab === 'cases' && (
           <div className="space-y-6 animate-in fade-in mt-12 md:mt-0">
-            <div className="flex justify-between items-end"><div><h2 className="text-2xl font-black text-slate-800">Casos en Red</h2></div><button onClick={() => { setEditingCaseId(null); setCaseForm(defaultCaseState); setCaseSummary(''); setIsCaseModalOpen(true); }} className={clsBtnP}><Plus size={16}/> Nuevo Seguimiento</button></div>
+            <div className="flex flex-col md:flex-row justify-between items-start md:items-end gap-4">
+              <div><h2 className="text-2xl font-black text-slate-800">Gestor de Casos</h2></div>
+              <div className="flex gap-2">
+                <button onClick={handleExportCSV} className={clsBtnS + " bg-emerald-100 hover:bg-emerald-200 text-emerald-700"}><Download size={14} className="inline mr-1"/> Exportar Visibles</button>
+                <button onClick={() => { setEditingCaseId(null); setCaseForm(defaultCaseState); setCaseSummary(''); setIsCaseModalOpen(true); }} className={clsBtnP}><Plus size={16}/> Nuevo Seguimiento</button>
+              </div>
+            </div>
+            
+            <div className="bg-white p-4 rounded-xl shadow-sm border border-slate-200 flex gap-4 items-center">
+              <div className="flex-1"><Lbl>Buscar Paciente</Lbl><Inp value={caseSearch} onChange={e=>setCaseSearch(e.target.value)} placeholder="RUT o Nombre..." className="py-2" /></div>
+              <div className="w-64"><Lbl>Filtrar por Dispositivo (Origen/Destino)</Lbl><Sel value={caseFilterCentro} onChange={e=>setCaseFilterCentro(e.target.value)} className="py-2"><option value="Todos">Todos</option>{safeArr(centros).map(c=><option key={c} value={c}>{c}</option>)}</Sel></div>
+            </div>
+
             <div className="bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden">
               <div className="overflow-x-auto">
                 <table className="w-full text-left border-collapse min-w-[1000px]">
                   <thead className="bg-slate-50 border-b border-slate-100"><tr className="text-xs font-bold text-slate-500 uppercase tracking-wider"><th className="p-4">Paciente</th><th className="p-4">Ruta Traslado</th><th className="p-4 text-center">Hitos (A-B-C)</th><th className="p-4 text-center">Estado</th><th className="p-4 text-right">Acción</th></tr></thead>
                   <tbody className="divide-y divide-slate-50">
-                    {safeArr(visibleCases).map(c => {
+                    {filteredCases.map(c => {
                       const daysC = diffInDays(c.fechaEgreso, c.fechaIngresoEfectivo);
                       const target = getTargetDaysForCase(c.destino);
                       const isOver = daysC !== null && daysC > target;
@@ -761,11 +763,11 @@ export default function App() {
                           <td className="p-4"><div className="text-xs font-bold text-blue-700 bg-blue-50 px-3 py-1.5 rounded-lg w-fit flex items-center gap-2 border border-blue-100">{String(c.origen)} <Timer size={14}/> {String(c.destino)}</div></td>
                           <td className="p-4"><div className="flex justify-center gap-6"><div className="text-center"><span className="text-[10px] font-bold text-slate-400 block uppercase">Egreso</span><span className="text-sm font-bold text-slate-700">{String(c.fechaEgreso || '---')}</span></div><div className="text-center border-l pl-6"><span className="text-[10px] font-bold text-indigo-400 block uppercase">Recep</span><span className="text-sm font-bold text-indigo-700">{String(c.fechaRecepcionRed || '---')}</span></div><div className="text-center border-l pl-6"><span className="text-[10px] font-bold text-green-500 block uppercase">Ingreso</span><span className={`text-sm font-bold ${isOver ? 'text-red-600' : 'text-green-600'}`}>{String(c.fechaIngresoEfectivo || '---')}</span></div></div></td>
                           <td className="p-4"><div className="flex justify-center"><StatusBadge status={c.estado}/></div></td>
-                          <td className="p-4 text-right"><button onClick={() => { setEditingCaseId(c.id); setCaseForm({ ...c, rut: c.paciente, tutor: c.tutor || {nombre:'', relacion:'', telefono:''}, referentes: c.referentes || [], archivos: c.archivos || [], epicrisis: c.epicrisis || '' }); setCaseSummary(''); setIsCaseModalOpen(true); }} className="text-slate-400 hover:text-blue-600 bg-slate-50 p-2.5 rounded-lg border border-slate-100 hover:border-blue-200"><Edit2 size={18}/></button></td>
+                          <td className="p-4 text-right"><button onClick={() => { setEditingCaseId(c.id); setCaseForm({ ...c, rut: c.paciente, edad: c.edad||'', tutor: c.tutor || {nombre:'', relacion:'', telefono:''}, referentes: c.referentes || [], archivos: c.archivos || [], epicrisis: c.epicrisis || '' }); setCaseSummary(''); setIsCaseModalOpen(true); }} className="text-slate-400 hover:text-blue-600 bg-slate-50 p-2.5 rounded-lg border border-slate-100 hover:border-blue-200"><Edit2 size={18}/></button></td>
                         </tr>
                       );
                     })}
-                    {visibleCases.length === 0 && (<tr><td colSpan="5" className="p-12 text-center"><p className="text-slate-400 font-bold text-sm uppercase tracking-widest">No hay registros de seguimiento en la red</p></td></tr>)}
+                    {filteredCases.length === 0 && (<tr><td colSpan="5" className="p-12 text-center"><p className="text-slate-400 font-bold text-sm uppercase tracking-widest">No hay registros que coincidan.</p></td></tr>)}
                   </tbody>
                 </table>
               </div>
@@ -924,7 +926,7 @@ export default function App() {
         )}
       </main>
 
-      {/* ================= MODALES COMPLETOS ================= */}
+      {/* ================= MODALES ================= */}
       <ModalWrap isOpen={isCaseModalOpen}>
         <ModalHdr t={editingCaseId ? `Editar: ${caseForm.nombre}` : 'Nuevo Seguimiento'} onClose={()=>setIsCaseModalOpen(false)} icon={Users} />
         <div className="flex bg-slate-50 border-b shrink-0 px-6">
@@ -938,29 +940,21 @@ export default function App() {
                 <div className="grid grid-cols-2 gap-4">
                   <div><Lbl>RUT</Lbl><Inp type="text" value={caseForm.rut} onChange={e=>setCaseForm({...caseForm, rut: e.target.value})}/></div>
                   <div><Lbl>Nombre Paciente</Lbl><Inp type="text" value={caseForm.nombre} onChange={e=>setCaseForm({...caseForm, nombre: e.target.value})}/></div>
+                  <div><Lbl>Edad</Lbl><Inp type="number" value={caseForm.edad || ''} onChange={e=>setCaseForm({...caseForm, edad: e.target.value})} placeholder="Ej: 15" /></div>
+                  <div><Lbl>Estado</Lbl><Sel value={caseForm.estado} onChange={e=>setCaseForm({...caseForm, estado: e.target.value})}><option>Pendiente</option><option>Concretado</option><option>Alerta</option></Sel></div>
                   <div><Lbl>Fecha Egreso</Lbl><Inp type="date" value={caseForm.fechaEgreso} onChange={e=>setCaseForm({...caseForm, fechaEgreso: e.target.value})}/></div>
                   <div><Lbl>Ingreso Efectivo</Lbl><Inp type="date" value={caseForm.fechaIngresoEfectivo} onChange={e=>setCaseForm({...caseForm, fechaIngresoEfectivo: e.target.value})}/></div>
-                  <div><Lbl>Origen</Lbl><Sel value={caseForm.origen} onChange={e=>setCaseForm({...caseForm, origen: e.target.value})}><option value="">Origen...</option>{safeArr(centros).map(c => <option key={c} value={c}>{String(c)}</option>)}</Sel></div>
-                  <div><Lbl>Destino</Lbl><Sel value={caseForm.destino} onChange={e=>setCaseForm({...caseForm, destino: e.target.value})}><option value="">Destino...</option>{safeArr(centros).map(c => <option key={c} value={c}>{String(c)}</option>)}</Sel></div>
-                  <div className="col-span-2"><Lbl>Estado</Lbl><Sel value={caseForm.estado} onChange={e=>setCaseForm({...caseForm, estado: e.target.value})}><option>Pendiente</option><option>Concretado</option><option>Alerta</option></Sel></div>
-                </div>
-                <div className="mt-4 border-t pt-4">
-                  <Lbl>Tutor Legal / Familiar</Lbl>
-                  <div className="grid grid-cols-3 gap-2 mb-4">
-                    <Inp value={caseForm.tutor?.nombre||''} onChange={e=>setCaseForm({...caseForm, tutor: {...caseForm.tutor, nombre: e.target.value}})} placeholder="Nombre"/>
-                    <Inp value={caseForm.tutor?.relacion||''} onChange={e=>setCaseForm({...caseForm, tutor: {...caseForm.tutor, relacion: e.target.value}})} placeholder="Parentesco"/>
-                    <Inp value={caseForm.tutor?.telefono||''} onChange={e=>setCaseForm({...caseForm, tutor: {...caseForm.tutor, telefono: e.target.value}})} placeholder="Teléfono"/>
+                  
+                  {/* Origen y Destino HÍBRIDOS (Selector + Escritura manual) */}
+                  <div>
+                    <Lbl>Origen</Lbl>
+                    <Inp list="centros-list" value={caseForm.origen} onChange={e=>setCaseForm({...caseForm, origen: e.target.value})} placeholder="Escriba o seleccione..."/>
                   </div>
-                  <Lbl>Referentes Clínicos</Lbl>
-                  {safeArr(caseForm.referentes).map((ref, i) => (
-                     <div key={i} className="flex gap-2 mb-2">
-                       <Inp value={ref.nombre} onChange={e=>{const r=[...caseForm.referentes]; r[i].nombre=e.target.value; setCaseForm({...caseForm, referentes: r})}} placeholder="Nombre"/>
-                       <Inp value={ref.dispositivo} onChange={e=>{const r=[...caseForm.referentes]; r[i].dispositivo=e.target.value; setCaseForm({...caseForm, referentes: r})}} placeholder="Dispositivo"/>
-                       <Inp value={ref.contacto} onChange={e=>{const r=[...caseForm.referentes]; r[i].contacto=e.target.value; setCaseForm({...caseForm, referentes: r})}} placeholder="Contacto"/>
-                       <button onClick={()=>{const r=[...caseForm.referentes]; r.splice(i,1); setCaseForm({...caseForm, referentes: r})}} className="p-2 text-red-500 bg-red-50 rounded-xl"><Trash2 size={16}/></button>
-                     </div>
-                  ))}
-                  <button onClick={()=>setCaseForm({...caseForm, referentes: [...safeArr(caseForm.referentes), {nombre:'', dispositivo:'', contacto:''}]})} className="text-[10px] text-blue-600 font-black uppercase mt-2"><Plus size={12} className="inline"/> Añadir Referente</button>
+                  <div>
+                    <Lbl>Destino</Lbl>
+                    <Inp list="centros-list" value={caseForm.destino} onChange={e=>setCaseForm({...caseForm, destino: e.target.value})} placeholder="Escriba o seleccione..."/>
+                  </div>
+                  <datalist id="centros-list">{safeArr(centros).map(c => <option key={c} value={c} />)}</datalist>
                 </div>
               </div>
             )}
@@ -974,32 +968,23 @@ export default function App() {
                      <option value="Tarea">🎯 Tarea Enlace</option>
                    </Sel>
                    <Inp value={newBitacoraEntry.responsable} onChange={e=>setNewBitacoraEntry({...newBitacoraEntry, responsable: e.target.value})} placeholder="Resp..." />
-                   <Txt rows="2" value={newBitacoraEntry.descripcion} onChange={e=>setNewBitacoraEntry({...newBitacoraEntry, descripcion: e.target.value})} placeholder="Detalle (Multilínea)..." className="col-span-2" />
+                   <Txt rows="2" value={newBitacoraEntry.descripcion} onChange={e=>setNewBitacoraEntry({...newBitacoraEntry, descripcion: e.target.value})} placeholder="Detalle..." className="col-span-2" />
                    {newBitacoraEntry.tipo === 'Tarea' && <Inp type="date" value={newBitacoraEntry.fechaCumplimiento} onChange={e=>setNewBitacoraEntry({...newBitacoraEntry, fechaCumplimiento: e.target.value})} className="col-span-4 bg-amber-50" />}
                    <button onClick={handleAddBitacora} className={clsBtnP + " col-span-4"}>Añadir Registro</button>
                 </div>
-                {safeArr(caseForm.bitacora).map(b => <div key={b.id} className="p-4 border rounded-xl flex justify-between"><div className="flex-1"><p className="text-sm font-bold whitespace-pre-wrap">{String(b.descripcion)}</p><p className="text-[10px] text-slate-400 mt-1 uppercase">{String(b.tipo)} | {String(b.fecha)}</p></div><button onClick={() => setCaseForm({ ...caseForm, bitacora: safeArr(caseForm.bitacora).filter(x => x.id !== b.id) })} className="text-red-400"><Trash2 size={16}/></button></div>)}
+                {safeArr(caseForm.bitacora).map(b => <div key={b.id} className="p-4 border rounded-xl flex justify-between"><div className="flex-1"><p className="text-sm font-bold">{String(b.descripcion)}</p><p className="text-[10px] text-slate-400 mt-1 uppercase">{String(b.tipo)} | {String(b.fecha)}</p></div><button onClick={() => setCaseForm({ ...caseForm, bitacora: safeArr(caseForm.bitacora).filter(x => x.id !== b.id) })} className="text-red-400"><Trash2 size={16}/></button></div>)}
               </div>
             )}
             {activeModalTab === 'archivos' && (
               <div className="space-y-4">
-                 <div className="bg-indigo-50/50 p-6 rounded-2xl border border-indigo-100 text-center mb-4">
-                   <label className="cursor-pointer block">
-                     <UploadCloud size={24} className="mx-auto text-indigo-400 mb-2"/>
-                     <span className="text-[10px] font-black text-indigo-900 uppercase">Subir Archivo de Respaldo</span>
-                     <input type="file" className="hidden" onChange={handleCaseFileUpload} />
-                   </label>
+                 <div className="bg-indigo-50 p-4 rounded-xl text-center mb-4">
+                   <label className="cursor-pointer block text-indigo-700 font-black text-xs uppercase"><UploadCloud size={20} className="mx-auto mb-1"/> Subir Respaldo<input type="file" className="hidden" onChange={handleCaseFileUpload} /></label>
                  </div>
-                 <div className="space-y-2 mb-4">
-                   {safeArr(caseForm.archivos).map(f => (
-                     <div key={f.id} className="flex justify-between items-center p-3 bg-white border rounded-xl">
-                        <span className="text-xs font-bold">{f.nombre} <span className="text-[9px] text-slate-400 ml-2">{f.size}</span></span>
-                        <button onClick={()=>setCaseForm(p=>({...p, archivos: p.archivos.filter(a=>a.id!==f.id)}))} className="text-red-400"><Trash2 size={14}/></button>
-                     </div>
-                   ))}
-                 </div>
-                 <Lbl>Epicrisis</Lbl><Txt value={caseForm.epicrisis || ''} onChange={e=>setCaseForm({...caseForm, epicrisis: e.target.value})} className="min-h-[140px]"/>
-                 <div className="flex justify-between items-center"><Lbl>Resumen Inteligente</Lbl><button onClick={handleGenerateCaseSummary} disabled={isGeneratingCaseSummary} className={clsBtnP}>Generar</button></div>
+                 {safeArr(caseForm.archivos).map(f => (
+                   <div key={f.id} className="flex justify-between items-center p-3 bg-white border rounded-xl"><span className="text-xs font-bold">{f.nombre} <span className="text-[9px] text-slate-400 ml-2">{f.size}</span></span><button onClick={()=>setCaseForm(p=>({...p, archivos: p.archivos.filter(a=>a.id!==f.id)}))} className="text-red-400"><Trash2 size={14}/></button></div>
+                 ))}
+                 <Lbl>Epicrisis / Resumen</Lbl><Txt value={caseForm.epicrisis || ''} onChange={e=>setCaseForm({...caseForm, epicrisis: e.target.value})} className="min-h-[140px]"/>
+                 <div className="flex justify-between items-center"><Lbl>Resumen IA</Lbl><button onClick={handleGenerateCaseSummary} disabled={isGeneratingCaseSummary} className={clsBtnP}>Generar</button></div>
                  {caseSummary && <div className="p-4 bg-indigo-50 rounded-xl whitespace-pre-wrap text-sm">{String(caseSummary)}</div>}
               </div>
             )}
@@ -1012,44 +997,23 @@ export default function App() {
         <div className="flex bg-slate-50 border-b shrink-0 px-6">
           <button onClick={() => setActiveDocModalTab('datos')} className={`px-6 py-4 text-[10px] font-black uppercase tracking-[0.2em] border-b-4 ${activeDocModalTab === 'datos' ? 'border-blue-600 text-blue-600 bg-white' : 'border-transparent text-slate-400'}`}>Datos</button>
           <button onClick={() => setActiveDocModalTab('bitacora')} className={`px-6 py-4 text-[10px] font-black uppercase tracking-[0.2em] border-b-4 ${activeDocModalTab === 'bitacora' ? 'border-blue-600 text-blue-600 bg-white' : 'border-transparent text-slate-400'}`}>Tareas</button>
-          <button onClick={() => setActiveDocModalTab('archivos')} className={`px-6 py-4 text-[10px] font-black uppercase tracking-[0.2em] border-b-4 ${activeDocModalTab === 'archivos' ? 'border-blue-600 text-blue-600 bg-white' : 'border-transparent text-slate-400'}`}>Archivos</button>
         </div>
         <div className="p-6 overflow-y-auto flex-1 bg-white space-y-6">
           {activeDocModalTab === 'datos' && (
             <div className="space-y-4">
               <div><Lbl>Nombre</Lbl><Inp value={docForm.nombre} onChange={e=>setDocForm({...docForm, nombre: e.target.value})}/></div>
               <div className="grid grid-cols-2 gap-4">
-                <div><Lbl>Ámbito</Lbl><Inp list="ambitos" value={docForm.ambito} onChange={e=>setDocForm({...docForm, ambito: e.target.value})}/><datalist id="ambitos"><option value="Red Integral"/><option value="Hospitalario"/>{safeArr(centros).map(c=><option key={c} value={c}/>)}</datalist></div>
+                <div><Lbl>Ámbito</Lbl><Inp list="ambitos-list" value={docForm.ambito} onChange={e=>setDocForm({...docForm, ambito: e.target.value})}/></div>
                 <div><Lbl>Fase</Lbl><Sel value={docForm.fase} onChange={e=>setDocForm({...docForm, fase: e.target.value})}><option>Levantamiento</option><option>Validación Técnica</option><option>Difusión</option></Sel></div>
               </div>
-              <div><Lbl>Notas y Observaciones</Lbl><Txt rows="3" value={docForm.notas || ''} onChange={e=>setDocForm({...docForm, notas: e.target.value})} placeholder="Apuntes..." /></div>
               <div><Lbl>Avance: {docForm.avance}%</Lbl><input type="range" min="0" max="100" step="5" value={docForm.avance} onChange={e=>setDocForm({...docForm, avance: e.target.value})} className="w-full" /></div>
             </div>
           )}
           {activeDocModalTab === 'bitacora' && (
              <div className="space-y-4">
-                <div className="bg-slate-50 p-4 rounded-xl grid grid-cols-2 gap-3"><Inp value={newDocBitacoraEntry.responsable} onChange={e=>setNewDocBitacoraEntry({...newDocBitacoraEntry, responsable: e.target.value})} placeholder="Responsable" /><Inp type="date" value={newDocBitacoraEntry.fechaCumplimiento} onChange={e=>setNewDocBitacoraEntry({...newDocBitacoraEntry, fechaCumplimiento: e.target.value})} /><Inp value={newDocBitacoraEntry.descripcion} onChange={e=>setNewDocBitacoraEntry({...newDocBitacoraEntry, descripcion: e.target.value})} placeholder="Tarea..." className="col-span-2"/><button onClick={handleAddDocBitacora} className={clsBtnP + " col-span-2"}>Añadir Tarea</button></div>
+                <div className="bg-slate-50 p-4 rounded-xl grid grid-cols-2 gap-3"><Inp value={newDocBitacoraEntry.responsable} onChange={e=>setNewDocBitacoraEntry({...newDocBitacoraEntry, responsable: e.target.value})} placeholder="Resp..." /><Inp type="date" value={newDocBitacoraEntry.fechaCumplimiento} onChange={e=>setNewDocBitacoraEntry({...newDocBitacoraEntry, fechaCumplimiento: e.target.value})} /><Txt rows="1" value={newDocBitacoraEntry.descripcion} onChange={e=>setNewDocBitacoraEntry({...newDocBitacoraEntry, descripcion: e.target.value})} placeholder="Tarea..." className="col-span-2"/><button onClick={handleAddDocBitacora} className={clsBtnP + " col-span-2"}>Añadir</button></div>
                 {safeArr(docForm.bitacora).map(b => <div key={b.id} className="p-4 border rounded-xl flex justify-between"><p className="text-sm font-bold">{String(b.descripcion)}</p><button onClick={() => setDocForm({ ...docForm, bitacora: safeArr(docForm.bitacora).filter(x => x.id !== b.id) })} className="text-red-400"><Trash2 size={16}/></button></div>)}
              </div>
-          )}
-          {activeDocModalTab === 'archivos' && (
-            <div className="space-y-4">
-               <div className="bg-indigo-50/50 p-6 rounded-2xl border border-indigo-100 text-center mb-4">
-                 <label className="cursor-pointer block">
-                   <UploadCloud size={24} className="mx-auto text-indigo-400 mb-2"/>
-                   <span className="text-[10px] font-black text-indigo-900 uppercase">Subir Documento o Insumo</span>
-                   <input type="file" className="hidden" onChange={handleDocFileUpload} />
-                 </label>
-               </div>
-               <div className="space-y-2 mb-4">
-                 {safeArr(docForm.archivos).map(f => (
-                   <div key={f.id} className="flex justify-between items-center p-3 bg-white border rounded-xl">
-                      <span className="text-xs font-bold">{f.nombre} <span className="text-[9px] text-slate-400 ml-2">{f.size}</span></span>
-                      <button onClick={()=>setDocForm(p=>({...p, archivos: p.archivos.filter(a=>a.id!==f.id)}))} className="text-red-400"><Trash2 size={14}/></button>
-                   </div>
-                 ))}
-               </div>
-            </div>
           )}
         </div>
         <ModalFtr onCancel={()=>setIsDocModalOpen(false)} onSave={handleSaveDoc} />
@@ -1094,7 +1058,7 @@ export default function App() {
                   {safeArr(templateForm.criterios).map((c, i) => (
                     <div key={i} className="p-4 border-2 border-slate-100 rounded-xl bg-slate-50 relative group">
                       <button onClick={()=>{const newC=[...safeArr(templateForm.criterios)]; newC.splice(i,1); setTemplateForm({...templateForm, criterios: newC});}} className="absolute top-2 right-2 text-slate-300 hover:text-red-500"><Trash2 size={14}/></button>
-                      <Txt rows="2" value={c.pregunta} onChange={e=>{const newC=[...safeArr(templateForm.criterios)]; newC[i].pregunta=e.target.value; setTemplateForm({...templateForm, criterios: newC});}} className="mb-2" placeholder="Criterio a evaluar..."/>
+                      <Txt rows="2" value={c.pregunta} onChange={e=>{const newC=[...safeArr(templateForm.criterios)]; newC[i].pregunta=e.target.value; setTemplateForm({...templateForm, criterios: newC});}} className="mb-2" placeholder="Criterio..."/>
                       <Inp value={c.opciones} onChange={e=>{const newC=[...safeArr(templateForm.criterios)]; newC[i].opciones=e.target.value; setTemplateForm({...templateForm, criterios: newC});}} placeholder="Ej: SÍ=1, NO=0"/>
                     </div>
                   ))}
@@ -1128,11 +1092,7 @@ export default function App() {
                          {safeArr(template.encabezados).map(h => (
                            <div key={h.id}>
                               <Lbl>{String(h.label)}</Lbl>
-                              {String(h.label).toLowerCase().includes('centro') || String(h.label).toLowerCase().includes('dispositivo') ? (
-                                 <Sel value={auditForm.headerAnswers[h.id] || ''} onChange={e=>setAuditForm({...auditForm, centro: e.target.value, headerAnswers: {...auditForm.headerAnswers, [h.id]: e.target.value}})}><option value="">Centro...</option>{safeArr(centros).map(c=><option key={c} value={c}>{String(c)}</option>)}</Sel>
-                              ) : (
-                                 <Inp type={h.type} value={auditForm.headerAnswers[h.id] || ''} onChange={e=>setAuditForm({...auditForm, headerAnswers: {...auditForm.headerAnswers, [h.id]: e.target.value}})} />
-                              )}
+                              <Inp type={h.type} value={auditForm.headerAnswers[h.id] || ''} onChange={e=>setAuditForm({...auditForm, headerAnswers: {...auditForm.headerAnswers, [h.id]: e.target.value}})} />
                            </div>
                          ))}
                        </div>
