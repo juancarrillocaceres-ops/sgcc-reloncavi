@@ -24,14 +24,17 @@ const auth = getAuth(app);
 const db = getFirestore(app);
 const appId = typeof __app_id !== 'undefined' ? __app_id : "sgcc-reloncavi-v1";
 
-// --- UTILIDADES ---
+// --- UTILIDADES DE BLINDAJE (Previene pantallas en blanco) ---
+const safeArr = (arr) => Array.isArray(arr) ? arr : [];
+const safeStr = (str) => (str !== null && str !== undefined) ? String(str) : '';
+
 const diffInDays = (d1, d2) => {
   if (!d1 || !d2) return null;
   return Math.ceil(Math.abs(new Date(d2) - new Date(d1)) / (1000 * 60 * 60 * 24));
 };
 
 const getTaskStatus = (fecha) => {
-  if (!fecha) return { status: 'none', bgClass: 'bg-slate-100 text-slate-700', showWarning: false };
+  if (!fecha || typeof fecha !== 'string' || !fecha.includes('-')) return { status: 'none', bgClass: 'bg-slate-100 text-slate-700', showWarning: false };
   const [y, m, d] = fecha.split('-');
   const diffDays = Math.ceil((new Date(y, m - 1, d).getTime() - new Date().setHours(0,0,0,0)) / (1000 * 60 * 60 * 24));
   if (diffDays < 0) return { status: 'overdue', bgClass: 'bg-red-100 text-red-800', showWarning: true };
@@ -41,7 +44,7 @@ const getTaskStatus = (fecha) => {
 
 const parseOpciones = (str) => {
   if (!str) return [{ label: 'SÍ', value: 1 }, { label: 'NO', value: 0 }];
-  return str.split(',').map(o => {
+  return String(str).split(',').map(o => {
     const p = o.split('=');
     return { label: p[0]?.trim() || '', value: Number(p[1]) || 0 };
   }).filter(o => o.label !== '');
@@ -178,13 +181,13 @@ export default function App() {
 
   useEffect(() => {
     if (!firebaseUser) return;
-    const unsubCases = onSnapshot(collection(db, 'artifacts', appId, 'public', 'data', 'cases'), snap => setCases(snap.docs.map(d => d.data())), console.error);
-    const unsubDocs = onSnapshot(collection(db, 'artifacts', appId, 'public', 'data', 'docs'), snap => setDocs(snap.docs.map(d => d.data())), console.error);
-    const unsubAudits = onSnapshot(collection(db, 'artifacts', appId, 'public', 'data', 'audits'), snap => setAudits(snap.docs.map(d => d.data())), console.error);
-    const unsubTemplates = onSnapshot(collection(db, 'artifacts', appId, 'public', 'data', 'auditTemplates'), snap => setAuditTemplates(snap.docs.map(d => d.data())), console.error);
-    const unsubDir = onSnapshot(collection(db, 'artifacts', appId, 'public', 'data', 'directory'), snap => setDirectory(snap.docs.map(d => d.data())), console.error);
-    const unsubUsers = onSnapshot(collection(db, 'artifacts', appId, 'public', 'data', 'users'), snap => setUsers(snap.docs.map(d => d.data())), console.error);
-    const unsubCentros = onSnapshot(doc(db, 'artifacts', appId, 'public', 'data', 'settings', 'centros'), snap => { if (snap.exists() && snap.data().list) setCentros(snap.data().list); }, console.error);
+    const unsubCases = onSnapshot(collection(db, 'artifacts', appId, 'public', 'data', 'cases'), snap => setCases(safeArr(snap.docs.map(d => d.data()))), console.error);
+    const unsubDocs = onSnapshot(collection(db, 'artifacts', appId, 'public', 'data', 'docs'), snap => setDocs(safeArr(snap.docs.map(d => d.data()))), console.error);
+    const unsubAudits = onSnapshot(collection(db, 'artifacts', appId, 'public', 'data', 'audits'), snap => setAudits(safeArr(snap.docs.map(d => d.data()))), console.error);
+    const unsubTemplates = onSnapshot(collection(db, 'artifacts', appId, 'public', 'data', 'auditTemplates'), snap => setAuditTemplates(safeArr(snap.docs.map(d => d.data()))), console.error);
+    const unsubDir = onSnapshot(collection(db, 'artifacts', appId, 'public', 'data', 'directory'), snap => setDirectory(safeArr(snap.docs.map(d => d.data()))), console.error);
+    const unsubUsers = onSnapshot(collection(db, 'artifacts', appId, 'public', 'data', 'users'), snap => setUsers(safeArr(snap.docs.map(d => d.data()))), console.error);
+    const unsubCentros = onSnapshot(doc(db, 'artifacts', appId, 'public', 'data', 'settings', 'centros'), snap => { if (snap.exists() && safeArr(snap.data().list).length > 0) setCentros(snap.data().list); }, console.error);
     const unsubConfig = onSnapshot(doc(db, 'artifacts', appId, 'public', 'data', 'settings', 'config'), snap => { 
       if (snap.exists()) { const data = snap.data(); setAppConfig({ targetDays: 7, plazos: {}, ...data }); if (data?.apiKey) setApiConfigKey(data.apiKey); } 
     }, console.error);
@@ -202,21 +205,23 @@ export default function App() {
   };
 
   const visibleCases = useMemo(() => {
-    if (currentUser?.rol === 'Admin') return cases || [];
-    return (cases || []).filter(c => (currentUser?.centrosAsignados || []).includes(c.origen) || (currentUser?.centrosAsignados || []).includes(c.destino));
+    if (currentUser?.rol === 'Admin') return safeArr(cases);
+    const assigned = safeArr(currentUser?.centrosAsignados);
+    return safeArr(cases).filter(c => assigned.includes(c.origen) || assigned.includes(c.destino));
   }, [cases, currentUser]);
 
   const visibleAudits = useMemo(() => {
-    if (currentUser?.rol === 'Admin') return audits || [];
-    return (audits || []).filter(a => (currentUser?.centrosAsignados || []).includes(a.centro));
+    if (currentUser?.rol === 'Admin') return safeArr(audits);
+    const assigned = safeArr(currentUser?.centrosAsignados);
+    return safeArr(audits).filter(a => assigned.includes(a.centro));
   }, [audits, currentUser]);
 
   const alertCases = visibleCases.filter(c => c.estado === 'Alerta');
   const allPendingTasks = useMemo(() => {
     return [
-      ...visibleCases.flatMap(c => (c.bitacora || []).filter(b => b.tipo === 'Tarea' && !b.completada).map(b => ({ ...b, parentId: c.id, parentName: c.nombre || c.paciente, source: 'Caso' }))),
-      ...(docs || []).flatMap(d => (d.bitacora || []).filter(b => b.tipo === 'Tarea' && !b.completada).map(b => ({ ...b, parentId: d.id, parentName: d.nombre, source: 'Protocolo' })))
-    ].sort((a, b) => (a.fechaCumplimiento || '9999-99-99').localeCompare(b.fechaCumplimiento || '9999-99-99'));
+      ...safeArr(visibleCases).flatMap(c => safeArr(c.bitacora).filter(b => b.tipo === 'Tarea' && !b.completada).map(b => ({ ...b, parentId: c.id, parentName: c.nombre || c.paciente, source: 'Caso' }))),
+      ...safeArr(docs).flatMap(d => safeArr(d.bitacora).filter(b => b.tipo === 'Tarea' && !b.completada).map(b => ({ ...b, parentId: d.id, parentName: d.nombre, source: 'Protocolo' })))
+    ].sort((a, b) => safeStr(a.fechaCumplimiento || '9999-99-99').localeCompare(safeStr(b.fechaCumplimiento || '9999-99-99')));
   }, [visibleCases, docs]);
 
   const tareasCriticas = allPendingTasks.filter(t => getTaskStatus(t.fechaCumplimiento).status === 'upcoming' || getTaskStatus(t.fechaCumplimiento).status === 'overdue').length;
@@ -233,7 +238,7 @@ export default function App() {
 
   const redMetrics = useMemo(() => {
     let sumEnlace = 0, countEnlace = 0, sumIngreso = 0, countIngreso = 0, alertCount = 0;
-    visibleCases.forEach(c => {
+    safeArr(visibleCases).forEach(c => {
       const enlaceDays = diffInDays(c.fechaEgreso, c.fechaRecepcionRed);
       const ingresoDays = diffInDays(c.fechaEgreso, c.fechaIngresoEfectivo);
       const currentTarget = getTargetDaysForCase(c.destino);
@@ -245,7 +250,7 @@ export default function App() {
 
   const handleLogin = (e) => {
     e.preventDefault();
-    const user = (users || []).find(u => u.rut === loginData.rut && u.password === loginData.password);
+    const user = safeArr(users).find(u => u.rut === loginData.rut && u.password === loginData.password);
     if (user) { setCurrentUser(user); setLoginError(''); } else { setLoginError('RUT o Contraseña incorrectos.'); }
   };
 
@@ -284,7 +289,7 @@ export default function App() {
 
   const handleWipeDirectory = async () => {
     if(window.confirm('⚠️ ¿Estás seguro de eliminar TODO el directorio para empezar de cero?')) {
-       directory.forEach(async (d) => { if (d && d.id) await deleteFromCloud('directory', d.id); });
+       safeArr(directory).forEach(async (d) => { if (d && d.id) await deleteFromCloud('directory', d.id); });
        alert('Directorio limpiado.');
     }
   };
@@ -304,8 +309,8 @@ export default function App() {
         nombre: parsedData.nombre || 'Pauta Extraída',
         metodoCalculo: parsedData.metodoCalculo === 'Juicio Clínico' ? 'Juicio Clínico' : 'Suma Automática',
         instruccionesDiagnostico: parsedData.instruccionesDiagnostico || '',
-        encabezados: parsedData.encabezados || [],
-        criterios: parsedData.criterios || []
+        encabezados: safeArr(parsedData.encabezados),
+        criterios: safeArr(parsedData.criterios)
       });
       alert(`¡Pauta digitalizada!\nTítulo: ${parsedData.nombre}\nRevisa el Diseñador para ajustar detalles.`);
     } catch (err) { alert("Error IA. Revisa tu Llave API o copia fragmentos de texto."); } 
@@ -345,7 +350,7 @@ export default function App() {
     if (!appConfig.apiKey) return alert("Falta Clave API.");
     setIsGeneratingCaseSummary(true); setCaseSummary('');
     const epicrisisText = caseForm.epicrisis ? `\nEpicrisis: ${caseForm.epicrisis}` : '';
-    const prompt = `Actúa como clínico. Genera resumen profesional: Nombre: ${caseForm.nombre}, Origen: ${caseForm.origen}, Destino: ${caseForm.destino}.${epicrisisText} Eventos bitácora: ${caseForm.bitacora.map(b => `[${b.fecha}] ${b.tipo}: ${b.descripcion}`).join(' | ')}. Solo resumen directo.`;
+    const prompt = `Actúa como clínico. Genera resumen profesional: Nombre: ${caseForm.nombre}, Origen: ${caseForm.origen}, Destino: ${caseForm.destino}.${epicrisisText} Eventos bitácora: ${safeArr(caseForm.bitacora).map(b => `[${b.fecha}] ${b.tipo}: ${b.descripcion}`).join(' | ')}. Solo resumen directo.`;
     try { setCaseSummary(await generateTextWithRetry(appConfig.apiKey, prompt)); } catch (e) { setCaseSummary("Error IA."); } finally { setIsGeneratingCaseSummary(false); }
   };
 
@@ -359,21 +364,21 @@ export default function App() {
 
   const handleAddBitacora = () => {
     if (!newBitacoraEntry.descripcion) return;
-    setCaseForm({ ...caseForm, bitacora: [{ id: Date.now(), ...newBitacoraEntry, fecha: new Date().toISOString().split('T')[0], completada: false }, ...caseForm.bitacora] });
+    setCaseForm({ ...caseForm, bitacora: [{ id: Date.now(), ...newBitacoraEntry, fecha: new Date().toISOString().split('T')[0], completada: false }, ...safeArr(caseForm.bitacora)] });
     setNewBitacoraEntry({ tipo: 'Nota Adm.', descripcion: '', responsable: '', fechaCumplimiento: '' });
   };
   
   const toggleTaskCompletion = async (caseId, entryId) => {
-     const caso = cases.find(c => c.id === caseId);
+     const caso = safeArr(cases).find(c => c.id === caseId);
      if (!caso) return;
-     const updatedBitacora = (caso.bitacora || []).map(entry => entry.id === entryId ? { ...entry, completada: !entry.completada } : entry);
+     const updatedBitacora = safeArr(caso.bitacora).map(entry => entry.id === entryId ? { ...entry, completada: !entry.completada } : entry);
      await saveToCloud('cases', caseId, { ...caso, bitacora: updatedBitacora });
   };
 
   const handleCaseFileUpload = (e) => {
     const file = e.target.files[0];
     if (!file) return;
-    setCaseForm(prev => ({ ...prev, archivos: [...(prev.archivos || []), { id: Date.now().toString(), nombre: file.name, size: (file.size / 1024 / 1024).toFixed(2) + ' MB', fecha: new Date().toISOString().split('T')[0] }] }));
+    setCaseForm(prev => ({ ...prev, archivos: [...safeArr(prev.archivos), { id: Date.now().toString(), nombre: file.name, size: (file.size / 1024 / 1024).toFixed(2) + ' MB', fecha: new Date().toISOString().split('T')[0] }] }));
   };
 
   const handleSaveDoc = async () => {
@@ -385,45 +390,45 @@ export default function App() {
 
   const handleAddDocBitacora = () => {
     if (!newDocBitacoraEntry.descripcion) return;
-    setDocForm(prev => ({ ...prev, bitacora: [{ id: Date.now(), ...newDocBitacoraEntry, fecha: new Date().toISOString().split('T')[0], completada: false }, ...(prev.bitacora || [])] }));
+    setDocForm(prev => ({ ...prev, bitacora: [{ id: Date.now(), ...newDocBitacoraEntry, fecha: new Date().toISOString().split('T')[0], completada: false }, ...safeArr(prev.bitacora)] }));
     setNewDocBitacoraEntry({ tipo: 'Tarea', descripcion: '', responsable: '', fechaCumplimiento: '' });
   };
   
   const toggleDocTaskCompletion = async (docId, entryId) => {
-     const documento = docs.find(d => d.id === docId);
+     const documento = safeArr(docs).find(d => d.id === docId);
      if (!documento) return;
-     const updatedBitacora = (documento.bitacora || []).map(entry => entry.id === entryId ? { ...entry, completada: !entry.completada } : entry);
+     const updatedBitacora = safeArr(documento.bitacora).map(entry => entry.id === entryId ? { ...entry, completada: !entry.completada } : entry);
      await saveToCloud('docs', docId, { ...documento, bitacora: updatedBitacora });
   };
 
   const handleFileUpload = (e) => {
     const file = e.target.files[0];
     if (!file) return;
-    setDocForm(prev => ({ ...prev, archivos: [...(prev.archivos || []), { id: Date.now().toString(), nombre: file.name, size: (file.size / 1024 / 1024).toFixed(2) + ' MB', fecha: new Date().toISOString().split('T')[0] }] }));
+    setDocForm(prev => ({ ...prev, archivos: [...safeArr(prev.archivos), { id: Date.now().toString(), nombre: file.name, size: (file.size / 1024 / 1024).toFixed(2) + ' MB', fecha: new Date().toISOString().split('T')[0] }] }));
   };
 
   const handleSaveTemplate = async () => {
-    const validCriterios = templateForm.criterios.filter(c => { const t = typeof c === 'string' ? c : c.pregunta; return t && t.trim() !== ''; }).map((c, i) => { if (typeof c === 'string') return { id: `crit_${Date.now()}_${i}`, pregunta: c, opciones: 'SÍ=1, NO=0' }; return { ...c, id: c.id || `crit_${Date.now()}_${i}` }; });
+    const validCriterios = safeArr(templateForm.criterios).filter(c => { const t = typeof c === 'string' ? c : c.pregunta; return t && t.trim() !== ''; }).map((c, i) => { if (typeof c === 'string') return { id: `crit_${Date.now()}_${i}`, pregunta: c, opciones: 'SÍ=1, NO=0' }; return { ...c, id: c.id || `crit_${Date.now()}_${i}` }; });
     if (!templateForm.nombre || validCriterios.length === 0) return alert("Ingresa nombre y al menos un criterio.");
     const finalId = editingTemplateId || `TPL-${Date.now()}`;
-    await saveToCloud('auditTemplates', finalId, { id: finalId, nombre: templateForm.nombre, tipo: templateForm.tipo, metodoCalculo: templateForm.metodoCalculo || 'Suma Automática', instruccionesDiagnostico: templateForm.instruccionesDiagnostico || '', encabezados: templateForm.encabezados || [], criterios: validCriterios, rangos: templateForm.rangos || [] });
+    await saveToCloud('auditTemplates', finalId, { id: finalId, nombre: templateForm.nombre, tipo: templateForm.tipo, metodoCalculo: templateForm.metodoCalculo || 'Suma Automática', instruccionesDiagnostico: templateForm.instruccionesDiagnostico || '', encabezados: safeArr(templateForm.encabezados), criterios: validCriterios, rangos: safeArr(templateForm.rangos) });
     setIsTemplateModalOpen(false); setEditingTemplateId(null);
   };
 
   const openTemplateEditor = (t) => {
-    const normCriterios = (t.criterios || []).map((c, i) => { if (typeof c === 'string') return { id: `crit_${i}`, pregunta: c, opciones: 'SÍ=1, NO=0' }; return c; });
+    const normCriterios = safeArr(t.criterios).map((c, i) => { if (typeof c === 'string') return { id: `crit_${i}`, pregunta: c, opciones: 'SÍ=1, NO=0' }; return c; });
     setEditingTemplateId(t.id);
-    setTemplateForm({ nombre: t.nombre || '', metodoCalculo: t.metodoCalculo || 'Suma Automática', instruccionesDiagnostico: t.instruccionesDiagnostico || '', encabezados: t.encabezados || [], criterios: normCriterios.length > 0 ? normCriterios : [{ id: 'crit_1', pregunta: '', opciones: 'SÍ=1, NO=0' }], rangos: t.rangos || [], tipo: t.tipo || 'Ambos' });
+    setTemplateForm({ nombre: t.nombre || '', metodoCalculo: t.metodoCalculo || 'Suma Automática', instruccionesDiagnostico: t.instruccionesDiagnostico || '', encabezados: safeArr(t.encabezados), criterios: normCriterios.length > 0 ? normCriterios : [{ id: 'crit_1', pregunta: '', opciones: 'SÍ=1, NO=0' }], rangos: safeArr(t.rangos), tipo: t.tipo || 'Ambos' });
     setIsTemplateModalOpen(true);
   };
 
   const handleSaveAudit = async () => {
-    const selectedTemplate = auditTemplates.find(t => t.id === auditForm.templateId);
+    const selectedTemplate = safeArr(auditTemplates).find(t => t.id === auditForm.templateId);
     if (!selectedTemplate) return;
     if (selectedTemplate.metodoCalculo === 'Juicio Clínico' && !auditForm.estadoManual) return alert("Seleccione un Resultado Clínico.");
     
     let maxScore = 0; let actualScore = 0;
-    selectedTemplate.criterios.forEach((c, idx) => {
+    safeArr(selectedTemplate.criterios).forEach((c, idx) => {
       const opcionesStr = typeof c === 'string' ? 'SÍ=1, NO=0' : (c.opciones || 'SÍ=1, NO=0');
       const ops = parseOpciones(opcionesStr);
       maxScore += Math.max(...ops.map(o => o.value));
@@ -434,8 +439,8 @@ export default function App() {
 
     const scorePercentage = maxScore > 0 ? Math.round((actualScore / maxScore) * 100) : 0;
     let estadoTexto = selectedTemplate.metodoCalculo === 'Juicio Clínico' ? auditForm.estadoManual : (scorePercentage >= 75 ? 'Óptimo' : 'Riesgo');
-    if (selectedTemplate.metodoCalculo !== 'Juicio Clínico' && selectedTemplate.rangos && selectedTemplate.rangos.length > 0) {
-       const match = selectedTemplate.rangos.find(r => actualScore >= Number(r.min) && actualScore <= Number(r.max));
+    if (selectedTemplate.metodoCalculo !== 'Juicio Clínico' && safeArr(selectedTemplate.rangos).length > 0) {
+       const match = safeArr(selectedTemplate.rangos).find(r => actualScore >= Number(r.min) && actualScore <= Number(r.max));
        if (match) estadoTexto = match.resultado;
     }
 
@@ -465,11 +470,11 @@ export default function App() {
     setCurrentUser({ ...currentUser, password: passwordForm.new }); setIsProfileModalOpen(false); alert("Actualizada exitosamente!");
   };
 
-  // ================= VISTA DE IMPRESIÓN FULL SCREEN =================
+  // ================= VISTA DE IMPRESIÓN =================
   if (printingAudit) {
-    const template = auditTemplates.find(t => t.id === printingAudit.templateId);
+    const template = safeArr(auditTemplates).find(t => t.id === printingAudit.templateId);
     if (!template) return <div className="p-10 text-red-500">Error: Pauta base no encontrada.</div>;
-    const criterios = typeof template.criterios[0] === 'string' ? template.criterios.map((c,i) => ({id: i, pregunta: c, opciones: 'SÍ=1, NO=0'})) : template.criterios;
+    const criterios = typeof safeArr(template.criterios)[0] === 'string' ? safeArr(template.criterios).map((c,i) => ({id: i, pregunta: c, opciones: 'SÍ=1, NO=0'})) : safeArr(template.criterios);
 
     return (
       <div className="bg-white text-black min-h-screen w-full font-sans absolute inset-0 z-[100] print:static">
@@ -479,14 +484,14 @@ export default function App() {
              <button onClick={() => setPrintingAudit(null)} className={clsBtnS}>Volver</button>
            </div>
            <div className="border-b-2 border-black pb-2 mb-4 text-center">
-             <h1 className="text-lg font-black uppercase tracking-widest">{template.nombre}</h1>
+             <h1 className="text-lg font-black uppercase tracking-widest">{String(template.nombre)}</h1>
              <p className="text-[9px] font-bold text-gray-500 uppercase tracking-widest mt-1">UHCIP INFANTO JUVENIL - Hospital Puerto Montt</p>
            </div>
            <div className="grid grid-cols-2 gap-2 mb-4 border border-gray-300 p-3 rounded-lg">
-             <div className="flex flex-col"><span className="text-[8px] font-black text-gray-500 uppercase tracking-widest">Dispositivo Evaluado</span><span className="font-bold text-black">{printingAudit.centro || '---'}</span></div>
-             <div className="flex flex-col"><span className="text-[8px] font-black text-gray-500 uppercase tracking-widest">Fecha Evaluación</span><span className="font-bold text-black">{printingAudit.fecha}</span></div>
-             {(template.encabezados || []).map(h => (
-                <div key={h.id} className="flex flex-col"><span className="text-[8px] font-black text-gray-500 uppercase tracking-widest">{h.label}</span><span className="font-bold text-black">{printingAudit.headerAnswers?.[h.id] || '---'}</span></div>
+             <div className="flex flex-col"><span className="text-[8px] font-black text-gray-500 uppercase tracking-widest">Dispositivo Evaluado</span><span className="font-bold text-black">{String(printingAudit.centro || '---')}</span></div>
+             <div className="flex flex-col"><span className="text-[8px] font-black text-gray-500 uppercase tracking-widest">Fecha Evaluación</span><span className="font-bold text-black">{String(printingAudit.fecha)}</span></div>
+             {safeArr(template.encabezados).map(h => (
+                <div key={h.id} className="flex flex-col"><span className="text-[8px] font-black text-gray-500 uppercase tracking-widest">{String(h.label)}</span><span className="font-bold text-black">{String(printingAudit.headerAnswers?.[h.id] || '---')}</span></div>
              ))}
            </div>
            <table className="w-full text-left border-collapse border border-gray-300 mb-4">
@@ -502,15 +507,15 @@ export default function App() {
                {criterios.map((c, i) => {
                  const rawAns = printingAudit.answers[c.id || i];
                  let label = '---'; let val = 0;
-                 if (typeof rawAns === 'object') { label = rawAns.label; val = rawAns.value; }
+                 if (typeof rawAns === 'object' && rawAns !== null) { label = rawAns.label; val = rawAns.value; }
                  else if (rawAns === 'si') { label = 'SÍ'; val = 1; }
                  else if (rawAns === 'no') { label = 'NO'; val = 0; }
                  return (
                  <tr key={i} className="border-b border-gray-200">
                    <td className="p-2 text-center border-r border-gray-200">{i+1}</td>
-                   <td className="p-2 border-r border-gray-200 leading-tight">{c.pregunta}</td>
-                   <td className="p-2 text-center font-bold border-r border-gray-200">{label}</td>
-                   <td className="p-2 text-center">{template.metodoCalculo === 'Juicio Clínico' ? '-' : val}</td>
+                   <td className="p-2 border-r border-gray-200 leading-tight">{String(c.pregunta)}</td>
+                   <td className="p-2 text-center font-bold border-r border-gray-200">{String(label)}</td>
+                   <td className="p-2 text-center">{template.metodoCalculo === 'Juicio Clínico' ? '-' : String(val)}</td>
                  </tr>
                  )
                })}
@@ -522,17 +527,17 @@ export default function App() {
               <div className="flex justify-between items-start mb-4">
                   <div className="flex-1 pr-4">
                     <h3 className="text-[8px] font-black text-gray-500 uppercase tracking-widest mb-1 border-b border-gray-300 pb-1">Observaciones</h3>
-                    <p className="text-[10px] font-medium text-black whitespace-pre-wrap leading-tight">{printingAudit.observaciones || 'Sin observaciones.'}</p>
+                    <p className="text-[10px] font-medium text-black whitespace-pre-wrap leading-tight">{String(printingAudit.observaciones || 'Sin observaciones.')}</p>
                   </div>
                   <div className="w-40 text-right border-l border-gray-300 pl-4">
                     <p className="text-[8px] font-black text-gray-500 uppercase tracking-widest mb-1">{template.metodoCalculo === 'Juicio Clínico' ? 'Diagnóstico' : 'Puntaje Total'}</p>
-                    <p className="text-xl font-black text-black leading-none">{printingAudit.puntaje} {template.metodoCalculo !== 'Juicio Clínico' && <span className="text-[10px]">({printingAudit.cumplimiento}%)</span>}</p>
-                    <p className="text-[9px] font-black text-gray-700 uppercase tracking-widest mt-1">{printingAudit.estado}</p>
+                    <p className="text-xl font-black text-black leading-none">{String(printingAudit.puntaje)} {template.metodoCalculo !== 'Juicio Clínico' && <span className="text-[10px]">({String(printingAudit.cumplimiento)}%)</span>}</p>
+                    <p className="text-[9px] font-black text-gray-700 uppercase tracking-widest mt-1">{String(printingAudit.estado)}</p>
                   </div>
               </div>
               <div className="pt-6 flex justify-between px-8">
-                  <div className="text-center"><div className="w-32 border-b border-black mb-1"></div><p className="text-[9px] font-black uppercase text-black">{printingAudit.evaluador}</p><p className="text-[7px] font-bold text-gray-500 uppercase">Evaluador SGCC-SM</p></div>
-                  <div className="text-center"><div className="w-32 border-b border-black mb-1"></div><p className="text-[9px] font-black uppercase text-black">Firma Recepción</p><p className="text-[7px] font-bold text-gray-500 uppercase">{printingAudit.centro || 'Dispositivo'}</p></div>
+                  <div className="text-center"><div className="w-32 border-b border-black mb-1"></div><p className="text-[9px] font-black uppercase text-black">{String(printingAudit.evaluador)}</p><p className="text-[7px] font-bold text-gray-500 uppercase">Evaluador SGCC-SM</p></div>
+                  <div className="text-center"><div className="w-32 border-b border-black mb-1"></div><p className="text-[9px] font-black uppercase text-black">Firma Recepción</p><p className="text-[7px] font-bold text-gray-500 uppercase">{String(printingAudit.centro || 'Dispositivo')}</p></div>
               </div>
            </div>
         </div>
@@ -563,27 +568,27 @@ export default function App() {
       <aside className="w-full md:w-64 bg-[#0a2540] text-white flex flex-col h-screen sticky top-0 shrink-0 shadow-xl overflow-y-auto">
         <div className="p-5 border-b border-white/5">
           <div className="flex items-start gap-3 mb-1">
-             <div className="w-10 h-10 rounded-xl bg-blue-600 flex items-center justify-center font-black text-sm shadow-lg shrink-0 mt-0.5">{currentUser?.iniciales || 'U'}</div>
-             <div className="flex-1 w-full flex flex-col justify-center">
-               <h1 className="text-sm font-black tracking-tight leading-tight text-white whitespace-normal break-words" style={{wordBreak:'break-word'}}>{currentUser?.nombre || 'Usuario'}</h1>
-               <p className="text-[9px] text-blue-300 font-black uppercase tracking-widest mt-1.5 leading-snug whitespace-normal break-words" style={{wordBreak:'break-word'}}>{currentUser?.cargo || 'SGCC-SM'}</p>
+             <div className="w-10 h-10 rounded-xl bg-blue-600 flex items-center justify-center font-black text-sm shadow-lg shrink-0 mt-0.5">{String(currentUser?.iniciales || 'U')}</div>
+             <div className="flex-1 w-full flex flex-col justify-center min-w-0">
+               <h1 className="text-sm font-black tracking-tight leading-tight text-white break-words whitespace-normal" style={{wordBreak:'break-word'}}>{String(currentUser?.nombre || 'Usuario')}</h1>
+               <p className="text-[9px] text-blue-300 font-black uppercase tracking-widest mt-1.5 leading-snug break-words whitespace-normal" style={{wordBreak:'break-word'}}>{String(currentUser?.cargo || 'SGCC-SM')}</p>
              </div>
           </div>
         </div>
         <nav className="flex-1 p-3 space-y-1">
-          <NavBtn act={activeTab === 'dashboard'} icon={LayoutDashboard} txt="Panel Principal" onClick={() => setActiveTab('dashboard')} />
-          <NavBtn act={activeTab === 'stats'} icon={BarChart3} txt="Plazos Meta" onClick={() => setActiveTab('stats')} />
-          <NavBtn act={activeTab === 'cases'} icon={Users} txt="Casos de Red" onClick={() => setActiveTab('cases')} />
-          <NavBtn act={activeTab === 'docs'} icon={FileText} txt="Protocolos" onClick={() => setActiveTab('docs')} />
+          <button onClick={() => setActiveTab('dashboard')} className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl text-xs font-bold uppercase tracking-widest transition-all ${activeTab === 'dashboard' ? 'bg-blue-600 shadow-lg' : 'hover:bg-white/5 opacity-80'}`}><LayoutDashboard size={18}/> Panel Principal</button>
+          <button onClick={() => setActiveTab('stats')} className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl text-xs font-bold uppercase tracking-widest transition-all ${activeTab === 'stats' ? 'bg-blue-600 shadow-lg' : 'hover:bg-white/5 opacity-80'}`}><BarChart3 size={18}/> Plazos Meta</button>
+          <button onClick={() => setActiveTab('cases')} className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl text-xs font-bold uppercase tracking-widest transition-all ${activeTab === 'cases' ? 'bg-blue-600 shadow-lg' : 'hover:bg-white/5 opacity-80'}`}><Users size={18}/> Casos de Red</button>
+          <button onClick={() => setActiveTab('docs')} className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl text-xs font-bold uppercase tracking-widest transition-all ${activeTab === 'docs' ? 'bg-blue-600 shadow-lg' : 'hover:bg-white/5 opacity-80'}`}><FileText size={18}/> Protocolos</button>
           <div className="pt-5 pb-2 px-4 text-[10px] font-black text-blue-400 uppercase tracking-widest">Evaluación y Red</div>
-          <NavBtn act={activeTab === 'auditorias'} icon={ClipboardCheck} txt="Auditorías" onClick={() => setActiveTab('auditorias')} />
-          <NavBtn act={activeTab === 'consultorias'} icon={MessageSquare} txt="Consultorías" onClick={() => setActiveTab('consultorias')} />
-          <NavBtn act={activeTab === 'dir'} icon={BookOpen} txt="Directorio" onClick={() => setActiveTab('dir')} />
+          <button onClick={() => setActiveTab('auditorias')} className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl text-xs font-bold uppercase tracking-widest transition-all ${activeTab === 'auditorias' ? 'bg-blue-600 shadow-lg' : 'hover:bg-white/5 opacity-80'}`}><ClipboardCheck size={18}/> Auditorías</button>
+          <button onClick={() => setActiveTab('consultorias')} className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl text-xs font-bold uppercase tracking-widest transition-all ${activeTab === 'consultorias' ? 'bg-blue-600 shadow-lg' : 'hover:bg-white/5 opacity-80'}`}><MessageSquare size={18}/> Consultorías</button>
+          <button onClick={() => setActiveTab('dir')} className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl text-xs font-bold uppercase tracking-widest transition-all ${activeTab === 'dir' ? 'bg-blue-600 shadow-lg' : 'hover:bg-white/5 opacity-80'}`}><BookOpen size={18}/> Directorio</button>
           {currentUser?.rol === 'Admin' && (
              <>
                <div className="pt-5 pb-2 px-4 text-[10px] font-black text-blue-400 uppercase tracking-widest">Administración</div>
-               <NavBtn act={activeTab === 'users'} icon={UserPlus} txt="Usuarios" onClick={() => setActiveTab('users')} />
-               <NavBtn act={activeTab === 'config'} icon={Settings} txt="Ajustes" onClick={() => setActiveTab('config')} />
+               <button onClick={() => setActiveTab('users')} className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl text-xs font-bold uppercase tracking-widest transition-all ${activeTab === 'users' ? 'bg-blue-600 shadow-lg' : 'hover:bg-white/5 opacity-80'}`}><UserPlus size={18}/> Usuarios</button>
+               <button onClick={() => setActiveTab('config')} className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl text-xs font-bold uppercase tracking-widest transition-all ${activeTab === 'config' ? 'bg-blue-600 shadow-lg' : 'hover:bg-white/5 opacity-80'}`}><Settings size={18}/> Ajustes</button>
              </>
           )}
         </nav>
@@ -607,7 +612,7 @@ export default function App() {
                   {notifications.length === 0 ? (<div className="p-6 text-center text-xs text-slate-500 font-medium">No hay notificaciones.</div>) : (
                     <div className="divide-y divide-slate-50">
                       {notifications.map(n => (
-                        <div key={n.id} className="p-4 hover:bg-slate-50 transition-colors flex gap-3 items-start"><div className="mt-0.5">{n.type === 'alerta' || n.type === 'overdue' ? <AlertTriangle size={14} className="text-red-500"/> : <Bell size={14} className="text-amber-500"/>}</div><div><p className="text-sm font-bold text-slate-800">{n.title}</p><p className="text-xs text-slate-500 mt-1 font-medium">{n.desc}</p></div></div>
+                        <div key={n.id} className="p-4 hover:bg-slate-50 transition-colors flex gap-3 items-start"><div className="mt-0.5">{n.type === 'alerta' || n.type === 'overdue' ? <AlertTriangle size={14} className="text-red-500"/> : <Bell size={14} className="text-amber-500"/>}</div><div><p className="text-sm font-bold text-slate-800">{String(n.title)}</p><p className="text-xs text-slate-500 mt-1 font-medium">{String(n.desc)}</p></div></div>
                       ))}
                     </div>
                   )}
@@ -623,10 +628,10 @@ export default function App() {
             <div><h2 className="text-2xl font-black text-slate-800 tracking-tight">Panel de Gestión Integral</h2><p className="text-xs text-slate-500 font-medium mt-1">Resumen de actividad clínica y normativa</p></div>
             <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
               <div className="bg-white p-4 rounded-2xl shadow-sm border-l-[6px] border-l-red-500"><p className="text-[9px] text-slate-400 font-black uppercase tracking-widest">Pérdida Continuidad</p><h3 className="text-2xl font-black text-red-600 mt-1">{alertCases.length}</h3></div>
-              <div className="bg-white p-4 rounded-2xl shadow-sm border-l-[6px] border-l-blue-500"><p className="text-[9px] text-slate-400 font-black uppercase tracking-widest">Pacientes en Tránsito</p><h3 className="text-2xl font-black text-blue-600 mt-1">{visibleCases.filter(c => c.estado === 'Pendiente').length}</h3></div>
+              <div className="bg-white p-4 rounded-2xl shadow-sm border-l-[6px] border-l-blue-500"><p className="text-[9px] text-slate-400 font-black uppercase tracking-widest">Pacientes en Tránsito</p><h3 className="text-2xl font-black text-blue-600 mt-1">{safeArr(visibleCases).filter(c => c.estado === 'Pendiente').length}</h3></div>
               <div className="bg-white p-4 rounded-2xl shadow-sm border-l-[6px] border-l-amber-500"><p className="text-[9px] text-slate-400 font-black uppercase tracking-widest">Tareas Críticas</p><h3 className="text-2xl font-black text-amber-600 mt-1">{tareasCriticas}</h3></div>
-              <div className="bg-white p-4 rounded-2xl shadow-sm border-l-[6px] border-l-indigo-500"><p className="text-[9px] text-slate-400 font-black uppercase tracking-widest">Auditorías</p><h3 className="text-2xl font-black text-indigo-600 mt-1">{visibleAudits.filter(a => a.tipo === 'Auditoría').length}</h3></div>
-              <div className="bg-white p-4 rounded-2xl shadow-sm border-l-[6px] border-l-teal-500"><p className="text-[9px] text-slate-400 font-black uppercase tracking-widest">Consultorías</p><h3 className="text-2xl font-black text-teal-600 mt-1">{visibleAudits.filter(a => a.tipo === 'Consultoría').length}</h3></div>
+              <div className="bg-white p-4 rounded-2xl shadow-sm border-l-[6px] border-l-indigo-500"><p className="text-[9px] text-slate-400 font-black uppercase tracking-widest">Auditorías</p><h3 className="text-2xl font-black text-indigo-600 mt-1">{safeArr(visibleAudits).filter(a => a.tipo === 'Auditoría').length}</h3></div>
+              <div className="bg-white p-4 rounded-2xl shadow-sm border-l-[6px] border-l-teal-500"><p className="text-[9px] text-slate-400 font-black uppercase tracking-widest">Consultorías</p><h3 className="text-2xl font-black text-teal-600 mt-1">{safeArr(visibleAudits).filter(a => a.tipo === 'Consultoría').length}</h3></div>
             </div>
             <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
               <div className="bg-white rounded-2xl shadow-sm border border-slate-200 p-5 lg:col-span-2 overflow-hidden">
@@ -635,7 +640,7 @@ export default function App() {
                   <table className="w-full text-left border-collapse min-w-[500px]">
                     <thead><tr className="bg-slate-50 text-xs font-bold uppercase tracking-wider text-slate-400"><th className="p-3 rounded-l-lg">ID</th><th className="p-3">Paciente</th><th className="p-3">Destino</th><th className="p-3 rounded-r-lg">Estado</th></tr></thead>
                     <tbody>
-                      {alertCases.map(c => (<tr key={c.id} className="border-b border-slate-50"><td className="p-3 text-xs font-bold text-slate-500">{c.id}</td><td className="p-3 text-sm font-bold text-slate-800">{c.nombre}</td><td className="p-3 text-xs font-bold text-indigo-600">{c.destino}</td><td className="p-3"><StatusBadge status={c.estado}/></td></tr>))}
+                      {alertCases.map(c => (<tr key={c.id} className="border-b border-slate-50"><td className="p-3 text-xs font-bold text-slate-500">{String(c.id)}</td><td className="p-3 text-sm font-bold text-slate-800">{String(c.nombre)}</td><td className="p-3 text-xs font-bold text-indigo-600">{String(c.destino)}</td><td className="p-3"><StatusBadge status={c.estado}/></td></tr>))}
                       {alertCases.length === 0 && (<tr><td colSpan="4" className="p-6 text-center text-slate-400 font-bold text-xs uppercase tracking-widest">No hay alertas activas en tu red.</td></tr>)}
                     </tbody>
                   </table>
@@ -652,7 +657,7 @@ export default function App() {
                   ) : (<div className="mt-auto p-3 bg-white/10 rounded-xl text-center text-[9px] font-black uppercase tracking-widest text-indigo-300">Exclusivo Administradores</div>)}
                 </div>
                 {reportContent && activeTab === 'dashboard' && currentUser?.rol === 'Admin' && (
-                  <div className="mt-4 bg-[#081b30] p-4 rounded-xl border border-white/10 relative z-10"><div className="flex justify-between items-center mb-3 pb-2 border-b border-white/10"><span className="text-[9px] font-black uppercase tracking-[0.2em] text-blue-300">Borrador:</span><button onClick={()=>copyToClipboard(reportContent)} className="text-white hover:text-blue-300"><Copy size={12}/></button></div><p className="text-[10px] font-medium text-slate-300 whitespace-pre-wrap leading-relaxed max-h-32 overflow-y-auto">{reportContent}</p></div>
+                  <div className="mt-4 bg-[#081b30] p-4 rounded-xl border border-white/10 relative z-10"><div className="flex justify-between items-center mb-3 pb-2 border-b border-white/10"><span className="text-[9px] font-black uppercase tracking-[0.2em] text-blue-300">Borrador:</span><button onClick={()=>copyToClipboard(reportContent)} className="text-white hover:text-blue-300"><Copy size={12}/></button></div><p className="text-[10px] font-medium text-slate-300 whitespace-pre-wrap leading-relaxed max-h-32 overflow-y-auto">{String(reportContent)}</p></div>
                 )}
                 <div className="absolute top-0 right-0 w-32 h-32 bg-blue-500/20 rounded-full -mr-10 -mt-10 blur-xl"></div>
               </div>
@@ -668,10 +673,10 @@ export default function App() {
                       return (
                         <tr key={tarea.id} className="hover:bg-slate-50 transition-colors group">
                           <td className="p-3 text-slate-300"><button onClick={() => tarea.source === 'Caso' ? toggleTaskCompletion(tarea.parentId, tarea.id) : toggleDocTaskCompletion(tarea.parentId, tarea.id)} className="hover:text-emerald-500"><Square size={16} /></button></td>
-                          <td className="p-3"><div className="text-[11px] font-black text-slate-800 flex items-center gap-2">{tarea.parentName} {statusInfo.status === 'upcoming' && <span className="bg-amber-100 text-amber-700 px-1.5 py-0.5 rounded text-[7px] uppercase animate-pulse">Próximo</span>} {statusInfo.status === 'overdue' && <span className="bg-red-100 text-red-700 px-1.5 py-0.5 rounded text-[7px] uppercase">Vencida</span>}</div><div className="text-[8px] text-slate-400 mt-1 uppercase font-bold">{tarea.source}</div></td>
-                          <td className="p-3 text-xs font-medium text-slate-600">{tarea.descripcion}</td>
-                          <td className="p-3 text-[10px] font-bold text-slate-500">{tarea.responsable || 'No asignado'}</td>
-                          <td className="p-3"><span className={`px-2.5 py-1 text-[9px] font-black uppercase rounded-lg flex items-center gap-1.5 w-fit ${statusInfo.bgClass}`}>{statusInfo.showWarning && <AlertTriangle size={10}/>}{tarea.fechaCumplimiento || 'Sin Fecha'}</span></td>
+                          <td className="p-3"><div className="text-[11px] font-black text-slate-800 flex items-center gap-2">{String(tarea.parentName)} {statusInfo.status === 'upcoming' && <span className="bg-amber-100 text-amber-700 px-1.5 py-0.5 rounded text-[7px] uppercase animate-pulse">Próximo</span>} {statusInfo.status === 'overdue' && <span className="bg-red-100 text-red-700 px-1.5 py-0.5 rounded text-[7px] uppercase">Vencida</span>}</div><div className="text-[8px] text-slate-400 mt-1 uppercase font-bold">{String(tarea.source)}</div></td>
+                          <td className="p-3 text-xs font-medium text-slate-600">{String(tarea.descripcion)}</td>
+                          <td className="p-3 text-[10px] font-bold text-slate-500">{String(tarea.responsable || 'No asignado')}</td>
+                          <td className="p-3"><span className={`px-2.5 py-1 text-[9px] font-black uppercase rounded-lg flex items-center gap-1.5 w-fit ${statusInfo.bgClass}`}>{statusInfo.showWarning && <AlertTriangle size={10}/>}{String(tarea.fechaCumplimiento || 'Sin Fecha')}</span></td>
                         </tr>
                       );
                     })}
@@ -697,7 +702,7 @@ export default function App() {
                     <Lbl>Meta General por Defecto</Lbl>
                     <p className="text-[10px] text-slate-500 mb-4 font-medium">Aplica para dispositivos sin plazo específico.</p>
                     <div className="flex items-center gap-2">
-                       {currentUser?.rol === 'Admin' ? (<input type="number" value={appConfig?.targetDays || 7} onChange={(e) => handleUpdateTarget(e.target.value)} className="w-24 p-3 bg-white border border-blue-100 rounded-xl text-center font-black text-blue-600 outline-none focus:border-blue-500 text-sm shadow-sm"/>) : (<span className="px-4 py-3 bg-white border border-slate-200 rounded-xl font-black text-blue-600 text-sm">{appConfig?.targetDays || 7}</span>)}
+                       {currentUser?.rol === 'Admin' ? (<input type="number" value={appConfig?.targetDays || 7} onChange={(e) => handleUpdateTarget(e.target.value)} className="w-24 p-3 bg-white border border-blue-100 rounded-xl text-center font-black text-blue-600 outline-none focus:border-blue-500 text-sm shadow-sm"/>) : (<span className="px-4 py-3 bg-white border border-slate-200 rounded-xl font-black text-blue-600 text-sm">{String(appConfig?.targetDays || 7)}</span>)}
                        <span className="text-[10px] font-black text-slate-500 uppercase">Días</span>
                     </div>
                   </div>
@@ -707,7 +712,7 @@ export default function App() {
                     {currentUser?.rol === 'Admin' && (
                       <div className="flex gap-2 mb-4">
                         <input type="text" list="centros-list" value={plazoCentroInput} onChange={e=>setPlazoCentroInput(e.target.value)} placeholder="Centro..." className="flex-1 p-2.5 border border-white rounded-xl text-xs font-bold outline-none"/>
-                        <datalist id="centros-list">{centros.map(c=><option key={c} value={c}/>)}</datalist>
+                        <datalist id="centros-list">{safeArr(centros).map(c=><option key={c} value={c}/>)}</datalist>
                         <input type="number" placeholder="Días" value={plazoDaysInput} onChange={e=>setPlazoDaysInput(e.target.value)} className="w-20 p-2.5 border border-white rounded-xl text-xs font-bold text-center outline-none"/>
                         <button onClick={handleAddPlazoCentro} className="bg-blue-600 text-white p-2.5 rounded-xl hover:bg-blue-700"><Plus size={16}/></button>
                       </div>
@@ -715,8 +720,8 @@ export default function App() {
                     <div className="space-y-2 max-h-32 overflow-y-auto pr-2">
                       {Object.entries(appConfig?.plazos || {}).map(([centroStr, dias]) => (
                         <div key={centroStr} className="flex justify-between items-center bg-white p-3 rounded-xl shadow-sm border border-blue-50">
-                           <span className="text-[10px] font-black text-slate-700 uppercase">{centroStr}</span>
-                           <div className="flex items-center gap-3"><span className="text-[10px] font-black text-blue-600 bg-blue-50 px-2 py-1 rounded-md">{dias} Días</span>{currentUser?.rol === 'Admin' && <button onClick={() => handleDeletePlazoCentro(centroStr)} className="text-slate-400 hover:text-red-500"><Trash2 size={14}/></button>}</div>
+                           <span className="text-[10px] font-black text-slate-700 uppercase">{String(centroStr)}</span>
+                           <div className="flex items-center gap-3"><span className="text-[10px] font-black text-blue-600 bg-blue-50 px-2 py-1 rounded-md">{String(dias)} Días</span>{currentUser?.rol === 'Admin' && <button onClick={() => handleDeletePlazoCentro(centroStr)} className="text-slate-400 hover:text-red-500"><Trash2 size={14}/></button>}</div>
                         </div>
                       ))}
                     </div>
@@ -724,14 +729,14 @@ export default function App() {
                </div>
             </div>
             <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-              <div className="bg-white p-6 rounded-2xl shadow-sm border border-l-[8px] border-l-indigo-500"><div className="flex justify-between mb-3"><div className="p-2 bg-indigo-50 rounded-xl text-indigo-600"><Timer size={18}/></div></div><h3 className="text-[9px] font-black text-slate-400 uppercase tracking-widest">Enlace Administrativo</h3><p className="text-4xl font-black text-slate-800 mt-1">{redMetrics.avgEnlace} <span className="text-xs text-slate-300">Días</span></p></div>
-              <div className="bg-white p-6 rounded-2xl shadow-sm border border-l-[8px] border-l-blue-500"><div className="flex justify-between mb-3"><div className="p-2 bg-blue-50 rounded-xl text-blue-600"><BarChart3 size={18}/></div></div><h3 className="text-[9px] font-black text-slate-400 uppercase tracking-widest">Ingreso Efectivo</h3><p className="text-4xl font-black text-slate-800 mt-1">{redMetrics.avgIngreso} <span className="text-xs text-slate-300">Días</span></p></div>
-              <div className="bg-white p-6 rounded-2xl shadow-sm border border-l-[8px] border-l-red-500"><div className="flex justify-between mb-3"><div className="p-2 bg-red-50 rounded-xl text-red-600"><AlertTriangle size={18}/></div></div><h3 className="text-[9px] font-black text-slate-400 uppercase tracking-widest">Casos sobre meta</h3><p className="text-4xl font-black text-slate-800 mt-1">{redMetrics.fueraDePlazo} <span className="text-xs text-slate-300">Casos</span></p></div>
+              <div className="bg-white p-6 rounded-2xl shadow-sm border border-l-[8px] border-l-indigo-500"><div className="flex justify-between mb-3"><div className="p-2 bg-indigo-50 rounded-xl text-indigo-600"><Timer size={18}/></div></div><h3 className="text-[9px] font-black text-slate-400 uppercase tracking-widest">Enlace Administrativo</h3><p className="text-4xl font-black text-slate-800 mt-1">{String(redMetrics.avgEnlace)} <span className="text-xs text-slate-300">Días</span></p></div>
+              <div className="bg-white p-6 rounded-2xl shadow-sm border border-l-[8px] border-l-blue-500"><div className="flex justify-between mb-3"><div className="p-2 bg-blue-50 rounded-xl text-blue-600"><BarChart3 size={18}/></div></div><h3 className="text-[9px] font-black text-slate-400 uppercase tracking-widest">Ingreso Efectivo</h3><p className="text-4xl font-black text-slate-800 mt-1">{String(redMetrics.avgIngreso)} <span className="text-xs text-slate-300">Días</span></p></div>
+              <div className="bg-white p-6 rounded-2xl shadow-sm border border-l-[8px] border-l-red-500"><div className="flex justify-between mb-3"><div className="p-2 bg-red-50 rounded-xl text-red-600"><AlertTriangle size={18}/></div></div><h3 className="text-[9px] font-black text-slate-400 uppercase tracking-widest">Casos sobre meta</h3><p className="text-4xl font-black text-slate-800 mt-1">{String(redMetrics.fueraDePlazo)} <span className="text-xs text-slate-300">Casos</span></p></div>
             </div>
             {redMetrics.fueraDePlazo > 0 && currentUser?.rol === 'Admin' && (
               <div className="bg-gradient-to-br from-indigo-900 to-[#0a2540] rounded-2xl p-8 text-white shadow-xl">
                  <div className="flex justify-between items-center"><div className="max-w-2xl"><h3 className="text-lg font-black mb-2"><TrendingUp size={20} className="inline text-blue-400"/> Análisis Estratégico (IA)</h3></div><button onClick={() => handleGenerateReport('stats')} disabled={isGeneratingReport} className={clsBtnP}>{isGeneratingReport ? <Loader2 size={16} className="animate-spin"/> : <FileText size={16}/>} Procesar</button></div>
-                 {reportContent && activeTab === 'stats' && (<div className="mt-6 bg-[#081b30] p-6 rounded-xl border border-white/10"><div className="flex justify-between mb-4"><span className="text-[9px] font-black uppercase text-blue-300">Borrador:</span><button onClick={()=>copyToClipboard(reportContent)} className="text-white hover:text-blue-300"><Copy size={14}/></button></div><p className="text-xs font-medium text-slate-300 whitespace-pre-wrap">{reportContent}</p></div>)}
+                 {reportContent && activeTab === 'stats' && (<div className="mt-6 bg-[#081b30] p-6 rounded-xl border border-white/10"><div className="flex justify-between mb-4"><span className="text-[9px] font-black uppercase text-blue-300">Borrador:</span><button onClick={()=>copyToClipboard(reportContent)} className="text-white hover:text-blue-300"><Copy size={14}/></button></div><p className="text-xs font-medium text-slate-300 whitespace-pre-wrap">{String(reportContent)}</p></div>)}
               </div>
             )}
           </div>
@@ -746,20 +751,21 @@ export default function App() {
                 <table className="w-full text-left border-collapse min-w-[1000px]">
                   <thead className="bg-slate-50 border-b border-slate-100"><tr className="text-xs font-bold text-slate-500 uppercase tracking-wider"><th className="p-4">Paciente</th><th className="p-4">Ruta Traslado</th><th className="p-4 text-center">Hitos (A-B-C)</th><th className="p-4 text-center">Estado</th><th className="p-4 text-right">Acción</th></tr></thead>
                   <tbody className="divide-y divide-slate-50">
-                    {visibleCases.map(c => {
+                    {safeArr(visibleCases).map(c => {
                       const daysC = diffInDays(c.fechaEgreso, c.fechaIngresoEfectivo);
                       const target = getTargetDaysForCase(c.destino);
                       const isOver = daysC !== null && daysC > target;
                       return (
                         <tr key={c.id} className={`hover:bg-slate-50/80 transition-colors ${isOver ? 'bg-red-50/20' : ''}`}>
-                          <td className="p-4"><div className="font-bold text-slate-800 text-sm uppercase">{c.nombre}</div><div className="text-xs text-slate-500 mt-1">{c.paciente}</div></td>
-                          <td className="p-4"><div className="text-xs font-bold text-blue-700 bg-blue-50 px-3 py-1.5 rounded-lg w-fit flex items-center gap-2 border border-blue-100">{c.origen} <Timer size={14}/> {c.destino}</div></td>
-                          <td className="p-4"><div className="flex justify-center gap-6"><div className="text-center"><span className="text-[10px] font-bold text-slate-400 block uppercase">Egreso</span><span className="text-sm font-bold text-slate-700">{c.fechaEgreso || '---'}</span></div><div className="text-center border-l pl-6"><span className="text-[10px] font-bold text-indigo-400 block uppercase">Recep</span><span className="text-sm font-bold text-indigo-700">{c.fechaRecepcionRed || '---'}</span></div><div className="text-center border-l pl-6"><span className="text-[10px] font-bold text-green-500 block uppercase">Ingreso</span><span className={`text-sm font-bold ${isOver ? 'text-red-600' : 'text-green-600'}`}>{c.fechaIngresoEfectivo || '---'}</span></div></div></td>
+                          <td className="p-4"><div className="font-bold text-slate-800 text-sm uppercase">{String(c.nombre)}</div><div className="text-xs text-slate-500 mt-1">{String(c.paciente)}</div></td>
+                          <td className="p-4"><div className="text-xs font-bold text-blue-700 bg-blue-50 px-3 py-1.5 rounded-lg w-fit flex items-center gap-2 border border-blue-100">{String(c.origen)} <Timer size={14}/> {String(c.destino)}</div></td>
+                          <td className="p-4"><div className="flex justify-center gap-6"><div className="text-center"><span className="text-[10px] font-bold text-slate-400 block uppercase">Egreso</span><span className="text-sm font-bold text-slate-700">{String(c.fechaEgreso || '---')}</span></div><div className="text-center border-l pl-6"><span className="text-[10px] font-bold text-indigo-400 block uppercase">Recep</span><span className="text-sm font-bold text-indigo-700">{String(c.fechaRecepcionRed || '---')}</span></div><div className="text-center border-l pl-6"><span className="text-[10px] font-bold text-green-500 block uppercase">Ingreso</span><span className={`text-sm font-bold ${isOver ? 'text-red-600' : 'text-green-600'}`}>{String(c.fechaIngresoEfectivo || '---')}</span></div></div></td>
                           <td className="p-4"><div className="flex justify-center"><StatusBadge status={c.estado}/></div></td>
                           <td className="p-4 text-right"><button onClick={() => { setEditingCaseId(c.id); setCaseForm({ ...c, rut: c.paciente, tutor: c.tutor || {nombre:'', relacion:'', telefono:''}, referentes: c.referentes || [], archivos: c.archivos || [], epicrisis: c.epicrisis || '' }); setCaseSummary(''); setIsCaseModalOpen(true); }} className="text-slate-400 hover:text-blue-600 bg-slate-50 p-2.5 rounded-lg border border-slate-100 hover:border-blue-200"><Edit2 size={18}/></button></td>
                         </tr>
                       );
                     })}
+                    {visibleCases.length === 0 && (<tr><td colSpan="5" className="p-12 text-center"><p className="text-slate-400 font-bold text-sm uppercase tracking-widest">No hay registros de seguimiento en la red</p></td></tr>)}
                   </tbody>
                 </table>
               </div>
@@ -772,15 +778,15 @@ export default function App() {
           <div className="space-y-6 animate-in fade-in mt-12 md:mt-0">
             <div className="flex justify-between items-end"><div><h2 className="text-2xl font-black text-slate-800 tracking-tight">Normativas y Protocolos</h2></div><button onClick={() => { setEditingDocId(null); setDocForm({ nombre: '', ambito: 'Red Integral', fase: 'Levantamiento', avance: 10, notas: '', bitacora: [], archivos: [] }); setActiveDocModalTab('datos'); setIsDocModalOpen(true); }} className={clsBtnP}><Plus size={18}/> Nuevo Protocolo</button></div>
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              {docs.map((d) => (
+              {safeArr(docs).map((d) => (
                 <div key={d.id} className="bg-white p-6 rounded-2xl shadow-sm border border-slate-200 flex flex-col justify-between">
                   <div>
-                    <div className="flex justify-between items-start mb-3"><span className="text-[9px] font-black text-blue-600 bg-blue-50 px-2 py-1 rounded-lg">{d.id}</span>
+                    <div className="flex justify-between items-start mb-3"><span className="text-[9px] font-black text-blue-600 bg-blue-50 px-2 py-1 rounded-lg">{String(d.id)}</span>
                       <div className="flex gap-2"><button onClick={() => { setEditingDocId(d.id); setDocForm(d); setActiveDocModalTab('datos'); setIsDocModalOpen(true); }} className="text-slate-400 hover:text-blue-600 p-1.5 bg-slate-50 rounded-lg"><Edit2 size={14} /></button>{currentUser?.rol === 'Admin' && (<button onClick={async () => { if(window.confirm('¿Eliminar protocolo?')) await deleteFromCloud('docs', d.id); }} className="text-slate-400 hover:text-red-500 p-1.5 bg-slate-50 rounded-lg"><Trash2 size={14}/></button>)}</div>
                     </div>
-                    <h3 className="text-lg font-black text-slate-800 mb-1">{d.nombre}</h3><p className="text-[10px] font-bold text-slate-400 mb-4 uppercase">{d.ambito} • {d.fase}</p>
+                    <h3 className="text-lg font-black text-slate-800 mb-1">{String(d.nombre)}</h3><p className="text-[10px] font-bold text-slate-400 mb-4 uppercase">{String(d.ambito)} • {String(d.fase)}</p>
                   </div>
-                  <div><div className="flex justify-between text-[9px] font-black uppercase mb-1.5 text-slate-400"><span>Avance Técnico</span><span>{d.avance}%</span></div><div className="w-full bg-slate-100 rounded-full h-2.5"><div className="bg-blue-500 h-2.5 rounded-full" style={{ width: `${d.avance}%` }}></div></div></div>
+                  <div><div className="flex justify-between text-[9px] font-black uppercase mb-1.5 text-slate-400"><span>Avance Técnico</span><span>{String(d.avance)}%</span></div><div className="w-full bg-slate-100 rounded-full h-2.5"><div className="bg-blue-500 h-2.5 rounded-full" style={{ width: `${d.avance}%` }}></div></div></div>
                 </div>
               ))}
             </div>
@@ -792,7 +798,7 @@ export default function App() {
           const tipoLabel = activeTab === 'auditorias' ? 'Auditoría' : 'Consultoría';
           const currentFilter = activeTab === 'auditorias' ? centroFilterAuditorias : centroFilterConsultorias;
           const setFilter = activeTab === 'auditorias' ? setCentroFilterAuditorias : setCentroFilterConsultorias;
-          const filteredAudits = visibleAudits.filter(a => a.tipo === tipoLabel && (currentFilter === 'Todos' || a.centro === currentFilter));
+          const filteredAudits = safeArr(visibleAudits).filter(a => a.tipo === tipoLabel && (currentFilter === 'Todos' || a.centro === currentFilter));
 
           return (
             <div className="space-y-6 animate-in fade-in mt-12 md:mt-0">
@@ -811,18 +817,18 @@ export default function App() {
                     <div key={a.id} className="bg-white p-6 rounded-2xl shadow-sm border border-slate-100 flex flex-col justify-between">
                        <div className="flex justify-between w-full">
                          <div>
-                           <h3 className="font-black text-slate-800 uppercase text-xs mb-1">{a.centro}</h3>
-                           <p className="text-[9px] text-blue-600 font-black uppercase mb-2 bg-blue-50 px-2 py-0.5 rounded w-fit">{template ? template.nombre : 'Pauta Eliminada'}</p>
-                           <p className="text-[9px] text-slate-400 font-bold uppercase"><Calendar size={10} className="inline"/> {a.fecha} • {a.evaluador}</p>
+                           <h3 className="font-black text-slate-800 uppercase text-xs mb-1">{String(a.centro)}</h3>
+                           <p className="text-[9px] text-blue-600 font-black uppercase mb-2 bg-blue-50 px-2 py-0.5 rounded w-fit">{template ? String(template.nombre) : 'Pauta Eliminada'}</p>
+                           <p className="text-[9px] text-slate-400 font-bold uppercase"><Calendar size={10} className="inline"/> {String(a.fecha)} • {String(a.evaluador)}</p>
                          </div>
                          <div className="text-right">
-                            {a.cumplimiento !== undefined && <div className="text-3xl font-black text-slate-800">{a.cumplimiento}%</div>}
-                            <span className="text-[8px] uppercase text-slate-400 font-black block">{a.puntaje}</span>
-                            <span className="text-[8px] uppercase text-emerald-700 bg-emerald-100 px-2 py-1 rounded-lg font-black">{a.estado}</span>
+                            {a.cumplimiento !== undefined && <div className="text-3xl font-black text-slate-800">{String(a.cumplimiento)}%</div>}
+                            <span className="text-[8px] uppercase text-slate-400 font-black block">{String(a.puntaje)}</span>
+                            <span className="text-[8px] uppercase text-emerald-700 bg-emerald-100 px-2 py-1 rounded-lg font-black">{String(a.estado)}</span>
                          </div>
                        </div>
                        <div className="mt-4 pt-4 border-t border-slate-100 flex flex-col gap-3">
-                         {a.observaciones && <p className="text-[10px] text-slate-500 font-medium italic"><MessageSquare size={12} className="inline"/> {a.observaciones}</p>}
+                         {a.observaciones && <p className="text-[10px] text-slate-500 font-medium italic"><MessageSquare size={12} className="inline"/> {String(a.observaciones)}</p>}
                          <div className="flex justify-end gap-2 mt-2">
                            <button onClick={() => setPrintingAudit(a)} className="bg-slate-100 text-slate-600 px-3 py-1.5 rounded-lg text-[9px] font-black uppercase hover:bg-slate-200 flex items-center gap-1.5"><Printer size={12}/> Ver / Imprimir</button>
                            {currentUser?.rol === 'Admin' && (<button onClick={async () => { if(window.confirm('¿Eliminar evaluación?')) await deleteFromCloud('audits', a.id); }} className="bg-red-50 text-red-500 px-3 py-1.5 rounded-lg text-[9px] font-black uppercase hover:bg-red-100 flex items-center gap-1.5"><Trash2 size={12}/> Eliminar</button>)}
@@ -848,7 +854,7 @@ export default function App() {
               </div>
             </div>
             <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-              {(directory || []).filter(d => {
+              {safeArr(directory).filter(d => {
                  if (!d) return false;
                  const search = String(dirSearch || '').toLowerCase();
                  return String(d.nombre||'').toLowerCase().includes(search) || String(d.institucion||'').toLowerCase().includes(search) || String(d.cargo||'').toLowerCase().includes(search);
@@ -875,11 +881,11 @@ export default function App() {
               <table className="w-full text-left border-collapse min-w-[700px]">
                 <thead className="bg-slate-50 border-b"><tr className="text-[9px] font-black text-slate-400 uppercase"><th className="p-4">Profesional</th><th className="p-4">Rol</th><th className="p-4">Visibilidad</th><th className="p-4 text-right">Ajustes</th></tr></thead>
                 <tbody className="divide-y divide-slate-50">
-                  {users.map(u => (
+                  {safeArr(users).map(u => (
                     <tr key={u.id} className="hover:bg-slate-50/80">
-                      <td className="p-4"><div className="flex items-center gap-3"><div className="w-10 h-10 rounded-xl bg-blue-50 text-blue-600 font-black flex items-center justify-center">{u.iniciales}</div><div><p className="font-black text-slate-800 text-xs uppercase">{u.nombre}</p><p className="text-[9px] font-bold text-slate-400 uppercase mt-0.5">{u.rut} • {u.cargo}</p></div></div></td>
-                      <td className="p-4"><span className={`px-2.5 py-1 rounded-lg text-[9px] font-black uppercase border shadow-sm ${u.rol === 'Admin' ? 'bg-indigo-50 text-indigo-700 border-indigo-100' : 'bg-white text-slate-600 border-slate-200'}`}>{u.rol}</span></td>
-                      <td className="p-4 text-[9px] font-black uppercase">{u.rol === 'Admin' ? <span className="text-indigo-500">Acceso Total</span> : <div className="flex flex-wrap gap-1.5">{(u.centrosAsignados || []).map(c => <span key={c} className="bg-slate-100 text-slate-500 px-2 py-1 rounded-md">{c}</span>)}</div>}</td>
+                      <td className="p-4"><div className="flex items-center gap-3"><div className="w-10 h-10 rounded-xl bg-blue-50 text-blue-600 font-black flex items-center justify-center">{String(u.iniciales)}</div><div><p className="font-black text-slate-800 text-xs uppercase">{String(u.nombre)}</p><p className="text-[9px] font-bold text-slate-400 uppercase mt-0.5">{String(u.rut)} • {String(u.cargo)}</p></div></div></td>
+                      <td className="p-4"><span className={`px-2.5 py-1 rounded-lg text-[9px] font-black uppercase border shadow-sm ${u.rol === 'Admin' ? 'bg-indigo-50 text-indigo-700 border-indigo-100' : 'bg-white text-slate-600 border-slate-200'}`}>{String(u.rol)}</span></td>
+                      <td className="p-4 text-[9px] font-black uppercase">{u.rol === 'Admin' ? <span className="text-indigo-500">Acceso Total</span> : <div className="flex flex-wrap gap-1.5">{safeArr(u.centrosAsignados).map(c => <span key={c} className="bg-slate-100 text-slate-500 px-2 py-1 rounded-md">{String(c)}</span>)}</div>}</td>
                       <td className="p-4 text-right"><button onClick={() => { setEditingUserId(u.id); setUserForm(u); setIsUserModalOpen(true); }} className="p-2 text-slate-400 hover:text-blue-600 bg-white border shadow-sm rounded-lg mr-1.5"><Edit2 size={14}/></button>{u.rol !== 'Admin' && <button onClick={() => deleteFromCloud('users', u.id)} className="p-2 text-slate-400 hover:text-red-600 bg-white border shadow-sm rounded-lg"><Trash2 size={14}/></button>}</td>
                     </tr>
                   ))}
@@ -895,15 +901,15 @@ export default function App() {
             <h2 className="text-2xl font-black text-slate-800">Configuración del Sistema</h2>
             <div className="bg-white p-8 rounded-2xl shadow-sm border max-w-3xl">
                <h3 className="font-black text-slate-800 text-base mb-2"><Activity size={18} className="inline text-blue-600"/> Catálogo de Dispositivos</h3>
-               <div className="flex gap-3 mb-6"><input type="text" value={newCentroName} onChange={e=>setNewCentroName(e.target.value)} className={clsInp}/><button onClick={async ()=>{if(newCentroName.trim()) { await saveToCloud('settings', 'centros', { list: [...centros, newCentroName.trim()].sort() }); setNewCentroName(''); }}} className="bg-slate-900 text-white px-6 py-3 rounded-xl text-[9px] font-black uppercase"><Plus size={14}/> Añadir</button></div>
-               <div className="grid grid-cols-1 md:grid-cols-2 gap-3">{centros.map(c => (<div key={c} className="flex justify-between items-center bg-slate-50 p-4 rounded-xl border group"><span className="text-[10px] font-black text-slate-700 uppercase">{c}</span><button onClick={async ()=>{ if(window.confirm(`¿Eliminar ${c}?`)) await saveToCloud('settings', 'centros', { list: centros.filter(x=>x!==c) }); }} className="text-slate-300 hover:text-red-600 p-1.5 bg-white rounded-lg opacity-0 group-hover:opacity-100"><Trash2 size={14}/></button></div>))}</div>
+               <div className="flex gap-3 mb-6"><input type="text" value={newCentroName} onChange={e=>setNewCentroName(e.target.value)} className={clsInp}/><button onClick={async ()=>{if(newCentroName.trim()) { await saveToCloud('settings', 'centros', { list: [...safeArr(centros), newCentroName.trim()].sort() }); setNewCentroName(''); }}} className="bg-slate-900 text-white px-6 py-3 rounded-xl text-[9px] font-black uppercase"><Plus size={14}/> Añadir</button></div>
+               <div className="grid grid-cols-1 md:grid-cols-2 gap-3">{safeArr(centros).map(c => (<div key={c} className="flex justify-between items-center bg-slate-50 p-4 rounded-xl border group"><span className="text-[10px] font-black text-slate-700 uppercase">{String(c)}</span><button onClick={async ()=>{ if(window.confirm(`¿Eliminar ${c}?`)) await saveToCloud('settings', 'centros', { list: safeArr(centros).filter(x=>x!==c) }); }} className="text-slate-300 hover:text-red-600 p-1.5 bg-white rounded-lg opacity-0 group-hover:opacity-100"><Trash2 size={14}/></button></div>))}</div>
             </div>
             <div className="bg-white p-8 rounded-2xl shadow-sm border max-w-3xl mt-6">
                <h3 className="font-black text-slate-800 text-base mb-2"><ClipboardCheck size={18} className="inline text-blue-600"/> Pautas Digitalizadas</h3>
                <div className="space-y-3">
-                 {auditTemplates.map(t => (
+                 {safeArr(auditTemplates).map(t => (
                    <div key={t.id} className="flex justify-between items-center bg-slate-50 p-4 rounded-xl border">
-                     <div><span className="text-xs font-black text-slate-700 uppercase block">{t.nombre}</span><span className="text-[9px] font-bold text-slate-400 uppercase mt-1">{t.metodoCalculo || 'Suma Automática'} • {t.criterios?.length||0} Criterios</span></div>
+                     <div><span className="text-xs font-black text-slate-700 uppercase block">{String(t.nombre)}</span><span className="text-[9px] font-bold text-slate-400 uppercase mt-1">{String(t.metodoCalculo || 'Suma Automática')} • {safeArr(t.criterios).length} Criterios</span></div>
                      <div className="flex gap-2"><button onClick={() => openTemplateEditor(t)} className="text-slate-400 hover:text-blue-600 p-2 bg-white rounded-lg"><Edit2 size={14}/></button><button onClick={async ()=>{ if(window.confirm(`¿Eliminar pauta ${t.nombre}?`)) await deleteFromCloud('auditTemplates', t.id); }} className="text-slate-400 hover:text-red-600 p-2 bg-white rounded-lg"><Trash2 size={14}/></button></div>
                    </div>
                  ))}
@@ -934,8 +940,8 @@ export default function App() {
                   <div><Lbl>Nombre Paciente</Lbl><Inp type="text" value={caseForm.nombre} onChange={e=>setCaseForm({...caseForm, nombre: e.target.value})}/></div>
                   <div><Lbl>Fecha Egreso</Lbl><Inp type="date" value={caseForm.fechaEgreso} onChange={e=>setCaseForm({...caseForm, fechaEgreso: e.target.value})}/></div>
                   <div><Lbl>Ingreso Efectivo</Lbl><Inp type="date" value={caseForm.fechaIngresoEfectivo} onChange={e=>setCaseForm({...caseForm, fechaIngresoEfectivo: e.target.value})}/></div>
-                  <div><Lbl>Origen</Lbl><Sel value={caseForm.origen} onChange={e=>setCaseForm({...caseForm, origen: e.target.value})}><option value="">Origen...</option>{centros.map(c => <option key={c} value={c}>{c}</option>)}</Sel></div>
-                  <div><Lbl>Destino</Lbl><Sel value={caseForm.destino} onChange={e=>setCaseForm({...caseForm, destino: e.target.value})}><option value="">Destino...</option>{centros.map(c => <option key={c} value={c}>{c}</option>)}</Sel></div>
+                  <div><Lbl>Origen</Lbl><Sel value={caseForm.origen} onChange={e=>setCaseForm({...caseForm, origen: e.target.value})}><option value="">Origen...</option>{safeArr(centros).map(c => <option key={c} value={c}>{String(c)}</option>)}</Sel></div>
+                  <div><Lbl>Destino</Lbl><Sel value={caseForm.destino} onChange={e=>setCaseForm({...caseForm, destino: e.target.value})}><option value="">Destino...</option>{safeArr(centros).map(c => <option key={c} value={c}>{String(c)}</option>)}</Sel></div>
                   <div><Lbl>Estado</Lbl><Sel value={caseForm.estado} onChange={e=>setCaseForm({...caseForm, estado: e.target.value})}><option>Pendiente</option><option>Concretado</option><option>Alerta</option></Sel></div>
                 </div>
               </div>
@@ -946,17 +952,17 @@ export default function App() {
                    <Sel value={newBitacoraEntry.tipo} onChange={e=>setNewBitacoraEntry({...newBitacoraEntry, tipo: e.target.value})}><option value="Nota Adm.">Nota</option><option value="Intervención">Intervención</option><option value="Tarea">Tarea</option></Sel>
                    <Inp value={newBitacoraEntry.responsable} onChange={e=>setNewBitacoraEntry({...newBitacoraEntry, responsable: e.target.value})} placeholder="Resp..." />
                    <Inp value={newBitacoraEntry.descripcion} onChange={e=>setNewBitacoraEntry({...newBitacoraEntry, descripcion: e.target.value})} placeholder="Detalle..." className="col-span-2" />
-                   {newBitacoraEntry.tipo === 'Tarea' && <Inp type="date" value={newBitacoraEntry.fechaCumplimiento} onChange={e=>setNewBitacoraEntry({...newBitacoraEntry, fechaCumplimiento: e.target.value})} className="col-span-4" />}
+                   {newBitacoraEntry.tipo === 'Tarea' && <Inp type="date" value={newBitacoraEntry.fechaCumplimiento} onChange={e=>setNewBitacoraEntry({...newBitacoraEntry, fechaCumplimiento: e.target.value})} className="col-span-4 bg-amber-50" />}
                    <button onClick={handleAddBitacora} className={clsBtnP + " col-span-4"}>Añadir Registro</button>
                 </div>
-                {caseForm.bitacora.map(b => <div key={b.id} className="p-4 border rounded-xl flex justify-between"><div className="flex-1"><p className="text-sm font-bold">{b.descripcion}</p><p className="text-[10px] text-slate-400 mt-1 uppercase">{b.tipo} | {b.fecha}</p></div><button onClick={() => setCaseForm({ ...caseForm, bitacora: caseForm.bitacora.filter(x => x.id !== b.id) })} className="text-red-400"><Trash2 size={16}/></button></div>)}
+                {safeArr(caseForm.bitacora).map(b => <div key={b.id} className="p-4 border rounded-xl flex justify-between"><div className="flex-1"><p className="text-sm font-bold">{String(b.descripcion)}</p><p className="text-[10px] text-slate-400 mt-1 uppercase">{String(b.tipo)} | {String(b.fecha)}</p></div><button onClick={() => setCaseForm({ ...caseForm, bitacora: safeArr(caseForm.bitacora).filter(x => x.id !== b.id) })} className="text-red-400"><Trash2 size={16}/></button></div>)}
               </div>
             )}
             {activeModalTab === 'archivos' && (
               <div className="space-y-4">
                  <Lbl>Epicrisis</Lbl><Txt value={caseForm.epicrisis || ''} onChange={e=>setCaseForm({...caseForm, epicrisis: e.target.value})} className="min-h-[140px]"/>
                  <div className="flex justify-between items-center"><Lbl>Resumen Inteligente</Lbl><button onClick={handleGenerateCaseSummary} disabled={isGeneratingCaseSummary} className={clsBtnP}>Generar</button></div>
-                 {caseSummary && <div className="p-4 bg-indigo-50 rounded-xl whitespace-pre-wrap text-sm">{caseSummary}</div>}
+                 {caseSummary && <div className="p-4 bg-indigo-50 rounded-xl whitespace-pre-wrap text-sm">{String(caseSummary)}</div>}
               </div>
             )}
         </div>
@@ -974,7 +980,7 @@ export default function App() {
             <div className="space-y-4">
               <div><Lbl>Nombre</Lbl><Inp value={docForm.nombre} onChange={e=>setDocForm({...docForm, nombre: e.target.value})}/></div>
               <div className="grid grid-cols-2 gap-4">
-                <div><Lbl>Ámbito</Lbl><Inp list="ambitos" value={docForm.ambito} onChange={e=>setDocForm({...docForm, ambito: e.target.value})}/><datalist id="ambitos"><option value="Red Integral"/><option value="Hospitalario"/>{centros.map(c=><option key={c} value={c}/>)}</datalist></div>
+                <div><Lbl>Ámbito</Lbl><Inp list="ambitos" value={docForm.ambito} onChange={e=>setDocForm({...docForm, ambito: e.target.value})}/><datalist id="ambitos"><option value="Red Integral"/><option value="Hospitalario"/>{safeArr(centros).map(c=><option key={c} value={c}/>)}</datalist></div>
                 <div><Lbl>Fase</Lbl><Sel value={docForm.fase} onChange={e=>setDocForm({...docForm, fase: e.target.value})}><option>Levantamiento</option><option>Validación Técnica</option><option>Difusión</option></Sel></div>
               </div>
               <div><Lbl>Avance: {docForm.avance}%</Lbl><input type="range" min="0" max="100" step="5" value={docForm.avance} onChange={e=>setDocForm({...docForm, avance: e.target.value})} className="w-full" /></div>
@@ -983,7 +989,7 @@ export default function App() {
           {activeDocModalTab === 'bitacora' && (
              <div className="space-y-4">
                 <div className="bg-slate-50 p-4 rounded-xl grid grid-cols-2 gap-3"><Inp value={newDocBitacoraEntry.responsable} onChange={e=>setNewDocBitacoraEntry({...newDocBitacoraEntry, responsable: e.target.value})} placeholder="Responsable" /><Inp type="date" value={newDocBitacoraEntry.fechaCumplimiento} onChange={e=>setNewDocBitacoraEntry({...newDocBitacoraEntry, fechaCumplimiento: e.target.value})} /><Inp value={newDocBitacoraEntry.descripcion} onChange={e=>setNewDocBitacoraEntry({...newDocBitacoraEntry, descripcion: e.target.value})} placeholder="Tarea..." className="col-span-2"/><button onClick={handleAddDocBitacora} className={clsBtnP + " col-span-2"}>Añadir Tarea</button></div>
-                {docForm.bitacora.map(b => <div key={b.id} className="p-4 border rounded-xl flex justify-between"><p className="text-sm font-bold">{b.descripcion}</p><button onClick={() => setDocForm({ ...docForm, bitacora: docForm.bitacora.filter(x => x.id !== b.id) })} className="text-red-400"><Trash2 size={16}/></button></div>)}
+                {safeArr(docForm.bitacora).map(b => <div key={b.id} className="p-4 border rounded-xl flex justify-between"><p className="text-sm font-bold">{String(b.descripcion)}</p><button onClick={() => setDocForm({ ...docForm, bitacora: safeArr(docForm.bitacora).filter(x => x.id !== b.id) })} className="text-red-400"><Trash2 size={16}/></button></div>)}
              </div>
           )}
         </div>
@@ -1014,27 +1020,27 @@ export default function App() {
             <div className="lg:col-span-3 flex flex-col gap-6">
               <div className="bg-white p-5 border border-slate-200 rounded-2xl">
                 <Lbl className="bg-slate-50 p-2 rounded-lg">1. Encabezados</Lbl>
-                {templateForm.encabezados.map((h, i) => (
+                {safeArr(templateForm.encabezados).map((h, i) => (
                   <div key={i} className="flex gap-2 items-center mb-2">
-                    <Inp value={h.label} onChange={e=>{const n=[...templateForm.encabezados]; n[i].label=e.target.value; setTemplateForm({...templateForm, encabezados: n});}} placeholder="Nombre Campo"/>
-                    <Sel value={h.type} onChange={e=>{const n=[...templateForm.encabezados]; n[i].type=e.target.value; setTemplateForm({...templateForm, encabezados: n});}}><option value="text">Texto</option><option value="date">Fecha</option></Sel>
-                    <button onClick={()=>{const n=[...templateForm.encabezados]; n.splice(i,1); setTemplateForm({...templateForm, encabezados: n});}} className="p-3 bg-red-50 text-red-500 rounded-xl"><Trash2 size={16}/></button>
+                    <Inp value={h.label} onChange={e=>{const n=[...safeArr(templateForm.encabezados)]; n[i].label=e.target.value; setTemplateForm({...templateForm, encabezados: n});}} placeholder="Nombre Campo"/>
+                    <Sel value={h.type} onChange={e=>{const n=[...safeArr(templateForm.encabezados)]; n[i].type=e.target.value; setTemplateForm({...templateForm, encabezados: n});}}><option value="text">Texto</option><option value="date">Fecha</option></Sel>
+                    <button onClick={()=>{const n=[...safeArr(templateForm.encabezados)]; n.splice(i,1); setTemplateForm({...templateForm, encabezados: n});}} className="p-3 bg-red-50 text-red-500 rounded-xl"><Trash2 size={16}/></button>
                   </div>
                 ))}
-                <button onClick={()=>setTemplateForm({...templateForm, encabezados: [...templateForm.encabezados, {id: `enc_${Date.now()}`, label: '', type: 'text'}]})} className="text-[9px] text-slate-500 font-black uppercase mt-2"><Plus size={12} className="inline"/> Campo Extra</button>
+                <button onClick={()=>setTemplateForm({...templateForm, encabezados: [...safeArr(templateForm.encabezados), {id: `enc_${Date.now()}`, label: '', type: 'text'}]})} className="text-[9px] text-slate-500 font-black uppercase mt-2"><Plus size={12} className="inline"/> Campo Extra</button>
               </div>
               <div className="bg-white p-5 border border-slate-200 rounded-2xl flex-1">
                 <Lbl className="bg-slate-50 p-2 rounded-lg">2. Criterios</Lbl>
                 <div className="max-h-[300px] overflow-y-auto pr-2 space-y-3">
-                  {templateForm.criterios.map((c, i) => (
+                  {safeArr(templateForm.criterios).map((c, i) => (
                     <div key={i} className="p-4 border-2 border-slate-100 rounded-xl bg-slate-50 relative group">
-                      <button onClick={()=>{const newC=[...templateForm.criterios]; newC.splice(i,1); setTemplateForm({...templateForm, criterios: newC});}} className="absolute top-2 right-2 text-slate-300 hover:text-red-500"><Trash2 size={14}/></button>
-                      <Txt rows="2" value={c.pregunta} onChange={e=>{const newC=[...templateForm.criterios]; newC[i].pregunta=e.target.value; setTemplateForm({...templateForm, criterios: newC});}} className="mb-2" placeholder="Criterio a evaluar..."/>
-                      <Inp value={c.opciones} onChange={e=>{const newC=[...templateForm.criterios]; newC[i].opciones=e.target.value; setTemplateForm({...templateForm, criterios: newC});}} placeholder="Ej: SÍ=1, NO=0"/>
+                      <button onClick={()=>{const newC=[...safeArr(templateForm.criterios)]; newC.splice(i,1); setTemplateForm({...templateForm, criterios: newC});}} className="absolute top-2 right-2 text-slate-300 hover:text-red-500"><Trash2 size={14}/></button>
+                      <Txt rows="2" value={c.pregunta} onChange={e=>{const newC=[...safeArr(templateForm.criterios)]; newC[i].pregunta=e.target.value; setTemplateForm({...templateForm, criterios: newC});}} className="mb-2" placeholder="Criterio a evaluar..."/>
+                      <Inp value={c.opciones} onChange={e=>{const newC=[...safeArr(templateForm.criterios)]; newC[i].opciones=e.target.value; setTemplateForm({...templateForm, criterios: newC});}} placeholder="Ej: SÍ=1, NO=0"/>
                     </div>
                   ))}
                 </div>
-                <button onClick={()=>setTemplateForm({...templateForm, criterios: [...templateForm.criterios, {id: `crit_${Date.now()}`, pregunta: '', opciones: 'SÍ=1, NO=0'}]})} className="text-[10px] text-indigo-600 font-black uppercase mt-4"><Plus size={14} className="inline"/> Fila Manual</button>
+                <button onClick={()=>setTemplateForm({...templateForm, criterios: [...safeArr(templateForm.criterios), {id: `crit_${Date.now()}`, pregunta: '', opciones: 'SÍ=1, NO=0'}]})} className="text-[10px] text-indigo-600 font-black uppercase mt-4"><Plus size={14} className="inline"/> Fila Manual</button>
               </div>
             </div>
         </div>
@@ -1048,23 +1054,23 @@ export default function App() {
               <Lbl>Instrumento a Evaluar</Lbl>
               <Sel value={auditForm.templateId} onChange={e=>setAuditForm({...auditForm, templateId: e.target.value, answers: {}, headerAnswers: {}})}>
                 <option value="">Seleccione formulario...</option>
-                {auditTemplates.map(t => <option key={t.id} value={t.id}>{t.nombre}</option>)}
+                {safeArr(auditTemplates).map(t => <option key={t.id} value={t.id}>{String(t.nombre)}</option>)}
               </Sel>
             </div>
             {auditForm.templateId && (() => {
-              const template = auditTemplates.find(t => t.id === auditForm.templateId);
+              const template = safeArr(auditTemplates).find(t => t.id === auditForm.templateId);
               if (!template) return null;
               return (
                 <div className="space-y-6">
-                   {template.encabezados?.length > 0 && (
+                   {safeArr(template.encabezados).length > 0 && (
                      <div className="bg-white p-6 rounded-2xl border shadow-sm">
                        <h4 className={clsLbl + " border-b pb-2"}>Identificación</h4>
                        <div className="grid grid-cols-2 gap-4">
-                         {template.encabezados.map(h => (
+                         {safeArr(template.encabezados).map(h => (
                            <div key={h.id}>
-                              <Lbl>{h.label}</Lbl>
-                              {h.label.toLowerCase().includes('centro') || h.label.toLowerCase().includes('dispositivo') ? (
-                                 <Sel value={auditForm.headerAnswers[h.id] || ''} onChange={e=>setAuditForm({...auditForm, centro: e.target.value, headerAnswers: {...auditForm.headerAnswers, [h.id]: e.target.value}})}><option value="">Centro...</option>{centros.map(c=><option key={c} value={c}>{c}</option>)}</Sel>
+                              <Lbl>{String(h.label)}</Lbl>
+                              {String(h.label).toLowerCase().includes('centro') || String(h.label).toLowerCase().includes('dispositivo') ? (
+                                 <Sel value={auditForm.headerAnswers[h.id] || ''} onChange={e=>setAuditForm({...auditForm, centro: e.target.value, headerAnswers: {...auditForm.headerAnswers, [h.id]: e.target.value}})}><option value="">Centro...</option>{safeArr(centros).map(c=><option key={c} value={c}>{String(c)}</option>)}</Sel>
                               ) : (
                                  <Inp type={h.type} value={auditForm.headerAnswers[h.id] || ''} onChange={e=>setAuditForm({...auditForm, headerAnswers: {...auditForm.headerAnswers, [h.id]: e.target.value}})} />
                               )}
@@ -1076,20 +1082,20 @@ export default function App() {
                    <div className="bg-white p-6 rounded-2xl border shadow-sm">
                      <h4 className={clsLbl + " border-b pb-2"}>Desarrollo</h4>
                      <div className="space-y-3">
-                       {template.criterios.map((c, idx) => {
+                       {safeArr(template.criterios).map((c, idx) => {
                          const preg = typeof c === 'string' ? c : c.pregunta;
                          const cId = typeof c === 'string' ? idx : c.id;
                          const ops = parseOpciones(typeof c === 'string' ? 'SÍ=1, NO=0' : c.opciones);
                          const cur = auditForm.answers[cId];
                          return (
                            <div key={cId} className="p-4 bg-slate-50 rounded-xl border">
-                             <span className="font-bold text-sm">{idx + 1}. {preg}</span>
+                             <span className="font-bold text-sm">{idx + 1}. {String(preg)}</span>
                              <div className="flex flex-wrap gap-2 mt-2">
                                {ops.map((opt, i) => {
                                  const sel = cur?.label === opt.label;
                                  return (
                                    <label key={i} className={`px-4 py-2 rounded-xl cursor-pointer font-black text-[10px] uppercase border-2 ${sel ? 'bg-indigo-100 text-indigo-700 border-indigo-300' : 'bg-white text-slate-500 border-transparent hover:bg-slate-100'}`}>
-                                     <input type="radio" checked={sel} onChange={() => setAuditForm({...auditForm, answers: {...auditForm.answers, [cId]: opt}})} className="hidden" />{opt.label}
+                                     <input type="radio" checked={sel} onChange={() => setAuditForm({...auditForm, answers: {...auditForm.answers, [cId]: opt}})} className="hidden" />{String(opt.label)}
                                    </label>
                                  )
                                })}
@@ -1102,7 +1108,7 @@ export default function App() {
                    {template.metodoCalculo === 'Juicio Clínico' && (
                      <div className="bg-amber-50 p-6 rounded-2xl border border-amber-200">
                        <Lbl className="text-amber-800">Resultado Final</Lbl>
-                       <p className="text-xs text-amber-700 mb-4">{template.instruccionesDiagnostico}</p>
+                       <p className="text-xs text-amber-700 mb-4">{String(template.instruccionesDiagnostico)}</p>
                        <Sel value={auditForm.estadoManual || ''} onChange={e=>setAuditForm({...auditForm, estadoManual: e.target.value})} className="border-amber-300 text-amber-900">
                           <option value="">Seleccione diagnóstico...</option><option value="Riesgo Bajo">Riesgo Bajo</option><option value="Riesgo Medio">Riesgo Medio</option><option value="Riesgo Alto">Riesgo Alto</option><option value="Óptimo">Óptimo</option><option value="Requiere Observación">Requiere Observación</option>
                        </Sel>
@@ -1176,7 +1182,8 @@ export default function App() {
 }
 
 const StatusBadge = ({ status }) => {
-  if(status === 'Alerta') return <span className="px-3 py-1.5 bg-red-100 text-red-700 rounded-lg text-[9px] font-black uppercase flex items-center gap-1.5 animate-pulse w-fit"><AlertTriangle size={10} /> Alerta</span>;
-  if(status === 'Pendiente') return <span className="px-3 py-1.5 bg-amber-100 text-amber-700 rounded-lg text-[9px] font-black uppercase flex items-center gap-1.5 w-fit"><Clock size={10} /> Tránsito</span>;
+  const s = safeStr(status);
+  if(s === 'Alerta') return <span className="px-3 py-1.5 bg-red-100 text-red-700 rounded-lg text-[9px] font-black uppercase flex items-center gap-1.5 animate-pulse w-fit"><AlertTriangle size={10} /> Alerta</span>;
+  if(s === 'Pendiente') return <span className="px-3 py-1.5 bg-amber-100 text-amber-700 rounded-lg text-[9px] font-black uppercase flex items-center gap-1.5 w-fit"><Clock size={10} /> Tránsito</span>;
   return <span className="px-3 py-1.5 bg-emerald-100 text-emerald-700 rounded-lg text-[9px] font-black uppercase flex items-center gap-1.5 w-fit"><CheckCircle size={10} /> Cerrado</span>;
 };
