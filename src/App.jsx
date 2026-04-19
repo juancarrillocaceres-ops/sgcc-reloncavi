@@ -6,7 +6,7 @@ import {
   LayoutDashboard, Users, FileText, AlertTriangle, CheckCircle, Clock, Plus, Activity, LogOut,
   Bell, Copy, Loader2, Edit2, Trash2, ListTodo, MessageSquare, CheckSquare, Square, Calendar,
   UploadCloud, Paperclip, File as FileIcon, Lock, User, ClipboardCheck, BookOpen, Download,
-  Wand2, GitCommit, Search, Settings, Filter, UserPlus, Shield, Key, Timer, TrendingUp, BarChart3, Target
+  Wand2, GitCommit, Search, Settings, Filter, UserPlus, Shield, Key, Timer, TrendingUp, BarChart3, Target, Printer
 } from 'lucide-react';
 
 const firebaseConfig = typeof __firebase_config !== 'undefined' ? JSON.parse(__firebase_config) : {
@@ -44,7 +44,6 @@ const getTaskStatus = (fecha) => {
   return { status: 'safe', bgClass: 'bg-emerald-100 text-emerald-800', textClass: 'text-emerald-600', showWarning: false };
 };
 
-// --- ACTUALIZADO: REPARACIÓN IA PARA RECIBIR LA LLAVE DE PRODUCCIÓN ---
 const generateTextWithRetry = async (activeApiKey, prompt, systemInstruction = "", inlineData = null, retries = 5) => {
   if (!activeApiKey) throw new Error("Falta configurar la Clave de API de IA");
   
@@ -100,7 +99,7 @@ export default function App() {
   const defaultCaseState = { 
     rut: '', nombre: '', edad: '', origen: '', destino: '', prioridad: 'Media', estado: 'Pendiente', 
     fechaEgreso: new Date().toISOString().split('T')[0], fechaRecepcionRed: '', fechaIngresoEfectivo: '',
-    tutor: { nombre: '', relacion: '', telefono: '' }, referentes: [], bitacora: [], documentos: [] 
+    tutor: { nombre: '', relacion: '', telefono: '' }, referentes: [], bitacora: [], archivos: [], epicrisis: '' 
   };
   const [editingCaseId, setEditingCaseId] = useState(null);
   const [caseForm, setCaseForm] = useState(defaultCaseState);
@@ -116,8 +115,11 @@ export default function App() {
 
   const [isAuditModalOpen, setIsAuditModalOpen] = useState(false);
   const [isTemplateModalOpen, setIsTemplateModalOpen] = useState(false);
-  const [auditForm, setAuditForm] = useState({ centro: '', templateId: '', answers: {}, tipo: 'Auditoría' });
+  const [editingTemplateId, setEditingTemplateId] = useState(null);
+  const [auditForm, setAuditForm] = useState({ centro: '', templateId: '', answers: {}, tipo: 'Auditoría', observaciones: '', fecha: new Date().toISOString().split('T')[0], servicio: '', equipoConsultor: '', equipoConsultante: '' });
   const [templateForm, setTemplateForm] = useState({ nombre: '', criterios: [''], rangos: [], tipo: 'Ambos' });
+  const [printingAudit, setPrintingAudit] = useState(null);
+  
   const [rawTextForAI, setRawTextForAI] = useState('');
   const [centroFilterAuditorias, setCentroFilterAuditorias] = useState('Todos');
   const [centroFilterConsultorias, setCentroFilterConsultorias] = useState('Todos');
@@ -247,15 +249,15 @@ export default function App() {
     link.href = URL.createObjectURL(blob); link.download = `Reporte_Continuidad_HPM.csv`; link.click();
   };
 
+  const copyToClipboard = (text) => { navigator.clipboard.writeText(text); alert("Copiado al portapapeles"); };
+
   // --- HANDLERS INTELIGENCIA ARTIFICIAL (SOLO ADMINS) ---
   const handleGenerateReport = async (type) => { 
     if (!appConfig.apiKey) return alert("Falta configurar la Clave API de IA en la pestaña 'Configuración'.");
-    
     setIsGeneratingReport(true); 
     setReportContent('');
     let prompt = "";
     const currentTarget = appConfig.targetDays || 7;
-    
     if (type === 'stats') {
       const delayCases = visibleCases.filter(c => diffInDays(c.fechaEgreso, c.fechaIngresoEfectivo) > currentTarget);
       if (delayCases.length === 0) { setIsGeneratingReport(false); return alert("No hay casos fuera de plazo para reportar."); }
@@ -264,7 +266,6 @@ export default function App() {
       if (alertCases.length === 0) { setIsGeneratingReport(false); return alert("No hay casos en alerta para reportar."); }
       prompt = `Redacta un correo urgente para rescatar estos pacientes en alerta de red: ${JSON.stringify(alertCases.map(c => ({ paciente: c.nombre, destino: c.destino })))}$. Dirigido a directores de centros.`;
     }
-    
     try { 
       const res = await generateTextWithRetry(appConfig.apiKey, prompt);
       setReportContent(res);
@@ -278,8 +279,8 @@ export default function App() {
   const handleGenerateCaseSummary = async () => {
     if (!appConfig.apiKey) return alert("Falta configurar la Clave API de IA en Configuración.");
     setIsGeneratingCaseSummary(true); setCaseSummary('');
-    
-    const prompt = `Actúa como clínico. Genera un resumen profesional: Paciente: ${caseForm.nombre}, RUT: ${caseForm.rut}, Origen: ${caseForm.origen}, Destino: ${caseForm.destino}. Eventos: ${caseForm.bitacora.map(b => `[${b.fecha}] ${b.tipo}: ${b.descripcion}`).join(' | ')}. Resumen directo sin saludos.`;
+    const epicrisisText = caseForm.epicrisis ? `\nAntecedentes/Epicrisis: ${caseForm.epicrisis}` : '';
+    const prompt = `Actúa como clínico. Genera un resumen profesional y estructurado del siguiente paciente: Nombre: ${caseForm.nombre}, RUT: ${caseForm.rut}, Origen: ${caseForm.origen}, Destino: ${caseForm.destino}.${epicrisisText} Eventos registrados en bitácora: ${caseForm.bitacora.map(b => `[${b.fecha}] ${b.tipo}: ${b.descripcion}`).join(' | ')}. Genera solo el resumen clínico directo sin saludos ni introducciones extras.`;
     try {
       const result = await generateTextWithRetry(appConfig.apiKey, prompt);
       setCaseSummary(result);
@@ -293,7 +294,6 @@ export default function App() {
   const handleProcessRawTextForAI = async () => {
     if (!appConfig.apiKey) return alert("Falta configurar la Clave API de IA en Configuración.");
     if (!rawTextForAI.trim()) return;
-    
     setIsDigitizing(true);
     const prompt = `Actúa como auditor técnico en salud. Del siguiente texto, extrae ÚNICAMENTE los puntos o criterios evaluables. Devuélvelos uno por línea, listos para un checklist de Sí/No. Omite introducciones, saludos o conclusiones. TEXTO: ${rawTextForAI}`;
     try {
@@ -315,19 +315,15 @@ export default function App() {
     const file = e.target.files[0];
     if (!file) return;
     setIsDigitizing(true);
-    
     const reader = new FileReader();
     reader.onloadend = async () => {
       const base64Data = reader.result.split(',')[1];
       const inlineData = { mimeType: file.type || 'application/pdf', data: base64Data };
       const prompt = `Actúa como auditor técnico en salud. Extrae los criterios o puntos a evaluar del documento adjunto. Devuelve ÚNICAMENTE los criterios encontrados, uno por línea, listos para un checklist de Sí/No. Omite introducciones, saludos o conclusiones.`;
-      
       try {
         const result = await generateTextWithRetry(appConfig.apiKey, prompt, "", inlineData);
         const criteriosGenerados = result.split('\n').map(c => c.trim().replace(/^[-*•\d.)]+\s*/, '')).filter(c => c.length > 2);
-        
         if(criteriosGenerados.length === 0) throw new Error("No se encontraron criterios.");
-        
         setTemplateForm({...templateForm, nombre: `Evaluación: ${file.name}`, criterios: [...templateForm.criterios.filter(c=>c!==''), ...criteriosGenerados]});
         alert(`¡Documento procesado correctamente! Se encontraron ${criteriosGenerados.length} criterios.`);
       } catch (err) { 
@@ -340,8 +336,6 @@ export default function App() {
     reader.onerror = () => { alert("Error al leer el archivo desde el navegador."); setIsDigitizing(false); };
     reader.readAsDataURL(file);
   };
-
-  const copyToClipboard = (text) => { navigator.clipboard.writeText(text); alert("Copiado al portapapeles"); };
 
   // --- GUARDADOS EN NUBE ---
   const handleSaveCase = async () => { 
@@ -362,6 +356,13 @@ export default function App() {
      if (!caso) return;
      const updatedBitacora = (caso.bitacora || []).map(entry => entry.id === entryId ? { ...entry, completada: !entry.completada } : entry);
      await saveToCloud('cases', caseId, { ...caso, bitacora: updatedBitacora });
+  };
+
+  const handleCaseFileUpload = (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+    const newFile = { id: Date.now().toString(), nombre: file.name, size: (file.size / 1024 / 1024).toFixed(2) + ' MB', fecha: new Date().toISOString().split('T')[0] };
+    setCaseForm(prev => ({ ...prev, archivos: [...(prev.archivos || []), newFile] }));
   };
 
   const handleSaveDoc = async () => {
@@ -394,9 +395,10 @@ export default function App() {
   const handleSaveTemplate = async () => {
     const validCriterios = templateForm.criterios.filter(c=>c.trim()!=='');
     if (!templateForm.nombre || validCriterios.length === 0) return alert("Ingresa nombre y al menos un criterio.");
-    const finalId = `TPL-00${auditTemplates.length + 1}`;
+    const finalId = editingTemplateId || `TPL-${Date.now()}`;
     await saveToCloud('auditTemplates', finalId, { id: finalId, nombre: templateForm.nombre, tipo: templateForm.tipo, criterios: validCriterios, rangos: templateForm.rangos });
     setIsTemplateModalOpen(false);
+    setEditingTemplateId(null);
   };
 
   const handleSaveAudit = async () => {
@@ -406,15 +408,28 @@ export default function App() {
     const aprobados = Object.values(auditForm.answers).filter(val => val === 'si').length;
     const score = totalCriterios > 0 ? Math.round((aprobados / totalCriterios) * 100) : 0;
     
-    // Calcular estado según los rangos
     let estadoTexto = score >= 75 ? 'Óptimo' : 'Riesgo';
     if (selectedTemplate.rangos && selectedTemplate.rangos.length > 0) {
        const match = selectedTemplate.rangos.find(r => aprobados >= Number(r.min) && aprobados <= Number(r.max));
        if (match) estadoTexto = match.resultado;
     }
 
-    const finalId = `AUD-00${audits.length + 1}`;
-    await saveToCloud('audits', finalId, { id: finalId, centro: auditForm.centro, tipo: auditForm.tipo, templateId: selectedTemplate.id, fecha: new Date().toISOString().split('T')[0], cumplimiento: score, puntaje: `${aprobados} / ${totalCriterios} pts`, estado: estadoTexto, evaluador: currentUser.nombre });
+    const finalId = `AUD-${Date.now()}`;
+    await saveToCloud('audits', finalId, { 
+       id: finalId, 
+       centro: auditForm.centro, 
+       tipo: auditForm.tipo, 
+       templateId: selectedTemplate.id, 
+       fecha: auditForm.fecha, 
+       servicio: auditForm.servicio || '',
+       equipoConsultor: auditForm.equipoConsultor || '',
+       equipoConsultante: auditForm.equipoConsultante || '',
+       cumplimiento: score, 
+       puntaje: `${aprobados} / ${totalCriterios}`, 
+       estado: estadoTexto, 
+       evaluador: currentUser.nombre, 
+       observaciones: auditForm.observaciones || '' 
+    });
     setIsAuditModalOpen(false);
   };
 
@@ -470,7 +485,7 @@ export default function App() {
   return (
     <div className="min-h-screen bg-slate-50 flex flex-col md:flex-row font-sans">
       {/* SIDEBAR */}
-      <aside className="w-full md:w-64 bg-[#0a2540] text-white flex flex-col h-screen sticky top-0 shrink-0 shadow-xl overflow-y-auto">
+      <aside className="no-print w-full md:w-64 bg-[#0a2540] text-white flex flex-col h-screen sticky top-0 shrink-0 shadow-xl overflow-y-auto">
         <div className="p-5 border-b border-white/5">
           <h1 className="text-xl font-bold tracking-tight">SGCC-SM</h1>
           <p className="text-xs text-blue-400 font-black uppercase tracking-widest mt-1">UHCIP INFANTO JUVENIL</p>
@@ -504,7 +519,7 @@ export default function App() {
       </aside>
 
       {/* CONTENIDO PRINCIPAL */}
-      <main className="flex-1 p-6 md:p-8 overflow-y-auto bg-slate-50 relative">
+      <main className="no-print flex-1 p-6 md:p-8 overflow-y-auto bg-slate-50 relative">
         
         {/* HEADER FLOTANTE (NOTIFICACIONES) */}
         <div className="absolute top-6 right-6 z-20">
@@ -732,7 +747,7 @@ export default function App() {
                             </div>
                           </td>
                           <td className="p-4"><div className="flex justify-center"><StatusBadge status={c.estado}/></div></td>
-                          <td className="p-4 text-right"><button onClick={() => { setEditingCaseId(c.id); setCaseForm({ ...c, rut: c.paciente, tutor: c.tutor || {nombre:'', relacion:'', telefono:''}, referentes: c.referentes || [] }); setCaseSummary(''); setIsCaseModalOpen(true); }} className="text-slate-400 hover:text-blue-600 bg-slate-50 hover:bg-blue-50 p-2.5 rounded-lg transition-all border border-slate-100 hover:border-blue-200"><Edit2 size={18}/></button></td>
+                          <td className="p-4 text-right"><button onClick={() => { setEditingCaseId(c.id); setCaseForm({ ...c, rut: c.paciente, tutor: c.tutor || {nombre:'', relacion:'', telefono:''}, referentes: c.referentes || [], archivos: c.archivos || [], epicrisis: c.epicrisis || '' }); setCaseSummary(''); setIsCaseModalOpen(true); }} className="text-slate-400 hover:text-blue-600 bg-slate-50 hover:bg-blue-50 p-2.5 rounded-lg transition-all border border-slate-100 hover:border-blue-200"><Edit2 size={18}/></button></td>
                         </tr>
                       );
                     })}
@@ -782,8 +797,8 @@ export default function App() {
                 <div><h2 className="text-2xl font-black text-slate-800 tracking-tight">{tipoLabel === 'Auditoría' ? 'Auditorías Normativas' : 'Consultorías Clínicas'}</h2><p className="text-xs text-slate-500 font-medium mt-1">Evaluación en dispositivos de la red</p></div>
                 <div className="flex flex-wrap gap-3">
                   <select value={currentFilter} onChange={e => setFilter(e.target.value)} className="px-3 py-2.5 border-2 border-slate-200 rounded-xl text-[10px] font-bold bg-white outline-none focus:border-blue-500 uppercase tracking-widest text-slate-600"><option value="Todos">Toda la Red</option>{centros.map(c => <option key={c} value={c}>{c}</option>)}</select>
-                  {currentUser?.rol === 'Admin' && (<button onClick={() => { setTemplateForm({nombre: '', criterios: [''], rangos: [], tipo: 'Ambos'}); setIsTemplateModalOpen(true); }} className="bg-white border-2 border-slate-200 text-slate-600 hover:bg-slate-50 px-5 py-2.5 rounded-xl text-[10px] font-black uppercase tracking-widest flex items-center gap-2"><Settings size={14} /> Pautas</button>)}
-                  <button onClick={() => { setAuditForm({ centro: centros[0] || '', templateId: auditTemplates.find(t => t.tipo === 'Ambos' || t.tipo === tipoLabel)?.id || '', answers: {}, tipo: tipoLabel }); setIsAuditModalOpen(true); }} className="bg-blue-600 hover:bg-blue-700 text-white px-6 py-2.5 rounded-xl text-[10px] font-black uppercase tracking-widest flex items-center gap-2 shadow-md"><ClipboardCheck size={16} /> Evaluar</button>
+                  {currentUser?.rol === 'Admin' && (<button onClick={() => { setEditingTemplateId(null); setTemplateForm({nombre: '', criterios: [''], rangos: [], tipo: 'Ambos'}); setIsTemplateModalOpen(true); }} className="bg-white border-2 border-slate-200 text-slate-600 hover:bg-slate-50 px-5 py-2.5 rounded-xl text-[10px] font-black uppercase tracking-widest flex items-center gap-2"><Settings size={14} /> Pautas</button>)}
+                  <button onClick={() => { setAuditForm({ centro: centros[0] || '', templateId: auditTemplates.find(t => t.tipo === 'Ambos' || t.tipo === tipoLabel)?.id || '', answers: {}, tipo: tipoLabel, observaciones: '', fecha: new Date().toISOString().split('T')[0], servicio: '', equipoConsultor: '', equipoConsultante: '' }); setIsAuditModalOpen(true); }} className="bg-blue-600 hover:bg-blue-700 text-white px-6 py-2.5 rounded-xl text-[10px] font-black uppercase tracking-widest flex items-center gap-2 shadow-md"><ClipboardCheck size={16} /> Evaluar</button>
                 </div>
               </div>
               {filteredAudits.length === 0 ? (<div className="text-center py-16 bg-white rounded-2xl border border-slate-100 shadow-sm"><ClipboardCheck size={40} className="mx-auto text-slate-200 mb-3"/><p className="text-slate-400 font-black uppercase tracking-widest text-[10px]">No hay evaluaciones en este filtro.</p></div>) : (
@@ -791,16 +806,25 @@ export default function App() {
                   {filteredAudits.map(a => {
                     const template = auditTemplates.find(t => t.id === a.templateId);
                     return (
-                    <div key={a.id} className="bg-white p-6 rounded-2xl shadow-sm border border-slate-100 flex items-center justify-between hover:border-blue-200 transition-colors">
-                       <div>
-                         <h3 className="font-black text-slate-800 uppercase text-xs mb-1">{a.centro}</h3>
-                         <p className="text-[9px] text-blue-600 font-black uppercase tracking-widest mb-2 bg-blue-50 px-2 py-0.5 rounded w-fit">{template ? template.nombre : 'Pauta Eliminada'}</p>
-                         <p className="text-[9px] text-slate-400 font-bold uppercase tracking-widest flex items-center gap-1"><Calendar size={10}/> {a.fecha} • Eval: {a.evaluador}</p>
+                    <div key={a.id} className="bg-white p-6 rounded-2xl shadow-sm border border-slate-100 flex flex-col justify-between hover:border-blue-200 transition-colors">
+                       <div className="flex items-start justify-between w-full">
+                         <div>
+                           <h3 className="font-black text-slate-800 uppercase text-xs mb-1">{a.centro}</h3>
+                           <p className="text-[9px] text-blue-600 font-black uppercase tracking-widest mb-2 bg-blue-50 px-2 py-0.5 rounded w-fit">{template ? template.nombre : 'Pauta Eliminada'}</p>
+                           <p className="text-[9px] text-slate-400 font-bold uppercase tracking-widest flex items-center gap-1"><Calendar size={10}/> {a.fecha} • Eval: {a.evaluador}</p>
+                         </div>
+                         <div className="text-right flex flex-col items-end">
+                            <div className="text-3xl font-black text-slate-800">{a.cumplimiento}%</div>
+                            <span className="text-[8px] uppercase text-slate-400 font-black block mb-1.5 tracking-[0.2em]">{a.puntaje}</span>
+                            <span className={`text-[8px] uppercase tracking-widest px-2 py-1 rounded-lg font-black ${a.estado === 'Óptimo' || a.cumplimiento >= 75 ? 'bg-emerald-100 text-emerald-700' : 'bg-red-100 text-red-700'}`}>{a.estado}</span>
+                         </div>
                        </div>
-                       <div className="text-right">
-                          <div className="text-3xl font-black text-slate-800">{a.cumplimiento}%</div>
-                          <span className="text-[8px] uppercase text-slate-400 font-black block mb-1.5 tracking-[0.2em]">{a.puntaje}</span>
-                          <span className={`text-[8px] uppercase tracking-widest px-2 py-1 rounded-lg font-black ${a.estado === 'Óptimo' || a.cumplimiento >= 75 ? 'bg-emerald-100 text-emerald-700' : 'bg-red-100 text-red-700'}`}>{a.estado}</span>
+                       
+                       <div className="mt-4 pt-4 border-t border-slate-100 flex flex-col gap-3">
+                         {a.observaciones && (
+                           <p className="text-[10px] text-slate-500 font-medium italic"><MessageSquare size={12} className="inline mr-1 text-slate-400"/> {a.observaciones}</p>
+                         )}
+                         <button onClick={() => setPrintingAudit(a)} className="self-end bg-slate-100 text-slate-600 px-3 py-1.5 rounded-lg text-[9px] font-black uppercase tracking-widest hover:bg-slate-200 flex items-center gap-1.5 transition-colors"><Printer size={12}/> Imprimir / PDF</button>
                        </div>
                     </div>
                     );
@@ -873,6 +897,7 @@ export default function App() {
         {activeTab === 'config' && currentUser.rol === 'Admin' && (
           <div className="space-y-6 animate-in fade-in mt-12 md:mt-0">
             <div><h2 className="text-2xl font-black text-slate-800 tracking-tight">Configuración del Sistema</h2><p className="text-xs text-slate-500 font-medium mt-1">Ajustes estructurales de la red Reloncaví</p></div>
+            
             <div className="bg-white p-8 rounded-2xl shadow-sm border border-slate-200 max-w-3xl">
                <h3 className="font-black text-slate-800 text-base flex items-center gap-2 mb-2"><Activity size={18} className="text-blue-600"/> Catálogo de Dispositivos Clínicos</h3>
                <p className="text-[10px] text-slate-500 font-medium mb-6 leading-relaxed">Agrega o elimina los centros de salud mental de la red.</p>
@@ -890,6 +915,28 @@ export default function App() {
                </div>
             </div>
 
+            <div className="bg-white p-8 rounded-2xl shadow-sm border border-slate-200 max-w-3xl mt-6">
+               <h3 className="font-black text-slate-800 text-base flex items-center gap-2 mb-2"><ClipboardCheck size={18} className="text-blue-600"/> Catálogo de Pautas Digitalizadas</h3>
+               <p className="text-[10px] text-slate-500 font-medium mb-6 leading-relaxed">Administra las pautas. Puedes editarlas para modificar criterios o rangos sin afectar los puntajes de las evaluaciones ya realizadas.</p>
+               
+               <div className="space-y-3">
+                 {auditTemplates.map(t => (
+                   <div key={t.id} className="flex justify-between items-center bg-slate-50 p-4 rounded-xl border-2 border-slate-100 hover:border-blue-200 transition-colors group">
+                     <div>
+                       <span className="text-xs font-black text-slate-700 uppercase tracking-widest block">{t.nombre}</span>
+                       <span className="text-[9px] font-bold text-slate-400 uppercase mt-1">{t.tipo} • {t.criterios.length} Criterios</span>
+                     </div>
+                     <div className="flex gap-2">
+                       <button onClick={() => { setEditingTemplateId(t.id); setTemplateForm({ nombre: t.nombre, criterios: t.criterios || [''], rangos: t.rangos || [], tipo: t.tipo || 'Ambos' }); setIsTemplateModalOpen(true); }} className="text-slate-400 hover:text-blue-600 p-2 rounded-lg bg-white shadow-sm transition-all border border-slate-100"><Edit2 size={14}/></button>
+                       <button onClick={async ()=>{ if(window.confirm(`¿Eliminar pauta ${t.nombre}?`)) await deleteFromCloud('auditTemplates', t.id); }} className="text-slate-400 hover:text-red-600 p-2 rounded-lg bg-white shadow-sm transition-all border border-slate-100"><Trash2 size={14}/></button>
+                     </div>
+                   </div>
+                 ))}
+                 {auditTemplates.length === 0 && <p className="text-[10px] text-slate-400 italic font-bold">No hay pautas registradas.</p>}
+               </div>
+               <button onClick={() => { setEditingTemplateId(null); setTemplateForm({nombre: '', criterios: [''], rangos: [], tipo: 'Ambos'}); setIsTemplateModalOpen(true); }} className="mt-6 bg-slate-900 text-white px-6 py-3 rounded-xl text-[9px] font-black uppercase tracking-[0.2em] flex items-center gap-2 hover:bg-black shadow-md transition-all"><Plus size={14}/> Crear Nueva Pauta</button>
+            </div>
+
             {/* MÓDULO DE LLAVE API DE IA (SOLO PARA ADMINS) */}
             <div className="mt-8 bg-indigo-50 p-8 rounded-2xl border border-indigo-100 max-w-3xl">
                <h3 className="font-bold text-indigo-900 text-sm flex items-center gap-2 mb-2"><Wand2 size={18}/> Motor de Inteligencia Artificial (Gemini)</h3>
@@ -905,9 +952,9 @@ export default function App() {
 
       {/* ================= MODALES DE LA APLICACIÓN ================= */}
       
-      {/* 1. MODAL CASOS (CON RED DE APOYO RESTAURADA Y REUNIONES) */}
+      {/* 1. MODAL CASOS (CON RED DE APOYO, BITÁCORA Y EPICRISIS) */}
       {isCaseModalOpen && (
-        <div className="fixed inset-0 bg-[#0a2540]/90 backdrop-blur-sm flex items-center justify-center p-4 z-50 fade-in">
+        <div className="fixed inset-0 bg-[#0a2540]/90 backdrop-blur-sm flex items-center justify-center p-4 z-50 fade-in no-print">
           <div className="bg-white rounded-3xl shadow-2xl w-full max-w-4xl max-h-[90vh] flex flex-col overflow-hidden border border-slate-200">
             <div className="bg-blue-600 p-6 text-white flex justify-between items-center shrink-0 relative overflow-hidden">
               <div className="absolute top-0 right-0 w-32 h-32 bg-white/10 rounded-full -mr-10 -mt-10 blur-xl"></div>
@@ -917,6 +964,7 @@ export default function App() {
             <div className="flex bg-slate-50 border-b border-slate-200 shrink-0 px-6 overflow-x-auto">
               <button onClick={() => setActiveModalTab('datos')} className={`px-6 py-4 text-[10px] font-black uppercase tracking-[0.2em] border-b-4 transition-all whitespace-nowrap ${activeModalTab === 'datos' ? 'border-blue-600 text-blue-600 bg-white shadow-inner' : 'border-transparent text-slate-400 hover:text-slate-600'}`}>1. Hitos y Red de Apoyo</button>
               <button onClick={() => setActiveModalTab('bitacora')} className={`px-6 py-4 text-[10px] font-black uppercase tracking-[0.2em] border-b-4 transition-all whitespace-nowrap ${activeModalTab === 'bitacora' ? 'border-blue-600 text-blue-600 bg-white shadow-inner' : 'border-transparent text-slate-400 hover:text-slate-600'}`}>2. Bitácora Clínica</button>
+              <button onClick={() => setActiveModalTab('archivos')} className={`px-6 py-4 text-[10px] font-black uppercase tracking-[0.2em] border-b-4 transition-all whitespace-nowrap ${activeModalTab === 'archivos' ? 'border-blue-600 text-blue-600 bg-white shadow-inner' : 'border-transparent text-slate-400 hover:text-slate-600'}`}>3. Archivos y Epicrisis</button>
             </div>
             
             <div className="p-6 md:p-8 overflow-y-auto flex-1 bg-white">
@@ -985,10 +1033,13 @@ export default function App() {
                   {/* RESUMEN IA */}
                   <div className="space-y-4 border-t-2 border-slate-100 pt-6">
                     <div className="flex justify-between items-end">
-                      <h4 className="text-xs font-black text-slate-400 uppercase tracking-widest pb-2 flex items-center gap-2"><Wand2 size={16}/> Resumen Clínico Inteligente</h4>
+                      <div>
+                        <h4 className="text-xs font-black text-slate-400 uppercase tracking-widest pb-1 flex items-center gap-2"><Wand2 size={16}/> Resumen Clínico Inteligente</h4>
+                        <p className="text-[9px] text-slate-400 italic">La IA analizará la Bitácora (Pestaña 2) y el texto de Epicrisis (Pestaña 3).</p>
+                      </div>
                       
                       {currentUser?.rol === 'Admin' ? (
-                        <button onClick={handleGenerateCaseSummary} disabled={isGeneratingCaseSummary || caseForm.bitacora.length === 0} className="bg-indigo-50 text-indigo-600 px-4 py-2.5 rounded-xl text-[10px] font-black uppercase tracking-widest hover:bg-indigo-100 transition-colors flex items-center gap-2 border border-indigo-100 disabled:opacity-50">
+                        <button onClick={handleGenerateCaseSummary} disabled={isGeneratingCaseSummary || (caseForm.bitacora.length === 0 && !caseForm.epicrisis)} className="bg-indigo-50 text-indigo-600 px-4 py-2.5 rounded-xl text-[10px] font-black uppercase tracking-widest hover:bg-indigo-100 transition-colors flex items-center gap-2 border border-indigo-100 disabled:opacity-50">
                           {isGeneratingCaseSummary ? <Loader2 size={14} className="animate-spin"/> : <FileText size={14}/>} Generar Resumen
                         </button>
                       ) : (
@@ -1001,7 +1052,7 @@ export default function App() {
                         <p className="pr-8 whitespace-pre-wrap leading-relaxed text-xs">{caseSummary}</p>
                       </div>
                     )}
-                    {caseForm.bitacora.length === 0 && !caseSummary && currentUser?.rol === 'Admin' && <p className="text-[10px] text-slate-400 italic font-medium uppercase tracking-widest">Agrega eventos en la bitácora para habilitar el resumen inteligente.</p>}
+                    {caseForm.bitacora.length === 0 && !caseForm.epicrisis && !caseSummary && currentUser?.rol === 'Admin' && <p className="text-[10px] text-slate-400 italic font-medium uppercase tracking-widest">Agrega eventos o epicrisis para habilitar el resumen inteligente.</p>}
                   </div>
 
                 </div>
@@ -1060,11 +1111,52 @@ export default function App() {
                   </div>
                 </div>
               )}
+              {activeModalTab === 'archivos' && (
+                <div className="space-y-6 animate-in slide-in-from-right-4">
+                  <div className="bg-slate-50 p-6 rounded-2xl border-2 border-slate-200">
+                     <h4 className="text-[11px] font-black text-slate-600 uppercase tracking-widest mb-3 flex items-center gap-2"><FileText size={16}/> Resumen de Epicrisis (Para Análisis de IA)</h4>
+                     <p className="text-[10px] text-slate-500 mb-4 font-medium leading-relaxed">Pega aquí el texto de la epicrisis o antecedentes relevantes del paciente. La Inteligencia Artificial utilizará este texto, sumado a la bitácora, para generar el resumen clínico en la pestaña principal.</p>
+                     <textarea
+                       value={caseForm.epicrisis || ''}
+                       onChange={e=>setCaseForm({...caseForm, epicrisis: e.target.value})}
+                       className="w-full border-2 border-white p-4 rounded-xl text-xs font-medium text-slate-700 outline-none focus:border-blue-500 bg-white transition-colors resize-y min-h-[140px] shadow-sm"
+                       placeholder="Pega los antecedentes, diagnóstico, indicaciones al alta... (Presiona Enter para separar en párrafos)"
+                     />
+                  </div>
+
+                  <div className="bg-indigo-50/50 p-8 rounded-2xl border-2 border-indigo-100 flex flex-col text-center">
+                    <h4 className="text-sm font-black text-indigo-900 uppercase tracking-widest mb-2 flex items-center justify-center gap-2"><UploadCloud size={18}/> Subir Archivo Físico de Respaldo</h4>
+                    <p className="text-[10px] text-indigo-700/80 mb-4 font-medium leading-relaxed">Adjunta documentos Word o PDF de la epicrisis original o informes médicos para el archivo del paciente.</p>
+                    <label className="flex flex-col items-center justify-center w-full h-32 border-2 border-indigo-300 border-dashed rounded-xl cursor-pointer bg-white hover:bg-indigo-50 transition-colors shadow-sm">
+                      <div className="flex flex-col items-center justify-center pt-4 pb-5">
+                        <Paperclip className="w-8 h-8 text-indigo-400 mb-2" />
+                        <p className="text-[10px] text-indigo-900 font-black uppercase tracking-widest">Seleccionar Archivo</p>
+                      </div>
+                      <input type="file" className="hidden" onChange={handleCaseFileUpload} />
+                    </label>
+                  </div>
+                  <div className="space-y-4">
+                     <h4 className="text-[11px] font-black text-slate-400 uppercase tracking-widest border-b-2 border-slate-100 pb-3">Archivos Vinculados al Paciente</h4>
+                     <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                       {(caseForm.archivos || []).map(file => (
+                         <div key={file.id} className="flex items-center justify-between p-4 bg-white border-2 border-slate-100 rounded-xl shadow-sm group hover:border-blue-200 transition-all">
+                           <div className="flex items-center gap-3 min-w-0">
+                             <div className="p-2.5 bg-blue-50 text-blue-600 rounded-lg"><FileIcon size={18}/></div>
+                             <div className="min-w-0"><p className="text-sm font-bold text-slate-700 truncate">{file.nombre}</p><p className="text-[9px] font-bold text-slate-400 uppercase tracking-widest mt-1">{file.size} • Subido el {file.fecha}</p></div>
+                           </div>
+                           <button onClick={() => setCaseForm(prev => ({ ...prev, archivos: prev.archivos.filter(f => f.id !== file.id) }))} className="p-2 text-slate-400 hover:text-red-500 opacity-0 group-hover:opacity-100 transition-all bg-slate-50 hover:bg-red-50 rounded-lg"><Trash2 size={16}/></button>
+                         </div>
+                       ))}
+                     </div>
+                     {(!caseForm.archivos || caseForm.archivos.length === 0) && <p className="text-center py-10 text-slate-400 font-bold text-xs uppercase tracking-widest italic">No hay archivos adjuntos.</p>}
+                  </div>
+                </div>
+              )}
             </div>
             
             <div className="bg-slate-50 p-6 border-t border-slate-200 flex justify-end gap-4 shrink-0">
               <button onClick={() => setIsCaseModalOpen(false)} className="px-8 py-3.5 text-slate-500 font-bold text-xs uppercase tracking-widest hover:text-slate-700 transition-all">Cancelar</button>
-              <button onClick={handleSaveCase} className="px-10 py-3.5 bg-slate-900 text-white font-black text-xs uppercase tracking-widest rounded-xl shadow-lg hover:bg-black transition-all flex items-center gap-2"><CheckCircle size={18}/> Guardar</button>
+              <button onClick={handleSaveCase} className="px-10 py-3.5 bg-slate-900 text-white font-black text-xs uppercase tracking-widest rounded-xl shadow-lg hover:bg-black transition-all flex items-center gap-2"><CheckCircle size={18}/> Guardar Seguimiento</button>
             </div>
           </div>
         </div>
@@ -1072,7 +1164,7 @@ export default function App() {
 
       {/* 2. MODAL PROTOCOLOS */}
       {isDocModalOpen && (
-        <div className="fixed inset-0 bg-[#0a2540]/90 backdrop-blur-sm flex items-center justify-center p-4 z-50 fade-in">
+        <div className="fixed inset-0 bg-[#0a2540]/90 backdrop-blur-sm flex items-center justify-center p-4 z-50 fade-in no-print">
           <div className="bg-white rounded-3xl shadow-2xl w-full max-w-4xl max-h-[90vh] flex flex-col overflow-hidden border border-slate-200">
             <div className="bg-blue-600 p-6 text-white flex justify-between items-center shrink-0 relative overflow-hidden">
                <div className="absolute top-0 right-0 w-32 h-32 bg-white/10 rounded-full -mr-10 -mt-10 blur-xl"></div>
@@ -1180,18 +1272,18 @@ export default function App() {
               )}
             </div>
             
-            <div className="bg-slate-50 p-6 border-t border-slate-200 flex justify-end gap-4 shrink-0"><button onClick={() => setIsDocModalOpen(false)} className="px-8 py-3 text-slate-500 font-bold text-xs uppercase tracking-widest hover:text-slate-700 transition-all">Cancelar</button><button onClick={handleSaveDoc} className="px-10 py-3 bg-blue-600 text-white font-black text-[10px] uppercase tracking-[0.2em] rounded-xl shadow-md hover:bg-blue-700 transition-all hover:-translate-y-1 flex items-center gap-2"><CheckCircle size={16}/> Guardar Protocolo</button></div>
+            <div className="bg-slate-50 p-6 border-t border-slate-200 flex justify-end gap-4 shrink-0"><button onClick={() => setIsDocModalOpen(false)} className="px-8 py-3 text-slate-500 font-bold text-xs uppercase tracking-widest hover:text-slate-700 transition-colors">Cancelar</button><button onClick={handleSaveDoc} className="px-10 py-3 bg-blue-600 text-white font-black text-[10px] uppercase tracking-[0.2em] rounded-xl shadow-md hover:bg-blue-700 transition-all hover:-translate-y-1 flex items-center gap-2"><CheckCircle size={16}/> Guardar Protocolo</button></div>
           </div>
         </div>
       )}
 
       {/* 3. MODAL GESTOR DE PAUTAS */}
       {isTemplateModalOpen && (
-        <div className="fixed inset-0 bg-[#0a2540]/90 backdrop-blur-sm flex items-center justify-center p-4 z-50 fade-in">
+        <div className="fixed inset-0 bg-[#0a2540]/90 backdrop-blur-sm flex items-center justify-center p-4 z-50 fade-in no-print">
           <div className="bg-white rounded-3xl shadow-2xl w-full max-w-4xl max-h-[90vh] flex flex-col overflow-hidden border border-slate-200">
             <div className="bg-slate-800 p-6 text-white flex justify-between items-center shrink-0 relative overflow-hidden">
                <div className="absolute top-0 right-0 w-32 h-32 bg-white/10 rounded-full -mr-10 -mt-10 blur-xl"></div>
-               <div className="flex items-center gap-4 relative z-10"><div className="p-3 bg-white/20 rounded-xl backdrop-blur-sm border border-white/20"><Settings size={24}/></div><div><h3 className="font-black text-xl uppercase tracking-widest drop-shadow-md">Gestor de Pautas</h3></div></div>
+               <div className="flex items-center gap-4 relative z-10"><div className="p-3 bg-white/20 rounded-xl backdrop-blur-sm border border-white/20"><Settings size={24}/></div><div><h3 className="font-black text-xl uppercase tracking-widest drop-shadow-md">{editingTemplateId ? 'Editar Pauta' : 'Gestor de Pautas'}</h3></div></div>
                <button onClick={() => setIsTemplateModalOpen(false)} className="text-white/60 hover:text-white font-bold text-3xl transition-colors relative z-10">&times;</button>
             </div>
             
@@ -1270,8 +1362,8 @@ export default function App() {
 
       {/* 4. MODAL REALIZAR AUDITORÍA / CHECKLIST */}
       {isAuditModalOpen && (
-        <div className="fixed inset-0 bg-[#0a2540]/90 backdrop-blur-sm flex items-center justify-center p-4 z-50 fade-in">
-          <div className="bg-white rounded-3xl shadow-2xl w-full max-w-3xl overflow-hidden flex flex-col max-h-[90vh] border border-slate-200">
+        <div className="fixed inset-0 bg-[#0a2540]/90 backdrop-blur-sm flex items-center justify-center p-4 z-50 fade-in no-print">
+          <div className="bg-white rounded-3xl shadow-2xl w-full max-w-4xl overflow-hidden flex flex-col max-h-[90vh] border border-slate-200">
              <div className="bg-blue-600 p-6 text-white font-black text-lg uppercase tracking-widest flex justify-between shrink-0 relative overflow-hidden">
                <div className="absolute top-0 right-0 w-32 h-32 bg-white/10 rounded-full -mr-10 -mt-10 blur-xl"></div>
                <div className="flex items-center gap-3 relative z-10"><ClipboardCheck size={24}/> Pauta Terreno</div>
@@ -1285,13 +1377,29 @@ export default function App() {
                     <select disabled value={auditForm.tipo} className="w-full p-0 border-none bg-transparent text-slate-800 font-black text-sm outline-none appearance-none"><option>{auditForm.tipo}</option></select>
                   </div>
                   <div>
-                    <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-2">Dispositivo a Evaluar</label>
-                    <select value={auditForm.centro} onChange={e=>setAuditForm({...auditForm, centro: e.target.value})} className="w-full p-3 border-2 border-slate-100 rounded-xl bg-white font-bold text-sm outline-none focus:border-blue-500 cursor-pointer transition-colors shadow-sm"><option value="">Seleccione...</option>{centros.map(c=><option key={c}>{c}</option>)}</select>
+                    <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-2">Instrumento / Pauta Seleccionada</label>
+                    <select value={auditForm.templateId} onChange={e=>setAuditForm({...auditForm, templateId: e.target.value, answers: {}})} className="w-full p-3 border-2 border-blue-100 rounded-xl bg-blue-50 text-blue-900 font-bold text-sm outline-none focus:border-blue-500 cursor-pointer transition-colors shadow-sm"><option value="">Seleccione del catálogo...</option>{auditTemplates.filter(t => t.tipo === 'Ambos' || t.tipo === auditForm.tipo).map(t => <option key={t.id} value={t.id}>{t.nombre}</option>)}</select>
                   </div>
                 </div>
-                <div>
-                  <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-2">Instrumento / Pauta</label>
-                  <select value={auditForm.templateId} onChange={e=>setAuditForm({...auditForm, templateId: e.target.value, answers: {}})} className="w-full p-4 border-2 border-blue-100 rounded-xl bg-blue-50/30 text-blue-900 font-bold text-sm outline-none focus:border-blue-500 cursor-pointer transition-colors shadow-sm"><option value="">Seleccione una pauta del catálogo...</option>{auditTemplates.filter(t => t.tipo === 'Ambos' || t.tipo === auditForm.tipo).map(t => <option key={t.id} value={t.id}>{t.nombre}</option>)}</select>
+
+                {/* NUEVO: CAMPOS DE ENCABEZADOS DE PAUTA */}
+                <div className="grid grid-cols-2 md:grid-cols-4 gap-4 bg-slate-50 p-5 rounded-2xl border border-slate-100">
+                  <div>
+                     <label className="block text-[9px] font-black text-slate-400 uppercase tracking-widest mb-1.5">Fecha Evaluación</label>
+                     <input type="date" value={auditForm.fecha} onChange={e=>setAuditForm({...auditForm, fecha: e.target.value})} className="w-full p-2.5 border-2 border-slate-200 rounded-xl text-xs font-bold outline-none focus:border-blue-400"/>
+                  </div>
+                  <div>
+                     <label className="block text-[9px] font-black text-slate-400 uppercase tracking-widest mb-1.5">Servicio de Salud</label>
+                     <input type="text" value={auditForm.servicio} onChange={e=>setAuditForm({...auditForm, servicio: e.target.value})} className="w-full p-2.5 border-2 border-slate-200 rounded-xl text-xs font-bold outline-none focus:border-blue-400" placeholder="Ej: SS del Reloncaví"/>
+                  </div>
+                  <div>
+                     <label className="block text-[9px] font-black text-slate-400 uppercase tracking-widest mb-1.5">Equipo Consultor</label>
+                     <input type="text" value={auditForm.equipoConsultor} onChange={e=>setAuditForm({...auditForm, equipoConsultor: e.target.value})} className="w-full p-2.5 border-2 border-slate-200 rounded-xl text-xs font-bold outline-none focus:border-blue-400" placeholder="Especialidad..."/>
+                  </div>
+                  <div>
+                     <label className="block text-[9px] font-black text-slate-400 uppercase tracking-widest mb-1.5">Disp. Consultante</label>
+                     <select value={auditForm.centro} onChange={e=>setAuditForm({...auditForm, centro: e.target.value, equipoConsultante: e.target.value})} className="w-full p-2.5 border-2 border-slate-200 rounded-xl text-xs font-bold outline-none focus:border-blue-400 bg-white"><option value="">Centro...</option>{centros.map(c=><option key={c}>{c}</option>)}</select>
+                  </div>
                 </div>
                 
                 {/* CHECKLIST COMPACTO */}
@@ -1314,6 +1422,11 @@ export default function App() {
                      {(!auditForm.templateId) && <div className="text-center py-12 text-slate-400 font-bold uppercase tracking-widest text-xs italic">Selecciona una pauta arriba para cargar el checklist.</div>}
                    </div>
                 </div>
+
+                <div className="border-t-2 border-slate-100 pt-6">
+                  <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-3 flex items-center gap-2"><MessageSquare size={14}/> Observaciones y Aclaraciones (Opcional)</label>
+                  <textarea rows="3" value={auditForm.observaciones || ''} onChange={e=>setAuditForm({...auditForm, observaciones: e.target.value})} className="w-full border-2 border-slate-100 p-4 rounded-xl text-xs font-medium text-slate-700 outline-none focus:border-blue-500 bg-white transition-colors resize-y shadow-sm" placeholder="Escribe aquí aclaraciones sobre los puntajes, compromisos inmediatos o hallazgos adicionales durante la evaluación..."/>
+                </div>
              </div>
              
              <div className="bg-slate-50 p-6 border-t border-slate-200 flex justify-end gap-3 shrink-0"><button onClick={() => setIsAuditModalOpen(false)} className="px-8 py-3 text-slate-500 font-bold text-xs uppercase tracking-widest hover:text-slate-700 transition-colors">Cancelar</button><button onClick={handleSaveAudit} disabled={!auditForm.templateId || !auditForm.centro} className="px-10 py-3 bg-blue-600 text-white font-black text-[10px] uppercase tracking-[0.2em] rounded-xl shadow-md hover:bg-blue-700 transition-all disabled:opacity-50">Cerrar Evaluación</button></div>
@@ -1321,9 +1434,90 @@ export default function App() {
         </div>
       )}
 
+      {/* 4.1 MODAL DE IMPRESIÓN (FULL SCREEN) */}
+      {printingAudit && (() => {
+        const template = auditTemplates.find(t => t.id === printingAudit.templateId);
+        return (
+          <div className="fixed inset-0 bg-slate-900/90 z-[100] overflow-y-auto flex justify-center p-8 print:p-0 print:bg-white print:block print:static">
+             <div className="bg-white w-full max-w-4xl min-h-[1056px] my-auto p-12 shadow-2xl relative print:shadow-none print:m-0 print:w-full print:max-w-full">
+                
+                {/* Botones de control ocultos en impresión */}
+                <div className="absolute top-6 right-6 flex gap-3 print:hidden">
+                  <button onClick={() => window.print()} className="bg-blue-600 text-white px-5 py-2.5 rounded-xl font-black text-xs uppercase tracking-widest flex items-center gap-2 shadow-lg hover:bg-blue-700"><Printer size={16}/> Imprimir / PDF</button>
+                  <button onClick={() => setPrintingAudit(null)} className="bg-slate-200 text-slate-700 px-5 py-2.5 rounded-xl font-black text-xs uppercase tracking-widest hover:bg-slate-300">Cerrar</button>
+                </div>
+
+                {/* Contenido del Documento Formal */}
+                <div className="border-b-2 border-slate-800 pb-5 mb-8 mt-4">
+                  <h1 className="text-2xl font-black text-center uppercase tracking-widest text-slate-900">{template?.nombre || 'Pauta de Evaluación Institucional'}</h1>
+                  <p className="text-center text-xs font-bold text-slate-500 uppercase tracking-widest mt-2">Aplicada en terreno - SGCC-SM Reloncaví</p>
+                </div>
+                
+                <div className="grid grid-cols-2 gap-6 mb-10 text-sm border-2 border-slate-200 p-6 rounded-2xl bg-slate-50 print:bg-white">
+                  <div className="flex flex-col"><span className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">Servicio de Salud</span><span className="font-bold text-slate-800 text-base">{printingAudit.servicio || 'No especificado'}</span></div>
+                  <div className="flex flex-col"><span className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">Fecha de Aplicación</span><span className="font-bold text-slate-800 text-base">{printingAudit.fecha}</span></div>
+                  <div className="flex flex-col"><span className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">Equipo Consultor / Especialidad</span><span className="font-bold text-slate-800 text-base">{printingAudit.equipoConsultor || 'No especificado'}</span></div>
+                  <div className="flex flex-col"><span className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">Equipo Consultante / Dispositivo</span><span className="font-bold text-slate-800 text-base">{printingAudit.equipoConsultante || printingAudit.centro}</span></div>
+                </div>
+
+                <table className="w-full text-left border-collapse border-2 border-slate-200 mb-10">
+                  <thead>
+                    <tr className="bg-slate-100 border-b-2 border-slate-200 print:bg-slate-100">
+                      <th className="p-4 text-[10px] font-black uppercase tracking-widest w-12 text-center border-r-2 border-slate-200">Nº</th>
+                      <th className="p-4 text-[10px] font-black uppercase tracking-widest border-r-2 border-slate-200">Criterio Evaluado</th>
+                      <th className="p-4 text-[10px] font-black uppercase tracking-widest text-center w-20 border-r-2 border-slate-200">SÍ</th>
+                      <th className="p-4 text-[10px] font-black uppercase tracking-widest text-center w-20">NO</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {template?.criterios.map((c, i) => (
+                      <tr key={i} className="border-b border-slate-200">
+                        <td className="p-4 text-sm font-black text-center text-slate-400 border-r-2 border-slate-200">{i+1}</td>
+                        <td className="p-4 text-sm font-medium text-slate-800 border-r-2 border-slate-200 leading-relaxed">{c}</td>
+                        <td className="p-4 text-center font-black text-lg border-r-2 border-slate-200 text-emerald-600">{printingAudit.answers[i] === 'si' ? 'X' : ''}</td>
+                        <td className="p-4 text-center font-black text-lg text-red-600">{printingAudit.answers[i] === 'no' ? 'X' : ''}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+
+                <div className="flex justify-end mb-10">
+                   <div className="bg-slate-50 border-2 border-slate-200 p-6 rounded-2xl w-72 text-right print:bg-white">
+                     <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">Puntaje Total Obtenido</p>
+                     <p className="text-4xl font-black text-slate-800">{printingAudit.puntaje}</p>
+                     <p className="text-sm font-black text-slate-600 uppercase tracking-widest mt-2">{printingAudit.estado}</p>
+                   </div>
+                </div>
+
+                {printingAudit.observaciones && (
+                  <div className="mb-12">
+                     <h3 className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-3 border-b-2 border-slate-100 pb-2">Observaciones Generales</h3>
+                     <div className="p-5 bg-slate-50 border-2 border-slate-100 rounded-2xl text-sm font-medium text-slate-700 whitespace-pre-wrap leading-relaxed print:bg-white">
+                        {printingAudit.observaciones}
+                     </div>
+                  </div>
+                )}
+
+                <div className="mt-20 pt-12 border-t-2 border-slate-200 flex justify-between px-16">
+                   <div className="text-center">
+                      <div className="w-56 border-b-2 border-slate-800 mb-3"></div>
+                      <p className="text-xs font-black uppercase tracking-widest text-slate-800">{printingAudit.evaluador}</p>
+                      <p className="text-[9px] font-bold text-slate-500 uppercase mt-1">Evaluador SGCC-SM</p>
+                   </div>
+                   <div className="text-center">
+                      <div className="w-56 border-b-2 border-slate-800 mb-3"></div>
+                      <p className="text-xs font-black uppercase tracking-widest text-slate-800">Firma de Recepción</p>
+                      <p className="text-[9px] font-bold text-slate-500 uppercase mt-1">{printingAudit.centro}</p>
+                   </div>
+                </div>
+             </div>
+          </div>
+        )
+      })()}
+
       {/* 5. MODAL DIRECTORIO */}
       {isDirModalOpen && (
-        <div className="fixed inset-0 bg-[#0a2540]/90 backdrop-blur-sm flex items-center justify-center p-4 z-50 fade-in">
+        <div className="fixed inset-0 bg-[#0a2540]/90 backdrop-blur-sm flex items-center justify-center p-4 z-50 fade-in no-print">
           <div className="bg-white rounded-3xl shadow-2xl w-full max-w-sm max-h-[90vh] flex flex-col border border-slate-200 overflow-hidden">
             <div className="bg-blue-600 p-6 text-white flex justify-between items-center shrink-0">
                <h3 className="font-black text-lg uppercase tracking-widest">{editingDirId ? 'Editar Contacto' : 'Nuevo Contacto'}</h3>
@@ -1343,7 +1537,7 @@ export default function App() {
 
       {/* 6. MODAL USUARIOS */}
       {isUserModalOpen && (
-        <div className="fixed inset-0 bg-[#0a2540]/90 backdrop-blur-sm flex items-center justify-center p-4 z-50 fade-in">
+        <div className="fixed inset-0 bg-[#0a2540]/90 backdrop-blur-sm flex items-center justify-center p-4 z-50 fade-in no-print">
           <div className="bg-white rounded-3xl shadow-2xl w-full max-w-lg max-h-[90vh] flex flex-col border border-slate-200 overflow-hidden">
             <div className="bg-slate-900 p-6 text-white flex justify-between items-center shrink-0">
               <h3 className="font-black text-lg uppercase tracking-widest flex items-center gap-3"><UserPlus size={20}/> {editingUserId ? 'Editar Credencial' : 'Nueva Credencial'}</h3>
@@ -1389,7 +1583,7 @@ export default function App() {
 
       {/* 7. MODAL PERFIL CONTRASEÑA */}
       {isProfileModalOpen && (
-        <div className="fixed inset-0 bg-[#0a2540]/90 backdrop-blur-sm flex items-center justify-center p-4 z-50 fade-in">
+        <div className="fixed inset-0 bg-[#0a2540]/90 backdrop-blur-sm flex items-center justify-center p-4 z-50 fade-in no-print">
           <div className="bg-white rounded-3xl shadow-2xl w-full max-w-sm max-h-[90vh] flex flex-col border border-slate-200 overflow-hidden">
             <div className="bg-blue-600 p-6 text-white flex justify-between items-center shrink-0"><h3 className="font-black text-lg uppercase tracking-widest flex items-center gap-2"><Key size={20}/> Seguridad</h3><button onClick={() => setIsProfileModalOpen(false)} className="text-white/60 hover:text-white font-bold text-3xl">&times;</button></div>
             <div className="p-6 space-y-4 overflow-y-auto flex-1">
@@ -1411,6 +1605,10 @@ export default function App() {
         ::-webkit-scrollbar-track { background: transparent; }
         ::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 4px; }
         ::-webkit-scrollbar-thumb:hover { background: #94a3b8; }
+        @media print {
+          body { background-color: white !important; }
+          .no-print { display: none !important; }
+        }
       `}} />
     </div>
   );
