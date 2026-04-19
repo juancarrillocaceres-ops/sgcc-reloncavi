@@ -24,8 +24,6 @@ const auth = getAuth(app);
 const db = getFirestore(app);
 const appId = typeof __app_id !== 'undefined' ? __app_id : "sgcc-reloncavi-v1";
 
-const apiKey = ""; 
-
 // --- UTILIDADES ---
 const diffInDays = (d1, d2) => {
   if (!d1 || !d2) return null;
@@ -46,7 +44,10 @@ const getTaskStatus = (fecha) => {
   return { status: 'safe', bgClass: 'bg-emerald-100 text-emerald-800', textClass: 'text-emerald-600', showWarning: false };
 };
 
-const generateTextWithRetry = async (prompt, systemInstruction = "", inlineData = null, retries = 5) => {
+// --- ACTUALIZADO: REPARACIÓN IA PARA RECIBIR LA LLAVE DE PRODUCCIÓN ---
+const generateTextWithRetry = async (activeApiKey, prompt, systemInstruction = "", inlineData = null, retries = 5) => {
+  if (!activeApiKey) throw new Error("Falta configurar la Clave de API de IA");
+  
   const delays = [1000, 2000, 4000, 8000, 16000];
   const parts = [{ text: prompt }];
   if (inlineData) parts.push({ inlineData });
@@ -56,7 +57,7 @@ const generateTextWithRetry = async (prompt, systemInstruction = "", inlineData 
   for (let i = 0; i < retries; i++) {
     try {
       const response = await fetch(
-        `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-09-2025:generateContent?key=${apiKey}`,
+        `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${activeApiKey}`,
         { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) }
       );
       if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
@@ -90,7 +91,9 @@ export default function App() {
   const [auditTemplates, setAuditTemplates] = useState([]);
   const [directory, setDirectory] = useState([]);
   const [users, setUsers] = useState([]);
-  const [targetDays, setTargetDays] = useState(7);
+  
+  const [appConfig, setAppConfig] = useState({ targetDays: 7, apiKey: '' });
+  const [apiConfigKey, setApiConfigKey] = useState('');
   const [newCentroName, setNewCentroName] = useState('');
 
   // --- ESTADOS DE MODALES Y FORMULARIOS ---
@@ -143,7 +146,7 @@ export default function App() {
   useEffect(() => {
     const initAuth = async () => {
       try {
-        if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token && typeof __firebase_config !== 'undefined') {
+        if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
           await signInWithCustomToken(auth, __initial_auth_token);
         } else {
           await signInAnonymously(auth);
@@ -164,7 +167,13 @@ export default function App() {
     const unsubDir = onSnapshot(collection(db, 'artifacts', appId, 'public', 'data', 'directory'), snap => setDirectory(snap.docs.map(d => d.data())), console.error);
     const unsubUsers = onSnapshot(collection(db, 'artifacts', appId, 'public', 'data', 'users'), snap => setUsers(snap.docs.map(d => d.data())), console.error);
     const unsubCentros = onSnapshot(doc(db, 'artifacts', appId, 'public', 'data', 'settings', 'centros'), snap => { if (snap.exists() && snap.data().list) setCentros(snap.data().list); }, console.error);
-    const unsubConfig = onSnapshot(doc(db, 'artifacts', appId, 'public', 'data', 'settings', 'config'), snap => { if (snap.exists() && snap.data().targetDays) setTargetDays(snap.data().targetDays); }, console.error);
+    const unsubConfig = onSnapshot(doc(db, 'artifacts', appId, 'public', 'data', 'settings', 'config'), snap => { 
+      if (snap.exists()) {
+        const data = snap.data();
+        setAppConfig(data);
+        if (data.apiKey) setApiConfigKey(data.apiKey);
+      } 
+    }, console.error);
 
     return () => { unsubCases(); unsubDocs(); unsubAudits(); unsubTemplates(); unsubDir(); unsubUsers(); unsubCentros(); unsubConfig(); };
   }, [firebaseUser]);
@@ -206,14 +215,15 @@ export default function App() {
 
   const redMetrics = useMemo(() => {
     let sumEnlace = 0, countEnlace = 0, sumIngreso = 0, countIngreso = 0, alertCount = 0;
+    const currentTarget = appConfig.targetDays || 7;
     visibleCases.forEach(c => {
       const enlaceDays = diffInDays(c.fechaEgreso, c.fechaRecepcionRed);
       const ingresoDays = diffInDays(c.fechaEgreso, c.fechaIngresoEfectivo);
       if (enlaceDays !== null) { sumEnlace += enlaceDays; countEnlace++; }
-      if (ingresoDays !== null) { sumIngreso += ingresoDays; countIngreso++; if (ingresoDays > targetDays) alertCount++; }
+      if (ingresoDays !== null) { sumIngreso += ingresoDays; countIngreso++; if (ingresoDays > currentTarget) alertCount++; }
     });
     return { avgEnlace: countEnlace > 0 ? (sumEnlace / countEnlace).toFixed(1) : '---', avgIngreso: countIngreso > 0 ? (sumIngreso / countIngreso).toFixed(1) : '---', fueraDePlazo: alertCount };
-  }, [visibleCases, targetDays]);
+  }, [visibleCases, appConfig.targetDays]);
 
   // --- HANDLERS GENERALES ---
   const handleLogin = (e) => {
@@ -224,44 +234,111 @@ export default function App() {
 
   const handleUpdateTarget = async (days) => {
     const newDays = parseInt(days);
-    if (!isNaN(newDays)) { setTargetDays(newDays); await saveToCloud('settings', 'config', { targetDays: newDays }); }
+    if (!isNaN(newDays)) { await saveToCloud('settings', 'config', { ...appConfig, targetDays: newDays }); }
   };
 
   const handleExportCSV = () => {
+    const currentTarget = appConfig.targetDays || 7;
     const headers = ['ID_Seguimiento', 'RUT', 'Paciente', 'Origen', 'Destino', 'Estado', 'Fecha_Egreso', 'Fecha_Recepcion', 'Fecha_Ingreso_Efectivo', 'Plazo_Meta'];
-    const rows = visibleCases.map(c => [c.id, c.paciente, c.nombre, c.origen, c.destino, c.estado, c.fechaEgreso||'', c.fechaRecepcionRed||'', c.fechaIngresoEfectivo||'', targetDays]);
+    const rows = visibleCases.map(c => [c.id, c.paciente, c.nombre, c.origen, c.destino, c.estado, c.fechaEgreso||'', c.fechaRecepcionRed||'', c.fechaIngresoEfectivo||'', currentTarget]);
     const csvContent = [headers.join(','), ...rows.map(r => r.join(','))].join('\n');
     const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
     const link = document.createElement("a");
-    link.href = URL.createObjectURL(blob); link.download = `Reporte_Continuidad_HPM_${new Date().toISOString().split('T')[0]}.csv`; link.click();
+    link.href = URL.createObjectURL(blob); link.download = `Reporte_Continuidad_HPM.csv`; link.click();
   };
 
+  // --- HANDLERS INTELIGENCIA ARTIFICIAL (SOLO ADMINS) ---
   const handleGenerateReport = async (type) => { 
+    if (!appConfig.apiKey) return alert("Falta configurar la Clave API de IA en la pestaña 'Configuración'.");
+    
+    setIsGeneratingReport(true); 
+    setReportContent('');
+    let prompt = "";
+    const currentTarget = appConfig.targetDays || 7;
+    
     if (type === 'stats') {
-      const delayCases = visibleCases.filter(c => diffInDays(c.fechaEgreso, c.fechaIngresoEfectivo) > targetDays);
-      if (delayCases.length === 0) return alert("No hay casos fuera de plazo para reportar.");
-      setIsGeneratingReport(true); setReportContent('');
-      const prompt = `Basado en los siguientes casos que superan la meta de ${targetDays} días: ${JSON.stringify(delayCases.map(c => ({ paciente: c.nombre, destino: c.destino })))}\n\nRedacta un reporte gerencial breve sobre los nudos críticos en la red para jefaturas.`;
-      try { setReportContent(await generateTextWithRetry(prompt)); } catch (e) { setReportContent("Error al generar reporte."); } finally { setIsGeneratingReport(false); }
+      const delayCases = visibleCases.filter(c => diffInDays(c.fechaEgreso, c.fechaIngresoEfectivo) > currentTarget);
+      if (delayCases.length === 0) { setIsGeneratingReport(false); return alert("No hay casos fuera de plazo para reportar."); }
+      prompt = `Actúa como clínico experto. Redacta un reporte breve sobre estos ${delayCases.length} casos fuera de plazo (${currentTarget} días): ${JSON.stringify(delayCases.map(c => ({ paciente: c.nombre, destino: c.destino })))}$. Identifica nudos críticos.`;
     } else {
-      if (alertCases.length === 0) return alert("No hay casos en alerta para reportar.");
-      setIsGeneratingReport(true); setReportContent('');
-      const prompt = `Basado en los siguientes casos de pérdida de continuidad (Alerta): ${JSON.stringify(alertCases.map(c => ({ paciente: c.nombre, destino: c.destino })))}\n\nRedacta un correo formal dirigido a "Directores de Dispositivos" solicitando el rescate urgente de estos pacientes.`;
-      try { setReportContent(await generateTextWithRetry(prompt)); } catch (e) { setReportContent("Error al conectar con la IA."); } finally { setIsGeneratingReport(false); }
+      if (alertCases.length === 0) { setIsGeneratingReport(false); return alert("No hay casos en alerta para reportar."); }
+      prompt = `Redacta un correo urgente para rescatar estos pacientes en alerta de red: ${JSON.stringify(alertCases.map(c => ({ paciente: c.nombre, destino: c.destino })))}$. Dirigido a directores de centros.`;
+    }
+    
+    try { 
+      const res = await generateTextWithRetry(appConfig.apiKey, prompt);
+      setReportContent(res);
+    } catch (e) { 
+      setReportContent("Error de conexión con la IA. Verifica que tu Llave API sea correcta."); 
+    } finally { 
+      setIsGeneratingReport(false); 
     }
   };
 
   const handleGenerateCaseSummary = async () => {
+    if (!appConfig.apiKey) return alert("Falta configurar la Clave API de IA en Configuración.");
     setIsGeneratingCaseSummary(true); setCaseSummary('');
-    const prompt = `Actúa como clínico. Genera un resumen profesional del siguiente paciente: Nombre: ${caseForm.nombre}, RUT: ${caseForm.rut}, Origen: ${caseForm.origen}, Destino: ${caseForm.destino}. Eventos registrados en bitácora: ${caseForm.bitacora.map(b => `[${b.fecha}] ${b.tipo} - ${b.descripcion}`).join(' | ')}. Genera solo el resumen clínico sin saludos ni introducciones extras.`;
+    
+    const prompt = `Actúa como clínico. Genera un resumen profesional: Paciente: ${caseForm.nombre}, RUT: ${caseForm.rut}, Origen: ${caseForm.origen}, Destino: ${caseForm.destino}. Eventos: ${caseForm.bitacora.map(b => `[${b.fecha}] ${b.tipo}: ${b.descripcion}`).join(' | ')}. Resumen directo sin saludos.`;
     try {
-      const result = await generateTextWithRetry(prompt);
+      const result = await generateTextWithRetry(appConfig.apiKey, prompt);
       setCaseSummary(result);
     } catch (e) {
-      setCaseSummary("Error al generar el resumen. Por favor, intenta nuevamente.");
+      setCaseSummary("No se pudo generar el resumen. Verifica tu Clave API.");
     } finally {
       setIsGeneratingCaseSummary(false);
     }
+  };
+
+  const handleProcessRawTextForAI = async () => {
+    if (!appConfig.apiKey) return alert("Falta configurar la Clave API de IA en Configuración.");
+    if (!rawTextForAI.trim()) return;
+    
+    setIsDigitizing(true);
+    const prompt = `Actúa como auditor técnico en salud. Del siguiente texto, extrae ÚNICAMENTE los puntos o criterios evaluables. Devuélvelos uno por línea, listos para un checklist de Sí/No. Omite introducciones, saludos o conclusiones. TEXTO: ${rawTextForAI}`;
+    try {
+      const result = await generateTextWithRetry(appConfig.apiKey, prompt);
+      const criteriosGenerados = result.split('\n').map(c => c.trim().replace(/^[-*•\d.)]+\s*/, '')).filter(c => c.length > 2);
+      if(criteriosGenerados.length === 0) throw new Error("No se encontraron criterios.");
+      setTemplateForm({...templateForm, criterios: [...templateForm.criterios.filter(c=>c!==''), ...criteriosGenerados]});
+      setRawTextForAI('');
+      alert(`¡Texto procesado correctamente! Se extrajeron ${criteriosGenerados.length} criterios.`);
+    } catch (err) { 
+      alert("Error al procesar el texto con la IA. Revisa tu Clave API."); 
+    } finally { 
+      setIsDigitizing(false); 
+    }
+  };
+
+  const handlePdfUploadForAI = async (e) => {
+    if (!appConfig.apiKey) { e.target.value = null; return alert("Falta configurar la Clave API de IA en Configuración."); }
+    const file = e.target.files[0];
+    if (!file) return;
+    setIsDigitizing(true);
+    
+    const reader = new FileReader();
+    reader.onloadend = async () => {
+      const base64Data = reader.result.split(',')[1];
+      const inlineData = { mimeType: file.type || 'application/pdf', data: base64Data };
+      const prompt = `Actúa como auditor técnico en salud. Extrae los criterios o puntos a evaluar del documento adjunto. Devuelve ÚNICAMENTE los criterios encontrados, uno por línea, listos para un checklist de Sí/No. Omite introducciones, saludos o conclusiones.`;
+      
+      try {
+        const result = await generateTextWithRetry(appConfig.apiKey, prompt, "", inlineData);
+        const criteriosGenerados = result.split('\n').map(c => c.trim().replace(/^[-*•\d.)]+\s*/, '')).filter(c => c.length > 2);
+        
+        if(criteriosGenerados.length === 0) throw new Error("No se encontraron criterios.");
+        
+        setTemplateForm({...templateForm, nombre: `Evaluación: ${file.name}`, criterios: [...templateForm.criterios.filter(c=>c!==''), ...criteriosGenerados]});
+        alert(`¡Documento procesado correctamente! Se encontraron ${criteriosGenerados.length} criterios.`);
+      } catch (err) { 
+        console.error(err);
+        alert("El archivo es muy pesado, ilegible o la Clave API es incorrecta. Intenta copiar y pegar el texto en el cuadro de abajo."); 
+      } finally { 
+        setIsDigitizing(false); 
+      }
+    };
+    reader.onerror = () => { alert("Error al leer el archivo desde el navegador."); setIsDigitizing(false); };
+    reader.readAsDataURL(file);
   };
 
   const copyToClipboard = (text) => { navigator.clipboard.writeText(text); alert("Copiado al portapapeles"); };
@@ -322,24 +399,6 @@ export default function App() {
     setIsTemplateModalOpen(false);
   };
 
-  const handleProcessRawTextForAI = async () => {
-    if (!rawTextForAI.trim()) return;
-    setIsDigitizing(true);
-    const prompt = `Actúa como auditor técnico en salud. Del siguiente texto, extrae ÚNICAMENTE los puntos o criterios evaluables. Devuélvelos uno por línea, listos para un checklist de Sí/No. Omite introducciones, saludos o conclusiones. TEXTO: ${rawTextForAI}`;
-    try {
-      const result = await generateTextWithRetry(prompt);
-      const criteriosGenerados = result.split('\n').map(c => c.trim().replace(/^[-*•\d.)]+\s*/, '')).filter(c => c.length > 2);
-      if(criteriosGenerados.length === 0) throw new Error("No se encontraron criterios.");
-      setTemplateForm({...templateForm, criterios: [...templateForm.criterios.filter(c=>c!==''), ...criteriosGenerados]});
-      setRawTextForAI('');
-      alert(`¡Texto procesado correctamente! Se extrajeron ${criteriosGenerados.length} criterios.`);
-    } catch (err) { 
-      alert("Error al procesar el texto con la IA."); 
-    } finally { 
-      setIsDigitizing(false); 
-    }
-  };
-
   const handleSaveAudit = async () => {
     const selectedTemplate = auditTemplates.find(t => t.id === auditForm.templateId);
     if (!selectedTemplate) return;
@@ -357,36 +416,6 @@ export default function App() {
     const finalId = `AUD-00${audits.length + 1}`;
     await saveToCloud('audits', finalId, { id: finalId, centro: auditForm.centro, tipo: auditForm.tipo, templateId: selectedTemplate.id, fecha: new Date().toISOString().split('T')[0], cumplimiento: score, puntaje: `${aprobados} / ${totalCriterios} pts`, estado: estadoTexto, evaluador: currentUser.nombre });
     setIsAuditModalOpen(false);
-  };
-
-  const handlePdfUploadForAI = async (e) => {
-    const file = e.target.files[0];
-    if (!file) return;
-    setIsDigitizing(true);
-    
-    const reader = new FileReader();
-    reader.onloadend = async () => {
-      const base64Data = reader.result.split(',')[1];
-      const inlineData = { mimeType: file.type || 'application/pdf', data: base64Data };
-      const prompt = `Actúa como auditor técnico en salud. Extrae los criterios o puntos a evaluar del documento adjunto. Devuelve ÚNICAMENTE los criterios encontrados, uno por línea, listos para un checklist de Sí/No. Omite introducciones, saludos o conclusiones.`;
-      
-      try {
-        const result = await generateTextWithRetry(prompt, "", inlineData);
-        const criteriosGenerados = result.split('\n').map(c => c.trim().replace(/^[-*•\d.)]+\s*/, '')).filter(c => c.length > 2);
-        
-        if(criteriosGenerados.length === 0) throw new Error("No se encontraron criterios.");
-        
-        setTemplateForm({...templateForm, nombre: `Evaluación: ${file.name}`, criterios: [...templateForm.criterios.filter(c=>c!==''), ...criteriosGenerados]});
-        alert(`¡Documento procesado correctamente! Se encontraron ${criteriosGenerados.length} criterios.`);
-      } catch (err) { 
-        console.error(err);
-        alert("El archivo es muy pesado o no tiene formato de texto extraíble. Intenta copiar y pegar el texto en el cuadro de abajo."); 
-      } finally { 
-        setIsDigitizing(false); 
-      }
-    };
-    reader.onerror = () => { alert("Error al leer el archivo desde el navegador."); setIsDigitizing(false); };
-    reader.readAsDataURL(file);
   };
 
   const handleSaveDir = async () => {
@@ -535,12 +564,17 @@ export default function App() {
                 <div className="relative z-10 flex-1 flex flex-col">
                   <h3 className="text-xs font-black uppercase tracking-widest mb-2 flex items-center gap-2"><Wand2 size={16} className="text-blue-300"/> Asistente de Rescate</h3>
                   <p className="text-[10px] text-indigo-200 font-medium mb-4 leading-relaxed">Genera un correo formal automático para solicitar revisión urgente a los directores de los {alertCases.length} casos perdidos.</p>
-                  <button onClick={() => handleGenerateReport('alerts')} disabled={alertCases.length === 0 || isGeneratingReport} className="w-full bg-white text-indigo-900 py-3 rounded-xl text-[10px] font-black uppercase tracking-widest flex justify-center items-center gap-2 shadow-lg disabled:opacity-50 transition-transform hover:-translate-y-1 mt-auto">
-                    {isGeneratingReport ? <Loader2 size={14} className="animate-spin"/> : <MessageSquare size={14}/>} Redactar Correo
-                  </button>
+                  
+                  {currentUser?.rol === 'Admin' ? (
+                    <button onClick={() => handleGenerateReport('alerts')} disabled={alertCases.length === 0 || isGeneratingReport} className="w-full bg-white text-indigo-900 py-3 rounded-xl text-[10px] font-black uppercase tracking-widest flex justify-center items-center gap-2 shadow-lg disabled:opacity-50 transition-transform hover:-translate-y-1 mt-auto">
+                      {isGeneratingReport ? <Loader2 size={14} className="animate-spin"/> : <MessageSquare size={14}/>} Redactar Correo
+                    </button>
+                  ) : (
+                    <div className="mt-auto p-3 bg-white/10 rounded-xl text-center text-[9px] font-black uppercase tracking-widest text-indigo-300">Exclusivo Administradores</div>
+                  )}
                 </div>
                 {/* MOSTRANDO REPORTE EN DASHBOARD */}
-                {reportContent && activeTab === 'dashboard' && (
+                {reportContent && activeTab === 'dashboard' && currentUser?.rol === 'Admin' && (
                   <div className="mt-4 bg-[#081b30] p-4 rounded-xl border border-white/10 animate-in slide-in-from-top-4 relative z-10">
                      <div className="flex justify-between items-center mb-3 pb-2 border-b border-white/10">
                        <span className="text-[9px] font-black uppercase tracking-[0.2em] text-blue-300">Borrador de Correo:</span>
@@ -601,7 +635,11 @@ export default function App() {
                  </div>
                  <div className="flex items-center gap-2 bg-slate-50 p-2 rounded-xl border border-slate-200">
                     <span className="text-[9px] font-black text-slate-400 ml-2 uppercase tracking-widest">META RED:</span>
-                    <input type="number" value={targetDays} onChange={(e) => handleUpdateTarget(e.target.value)} className="w-16 p-2 bg-white border border-blue-100 rounded-lg text-center font-black text-blue-600 outline-none focus:border-blue-500 text-sm shadow-sm"/>
+                    {currentUser?.rol === 'Admin' ? (
+                      <input type="number" value={targetDays} onChange={(e) => handleUpdateTarget(e.target.value)} className="w-16 p-2 bg-white border border-blue-100 rounded-lg text-center font-black text-blue-600 outline-none focus:border-blue-500 text-sm shadow-sm"/>
+                    ) : (
+                      <span className="px-3 py-2 font-black text-blue-600 text-sm">{targetDays}</span>
+                    )}
                     <span className="text-[9px] font-black text-slate-500 mr-2 uppercase tracking-widest">Días</span>
                  </div>
               </div>
@@ -628,7 +666,7 @@ export default function App() {
               </div>
             </div>
 
-            {redMetrics.fueraDePlazo > 0 && (
+            {redMetrics.fueraDePlazo > 0 && currentUser?.rol === 'Admin' && (
               <div className="bg-gradient-to-br from-indigo-900 to-[#0a2540] rounded-2xl p-8 text-white shadow-xl relative overflow-hidden">
                  <div className="relative z-10 flex flex-col md:flex-row items-center justify-between gap-6">
                    <div className="max-w-2xl">
@@ -851,6 +889,16 @@ export default function App() {
                  ))}
                </div>
             </div>
+
+            {/* MÓDULO DE LLAVE API DE IA (SOLO PARA ADMINS) */}
+            <div className="mt-8 bg-indigo-50 p-8 rounded-2xl border border-indigo-100 max-w-3xl">
+               <h3 className="font-bold text-indigo-900 text-sm flex items-center gap-2 mb-2"><Wand2 size={18}/> Motor de Inteligencia Artificial (Gemini)</h3>
+               <p className="text-xs text-indigo-700 mb-6 leading-relaxed font-medium">Para que la extracción de pautas y resúmenes funcionen en tu servidor, debes ingresar tu Clave API oficial de Google AI Studio. **Las funciones automáticas en el menú de la aplicación solo serán visibles y utilizables por los usuarios con rol Administrador.**</p>
+               <div className="flex gap-4 items-center">
+                 <input type="password" value={apiConfigKey} onChange={e=>setApiConfigKey(e.target.value)} placeholder="Ej: AIzaSyB-..." className="border-2 border-white p-4 rounded-xl flex-1 text-sm font-bold outline-none focus:border-indigo-400 shadow-sm bg-white"/>
+                 <button onClick={async ()=>{ await saveToCloud('settings', 'config', { ...appConfig, apiKey: apiConfigKey.trim() }); alert("¡Llave IA guardada con éxito en el servidor de la red!"); }} className="bg-indigo-600 text-white px-8 py-4 rounded-xl text-[10px] font-black uppercase tracking-widest hover:bg-indigo-700 shadow-md transition-all flex items-center gap-2"><Key size={16}/> Guardar Llave IA</button>
+               </div>
+            </div>
           </div>
         )}
       </main>
@@ -938,17 +986,22 @@ export default function App() {
                   <div className="space-y-4 border-t-2 border-slate-100 pt-6">
                     <div className="flex justify-between items-end">
                       <h4 className="text-xs font-black text-slate-400 uppercase tracking-widest pb-2 flex items-center gap-2"><Wand2 size={16}/> Resumen Clínico Inteligente</h4>
-                      <button onClick={handleGenerateCaseSummary} disabled={isGeneratingCaseSummary || caseForm.bitacora.length === 0} className="bg-indigo-50 text-indigo-600 px-4 py-2.5 rounded-xl text-[10px] font-black uppercase tracking-widest hover:bg-indigo-100 transition-colors flex items-center gap-2 border border-indigo-100 disabled:opacity-50">
-                        {isGeneratingCaseSummary ? <Loader2 size={14} className="animate-spin"/> : <FileText size={14}/>} Generar Resumen
-                      </button>
+                      
+                      {currentUser?.rol === 'Admin' ? (
+                        <button onClick={handleGenerateCaseSummary} disabled={isGeneratingCaseSummary || caseForm.bitacora.length === 0} className="bg-indigo-50 text-indigo-600 px-4 py-2.5 rounded-xl text-[10px] font-black uppercase tracking-widest hover:bg-indigo-100 transition-colors flex items-center gap-2 border border-indigo-100 disabled:opacity-50">
+                          {isGeneratingCaseSummary ? <Loader2 size={14} className="animate-spin"/> : <FileText size={14}/>} Generar Resumen
+                        </button>
+                      ) : (
+                        <span className="text-[9px] font-black uppercase text-slate-300">Exclusivo Administrador</span>
+                      )}
                     </div>
-                    {caseSummary && (
+                    {caseSummary && currentUser?.rol === 'Admin' && (
                       <div className="bg-white p-5 rounded-xl border-2 border-indigo-50 text-sm font-medium text-slate-700 relative shadow-sm">
                         <button onClick={() => copyToClipboard(caseSummary)} className="absolute top-3 right-3 p-2 text-indigo-400 hover:text-indigo-600 bg-indigo-50 rounded-lg transition-colors"><Copy size={16}/></button>
                         <p className="pr-8 whitespace-pre-wrap leading-relaxed text-xs">{caseSummary}</p>
                       </div>
                     )}
-                    {caseForm.bitacora.length === 0 && !caseSummary && <p className="text-[10px] text-slate-400 italic font-medium uppercase tracking-widest">Agrega eventos en la bitácora para habilitar el resumen inteligente.</p>}
+                    {caseForm.bitacora.length === 0 && !caseSummary && currentUser?.rol === 'Admin' && <p className="text-[10px] text-slate-400 italic font-medium uppercase tracking-widest">Agrega eventos en la bitácora para habilitar el resumen inteligente.</p>}
                   </div>
 
                 </div>
@@ -1146,7 +1199,7 @@ export default function App() {
               <div className="grid grid-cols-1 lg:grid-cols-5 gap-8">
                 <div className="lg:col-span-2 space-y-6">
                   
-                  {/* SECCIÓN ACTUALIZADA DE EXTRACCIÓN CON IA: AHORA INCLUYE EL TEXTAREA VISIBLE */}
+                  {/* SECCIÓN ACTUALIZADA DE EXTRACCIÓN CON IA */}
                   <div className="bg-indigo-50/50 p-6 rounded-2xl border-2 border-indigo-100 flex flex-col text-center">
                     <h4 className="text-[11px] font-black text-indigo-900 uppercase tracking-[0.2em] mb-2 flex items-center justify-center gap-2"><Wand2 size={16}/> Extracción con IA</h4>
                     <p className="text-[10px] text-indigo-700/80 mb-4 font-medium leading-relaxed">Sube el PDF o pega el texto directamente.</p>
@@ -1172,8 +1225,6 @@ export default function App() {
                         {isDigitizing ? <Loader2 size={14} className="animate-spin"/> : <Wand2 size={14}/>} Procesar Texto
                       </button>
                     </div>
-
-                    {isDigitizing && (<div className="mt-3 flex items-center justify-center gap-2 text-[10px] text-indigo-600 font-black uppercase tracking-widest"><Loader2 size={14} className="animate-spin"/> Analizando...</div>)}
                   </div>
                   
                   <div className="space-y-4">
