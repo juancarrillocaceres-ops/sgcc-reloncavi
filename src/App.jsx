@@ -154,7 +154,10 @@ export default function App() {
   const [caseSearch, setCaseSearch] = useState('');
   
   const [isDigitizing, setIsDigitizing] = useState(false);
-  const [isUploading, setIsUploading] = useState(false);
+  
+  // ESTADOS SEPARADOS DE CARGA PARA EVITAR CONGELAMIENTO GLOBAL
+  const [isUploadingCaseFile, setIsUploadingCaseFile] = useState(false);
+  const [isUploadingDocFile, setIsUploadingDocFile] = useState(false);
   
   const [isDirModalOpen, setIsDirModalOpen] = useState(false);
   const [editingDirId, setEditingDirId] = useState(null);
@@ -307,41 +310,6 @@ export default function App() {
     if(window.confirm('⚠️ ¿Estás seguro de eliminar TODO el directorio para empezar de cero?')) {
        safeArr(directory).forEach(async (d) => { if (d && d.id) await deleteFromCloud('directory', d.id); });
        alert('Directorio limpiado.');
-    }
-  };
-
-  // --- SUBIDA DE ARCHIVOS A FIREBASE STORAGE ---
-  const uploadFileToCloud = async (file, folder) => {
-    setIsUploading(true);
-    try {
-      const fileRef = ref(storage, `${folder}/${Date.now()}_${file.name}`);
-      await uploadBytes(fileRef, file);
-      const url = await getDownloadURL(fileRef);
-      setIsUploading(false);
-      return url;
-    } catch (error) {
-      console.error(error);
-      alert("Error al subir archivo. Verifique conexión y reglas de Firebase Storage.");
-      setIsUploading(false);
-      return null;
-    }
-  };
-
-  const handleCaseFileUpload = async (e) => {
-    const file = e.target.files[0];
-    if (!file) return;
-    const url = await uploadFileToCloud(file, `casos/${editingCaseId || 'nuevo'}`);
-    if (url) {
-      setCaseForm(prev => ({ ...prev, archivos: [{ id: Date.now().toString(), nombre: file.name, size: (file.size / 1024 / 1024).toFixed(2) + ' MB', fecha: new Date().toISOString().split('T')[0], url }, ...safeArr(prev.archivos)] }));
-    }
-  };
-
-  const handleDocFileUpload = async (e) => {
-    const file = e.target.files[0];
-    if (!file) return;
-    const url = await uploadFileToCloud(file, `protocolos/${editingDocId || 'nuevo'}`);
-    if (url) {
-      setDocForm(prev => ({ ...prev, archivos: [{ id: Date.now().toString(), nombre: file.name, size: (file.size / 1024 / 1024).toFixed(2) + ' MB', fecha: new Date().toISOString().split('T')[0], url }, ...safeArr(prev.archivos)] }));
     }
   };
 
@@ -668,58 +636,6 @@ export default function App() {
               <div className="bg-white p-4 rounded-2xl shadow-sm border-l-[6px] border-l-indigo-500"><p className="text-[9px] text-slate-400 font-black uppercase tracking-widest">Auditorías</p><h3 className="text-2xl font-black text-indigo-600 mt-1">{safeArr(visibleAudits).filter(a => a.tipo === 'Auditoría').length}</h3></div>
               <div className="bg-white p-4 rounded-2xl shadow-sm border-l-[6px] border-l-teal-500"><p className="text-[9px] text-slate-400 font-black uppercase tracking-widest">Consultorías</p><h3 className="text-2xl font-black text-teal-600 mt-1">{safeArr(visibleAudits).filter(a => a.tipo === 'Consultoría').length}</h3></div>
             </div>
-            <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-              <div className="bg-white rounded-2xl shadow-sm border border-slate-200 p-5 lg:col-span-2 overflow-hidden">
-                <h3 className="text-xs font-black text-slate-800 uppercase tracking-widest mb-4 flex items-center gap-2"><AlertTriangle size={16} className="text-red-500" /> Casos Requiriendo Rescate</h3>
-                <div className="overflow-x-auto">
-                  <table className="w-full text-left border-collapse min-w-[500px]">
-                    <thead><tr className="bg-slate-50 text-xs font-bold uppercase tracking-wider text-slate-400"><th className="p-3 rounded-l-lg">ID</th><th className="p-3">Paciente</th><th className="p-3">Destino</th><th className="p-3 rounded-r-lg">Estado</th></tr></thead>
-                    <tbody>
-                      {alertCases.map(c => (<tr key={c.id} className="border-b border-slate-50"><td className="p-3 text-xs font-bold text-slate-500">{String(c.id)}</td><td className="p-3 text-sm font-bold text-slate-800">{String(c.nombre)}</td><td className="p-3 text-xs font-bold text-indigo-600">{String(c.destino)}</td><td className="p-3"><StatusBadge status={c.estado}/></td></tr>))}
-                      {alertCases.length === 0 && (<tr><td colSpan="4" className="p-6 text-center text-slate-400 font-bold text-xs uppercase tracking-widest">No hay alertas activas.</td></tr>)}
-                    </tbody>
-                  </table>
-                </div>
-              </div>
-              <div className="bg-indigo-900 rounded-2xl p-5 text-white shadow-xl relative overflow-hidden flex flex-col">
-                <div className="relative z-10 flex-1 flex flex-col">
-                  <h3 className="text-xs font-black uppercase tracking-widest mb-2 flex items-center gap-2"><Wand2 size={16} className="text-blue-300"/> Asistente de Rescate</h3>
-                  <p className="text-[10px] text-indigo-200 font-medium mb-4 leading-relaxed">Genera un correo formal automático para solicitar revisión urgente a los directores de los {alertCases.length} casos perdidos.</p>
-                  {currentUser?.rol === 'Admin' ? (
-                    <button onClick={() => handleGenerateReport('alerts')} disabled={alertCases.length === 0 || isGeneratingReport} className="w-full bg-white text-indigo-900 py-3 rounded-xl text-[10px] font-black uppercase tracking-widest flex justify-center items-center gap-2 shadow-lg disabled:opacity-50 transition-transform hover:-translate-y-1 mt-auto">
-                      {isGeneratingReport ? <Loader2 size={14} className="animate-spin"/> : <MessageSquare size={14}/>} Redactar Correo
-                    </button>
-                  ) : (<div className="mt-auto p-3 bg-white/10 rounded-xl text-center text-[9px] font-black uppercase tracking-widest text-indigo-300">Exclusivo Administradores</div>)}
-                </div>
-                {reportContent && activeTab === 'dashboard' && currentUser?.rol === 'Admin' && (
-                  <div className="mt-4 bg-[#081b30] p-4 rounded-xl border border-white/10 relative z-10"><div className="flex justify-between items-center mb-3 pb-2 border-b border-white/10"><span className="text-[9px] font-black uppercase tracking-[0.2em] text-blue-300">Borrador:</span><button onClick={()=>copyToClipboard(reportContent)} className="text-white hover:text-blue-300"><Copy size={12}/></button></div><p className="text-[10px] font-medium text-slate-300 whitespace-pre-wrap leading-relaxed max-h-32 overflow-y-auto">{String(reportContent)}</p></div>
-                )}
-                <div className="absolute top-0 right-0 w-32 h-32 bg-blue-500/20 rounded-full -mr-10 -mt-10 blur-xl"></div>
-              </div>
-            </div>
-            <div className="bg-white rounded-2xl shadow-sm border border-slate-200 p-6">
-              <h3 className="text-xs font-black text-slate-800 uppercase tracking-widest mb-4 flex items-center gap-2"><ListTodo size={16} className="text-blue-500" /> Tareas Pendientes</h3>
-              <div className="overflow-x-auto">
-                <table className="w-full text-left border-collapse min-w-[700px]">
-                  <thead><tr className="bg-slate-50 text-[9px] font-black uppercase tracking-widest text-slate-400"><th className="p-3 w-10">Est.</th><th className="p-3">Origen</th><th className="p-3">Tarea Asignada</th><th className="p-3">Responsable</th><th className="p-3">Acción / Vencimiento</th></tr></thead>
-                  <tbody className="divide-y divide-slate-50">
-                    {allPendingTasks.map(tarea => {
-                      const statusInfo = getTaskStatus(tarea.fechaCumplimiento);
-                      return (
-                        <tr key={tarea.id} className="hover:bg-slate-50 transition-colors group">
-                          <td className="p-3 text-slate-300"><button onClick={() => tarea.source === 'Caso' ? toggleTaskCompletion(tarea.parentId, tarea.id) : toggleDocTaskCompletion(tarea.parentId, tarea.id)} className="hover:text-emerald-500"><Square size={16} /></button></td>
-                          <td className="p-3"><div className="text-[11px] font-black text-slate-800 flex items-center gap-2">{String(tarea.parentName)} {statusInfo.status === 'upcoming' && <span className="bg-amber-100 text-amber-700 px-1.5 py-0.5 rounded text-[7px] uppercase animate-pulse">Próximo</span>} {statusInfo.status === 'overdue' && <span className="bg-red-100 text-red-700 px-1.5 py-0.5 rounded text-[7px] uppercase">Vencida</span>}</div><div className="text-[8px] text-slate-400 mt-1 uppercase font-bold">{String(tarea.source)}</div></td>
-                          <td className="p-3 text-xs font-medium text-slate-600">{String(tarea.descripcion)}</td>
-                          <td className="p-3 text-[10px] font-bold text-slate-500">{String(tarea.responsable || 'No asignado')}</td>
-                          <td className="p-3"><span className={`px-2.5 py-1 text-[9px] font-black uppercase rounded-lg flex items-center gap-1.5 w-fit ${statusInfo.bgClass}`}>{statusInfo.showWarning && <AlertTriangle size={10}/>}{String(tarea.fechaCumplimiento || 'Sin Fecha')}</span></td>
-                        </tr>
-                      );
-                    })}
-                    {allPendingTasks.length === 0 && (<tr><td colSpan="5" className="p-8 text-center text-slate-400 font-bold text-[10px] uppercase tracking-widest">No hay tareas pendientes.</td></tr>)}
-                  </tbody>
-                </table>
-              </div>
-            </div>
           </div>
         )}
 
@@ -734,7 +650,6 @@ export default function App() {
                <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
                   <div className="bg-slate-50 p-5 rounded-2xl border border-slate-100">
                     <Lbl>Meta General por Defecto</Lbl>
-                    <p className="text-[10px] text-slate-500 mb-4 font-medium">Aplica para dispositivos sin plazo específico.</p>
                     <div className="flex items-center gap-2">
                        {currentUser?.rol === 'Admin' ? (<input type="number" value={appConfig?.targetDays || 7} onChange={(e) => handleUpdateTarget(e.target.value)} className="w-24 p-3 bg-white border border-blue-100 rounded-xl text-center font-black text-blue-600 outline-none focus:border-blue-500 text-sm shadow-sm"/>) : (<span className="px-4 py-3 bg-white border border-slate-200 rounded-xl font-black text-blue-600 text-sm">{String(appConfig?.targetDays || 7)}</span>)}
                        <span className="text-[10px] font-black text-slate-500 uppercase">Días</span>
@@ -742,7 +657,6 @@ export default function App() {
                   </div>
                   <div className="bg-blue-50/50 p-5 rounded-2xl border border-blue-100">
                     <label className="block text-[10px] font-black text-blue-800 uppercase tracking-widest mb-2">Metas por Dispositivo</label>
-                    <p className="text-[10px] text-blue-600 mb-4 font-medium">Asigna plazos distintos según la realidad del centro.</p>
                     {currentUser?.rol === 'Admin' && (
                       <div className="flex gap-2 mb-4">
                         <input type="text" list="centros-list-plazos" value={plazoCentroInput} onChange={e=>setPlazoCentroInput(e.target.value)} placeholder="Centro..." className="flex-1 p-2.5 border border-white rounded-xl text-xs font-bold outline-none"/>
