@@ -61,10 +61,10 @@ const generateTextWithRetry = async (prompt, systemInstruction = "", inlineData 
       );
       if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
       const result = await response.json();
-      if (result.candidates && result.candidates[0].content.parts[0].text) {
+      if (result.candidates && result.candidates.length > 0 && result.candidates[0].content && result.candidates[0].content.parts && result.candidates[0].content.parts.length > 0) {
         return result.candidates[0].content.parts[0].text;
       } else {
-        throw new Error("Respuesta vacía de la IA");
+        throw new Error("Respuesta vacía o bloqueada por seguridad de la IA");
       }
     } catch (error) {
       if (i === retries - 1) throw error;
@@ -115,6 +115,7 @@ export default function App() {
   const [isTemplateModalOpen, setIsTemplateModalOpen] = useState(false);
   const [auditForm, setAuditForm] = useState({ centro: '', templateId: '', answers: {}, tipo: 'Auditoría' });
   const [templateForm, setTemplateForm] = useState({ nombre: '', criterios: [''], rangos: [], tipo: 'Ambos' });
+  const [rawTextForAI, setRawTextForAI] = useState('');
   const [centroFilterAuditorias, setCentroFilterAuditorias] = useState('Todos');
   const [centroFilterConsultorias, setCentroFilterConsultorias] = useState('Todos');
   const [isDigitizing, setIsDigitizing] = useState(false);
@@ -132,8 +133,11 @@ export default function App() {
   const [passwordForm, setPasswordForm] = useState({ current: '', new: '', confirm: '' });
   const [isNotificationsOpen, setIsNotificationsOpen] = useState(false);
 
+  // --- ESTADOS IA ---
   const [isGeneratingReport, setIsGeneratingReport] = useState(false);
   const [reportContent, setReportContent] = useState('');
+  const [isGeneratingCaseSummary, setIsGeneratingCaseSummary] = useState(false);
+  const [caseSummary, setCaseSummary] = useState('');
 
   // --- EFECTOS DE FIREBASE ---
   useEffect(() => {
@@ -243,7 +247,20 @@ export default function App() {
       if (alertCases.length === 0) return alert("No hay casos en alerta para reportar.");
       setIsGeneratingReport(true); setReportContent('');
       const prompt = `Basado en los siguientes casos de pérdida de continuidad (Alerta): ${JSON.stringify(alertCases.map(c => ({ paciente: c.nombre, destino: c.destino })))}\n\nRedacta un correo formal dirigido a "Directores de Dispositivos" solicitando el rescate urgente de estos pacientes.`;
-      try { setReportContent(await generateTextWithRetry(prompt)); } catch (e) { setReportContent("Error."); } finally { setIsGeneratingReport(false); }
+      try { setReportContent(await generateTextWithRetry(prompt)); } catch (e) { setReportContent("Error al conectar con la IA."); } finally { setIsGeneratingReport(false); }
+    }
+  };
+
+  const handleGenerateCaseSummary = async () => {
+    setIsGeneratingCaseSummary(true); setCaseSummary('');
+    const prompt = `Actúa como clínico. Genera un resumen profesional del siguiente paciente: Nombre: ${caseForm.nombre}, RUT: ${caseForm.rut}, Origen: ${caseForm.origen}, Destino: ${caseForm.destino}. Eventos registrados en bitácora: ${caseForm.bitacora.map(b => `[${b.fecha}] ${b.tipo} - ${b.descripcion}`).join(' | ')}. Genera solo el resumen clínico sin saludos ni introducciones extras.`;
+    try {
+      const result = await generateTextWithRetry(prompt);
+      setCaseSummary(result);
+    } catch (e) {
+      setCaseSummary("Error al generar el resumen. Por favor, intenta nuevamente.");
+    } finally {
+      setIsGeneratingCaseSummary(false);
     }
   };
 
@@ -254,7 +271,7 @@ export default function App() {
     if (!caseForm.rut || !caseForm.nombre) return alert("RUT y Nombre son obligatorios.");
     const finalId = editingCaseId || `CASO-${String(cases.length + 1).padStart(3, '0')}`;
     await saveToCloud('cases', finalId, { ...caseForm, id: finalId, paciente: caseForm.rut });
-    setIsCaseModalOpen(false); setEditingCaseId(null); setCaseForm(defaultCaseState);
+    setIsCaseModalOpen(false); setEditingCaseId(null); setCaseForm(defaultCaseState); setCaseSummary('');
   };
 
   const handleAddBitacora = () => {
@@ -305,6 +322,24 @@ export default function App() {
     setIsTemplateModalOpen(false);
   };
 
+  const handleProcessRawTextForAI = async () => {
+    if (!rawTextForAI.trim()) return;
+    setIsDigitizing(true);
+    const prompt = `Actúa como auditor técnico en salud. Del siguiente texto, extrae ÚNICAMENTE los puntos o criterios evaluables. Devuélvelos uno por línea, listos para un checklist de Sí/No. Omite introducciones, saludos o conclusiones. TEXTO: ${rawTextForAI}`;
+    try {
+      const result = await generateTextWithRetry(prompt);
+      const criteriosGenerados = result.split('\n').map(c => c.trim().replace(/^[-*•\d.)]+\s*/, '')).filter(c => c.length > 2);
+      if(criteriosGenerados.length === 0) throw new Error("No se encontraron criterios.");
+      setTemplateForm({...templateForm, criterios: [...templateForm.criterios.filter(c=>c!==''), ...criteriosGenerados]});
+      setRawTextForAI('');
+      alert(`¡Texto procesado correctamente! Se extrajeron ${criteriosGenerados.length} criterios.`);
+    } catch (err) { 
+      alert("Error al procesar el texto con la IA."); 
+    } finally { 
+      setIsDigitizing(false); 
+    }
+  };
+
   const handleSaveAudit = async () => {
     const selectedTemplate = auditTemplates.find(t => t.id === auditForm.templateId);
     if (!selectedTemplate) return;
@@ -345,7 +380,7 @@ export default function App() {
         alert(`¡Documento procesado correctamente! Se encontraron ${criteriosGenerados.length} criterios.`);
       } catch (err) { 
         console.error(err);
-        alert("El archivo es muy pesado o no tiene formato de texto extraíble. Intenta subir un documento más liviano o redacta los criterios manualmente en el formulario inferior."); 
+        alert("El archivo es muy pesado o no tiene formato de texto extraíble. Intenta copiar y pegar el texto en el cuadro de abajo."); 
       } finally { 
         setIsDigitizing(false); 
       }
@@ -384,7 +419,7 @@ export default function App() {
         <div className="text-center mb-6">
           <div className="w-14 h-14 bg-blue-600 rounded-2xl flex items-center justify-center mx-auto mb-3 shadow-lg shadow-blue-200"><Activity size={28} className="text-white" /></div>
           <h1 className="text-2xl font-bold text-slate-800">SGCC-SM</h1>
-          <p className="text-xs font-black text-blue-500 uppercase tracking-widest mt-1">Hospital Puerto Montt</p>
+          <p className="text-[10px] font-black text-blue-500 uppercase tracking-widest mt-1">Hospital Puerto Montt</p>
         </div>
         <form onSubmit={handleLogin} className="space-y-4">
           <div>
@@ -453,11 +488,11 @@ export default function App() {
               <div className="absolute right-0 mt-2 w-80 bg-white rounded-2xl shadow-xl border border-slate-100 overflow-hidden fade-in">
                 <div className="bg-[#0a2540] text-white px-4 py-3 font-bold flex justify-between items-center text-xs">Notificaciones <span className="bg-blue-600 text-[10px] px-2 py-0.5 rounded-full">{notifications.length}</span></div>
                 <div className="max-h-80 overflow-y-auto">
-                  {notifications.length === 0 ? (<div className="p-6 text-center text-sm text-slate-500 font-medium">No hay notificaciones pendientes.</div>) : (
+                  {notifications.length === 0 ? (<div className="p-6 text-center text-xs text-slate-500 font-medium">No hay notificaciones pendientes.</div>) : (
                     <div className="divide-y divide-slate-50">
                       {notifications.map(n => (
                         <div key={n.id} className="p-4 hover:bg-slate-50 transition-colors flex gap-3 items-start">
-                          <div className="mt-0.5">{n.type === 'alerta' || n.type === 'overdue' ? <AlertTriangle size={16} className="text-red-500"/> : <Bell size={16} className="text-amber-500"/>}</div>
+                          <div className="mt-0.5">{n.type === 'alerta' || n.type === 'overdue' ? <AlertTriangle size={14} className="text-red-500"/> : <Bell size={14} className="text-amber-500"/>}</div>
                           <div><p className="text-sm font-bold text-slate-800">{n.title}</p><p className="text-xs text-slate-500 mt-1 font-medium">{n.desc}</p></div>
                         </div>
                       ))}
@@ -472,19 +507,19 @@ export default function App() {
         {/* PESTAÑA 1: DASHBOARD CLÁSICO */}
         {activeTab === 'dashboard' && (
           <div className="space-y-6 animate-in fade-in mt-12 md:mt-0">
-            <div><h2 className="text-2xl font-black text-slate-800 tracking-tight">Panel de Gestión Integral</h2><p className="text-sm text-slate-500 font-medium mt-1">Resumen de actividad clínica y normativa</p></div>
+            <div><h2 className="text-2xl font-black text-slate-800 tracking-tight">Panel de Gestión Integral</h2><p className="text-xs text-slate-500 font-medium mt-1">Resumen de actividad clínica y normativa</p></div>
 
             <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
-              <div className="bg-white p-4 rounded-2xl shadow-sm border border-slate-100 border-l-[6px] border-l-red-500"><p className="text-[10px] text-slate-400 font-black uppercase tracking-widest">Pérdida Continuidad</p><h3 className="text-2xl font-black text-red-600 mt-1">{alertCases.length}</h3></div>
-              <div className="bg-white p-4 rounded-2xl shadow-sm border border-slate-100 border-l-[6px] border-l-blue-500"><p className="text-[10px] text-slate-400 font-black uppercase tracking-widest">Pacientes en Tránsito</p><h3 className="text-2xl font-black text-blue-600 mt-1">{visibleCases.filter(c => c.estado === 'Pendiente').length}</h3></div>
-              <div className="bg-white p-4 rounded-2xl shadow-sm border border-slate-100 border-l-[6px] border-l-amber-500"><p className="text-[10px] text-slate-400 font-black uppercase tracking-widest">Tareas Críticas</p><h3 className="text-2xl font-black text-amber-600 mt-1">{tareasCriticas}</h3></div>
-              <div className="bg-white p-4 rounded-2xl shadow-sm border border-slate-100 border-l-[6px] border-l-indigo-500"><p className="text-[10px] text-slate-400 font-black uppercase tracking-widest">Auditorías Normativas</p><h3 className="text-2xl font-black text-indigo-600 mt-1">{visibleAudits.filter(a => a.tipo === 'Auditoría').length}</h3></div>
-              <div className="bg-white p-4 rounded-2xl shadow-sm border border-slate-100 border-l-[6px] border-l-teal-500"><p className="text-[10px] text-slate-400 font-black uppercase tracking-widest">Consultorías Clínicas</p><h3 className="text-2xl font-black text-teal-600 mt-1">{visibleAudits.filter(a => a.tipo === 'Consultoría').length}</h3></div>
+              <div className="bg-white p-4 rounded-2xl shadow-sm border border-slate-100 border-l-[6px] border-l-red-500"><p className="text-[9px] text-slate-400 font-black uppercase tracking-widest">Pérdida Continuidad</p><h3 className="text-2xl font-black text-red-600 mt-1">{alertCases.length}</h3></div>
+              <div className="bg-white p-4 rounded-2xl shadow-sm border border-slate-100 border-l-[6px] border-l-blue-500"><p className="text-[9px] text-slate-400 font-black uppercase tracking-widest">Pacientes en Tránsito</p><h3 className="text-2xl font-black text-blue-600 mt-1">{visibleCases.filter(c => c.estado === 'Pendiente').length}</h3></div>
+              <div className="bg-white p-4 rounded-2xl shadow-sm border border-slate-100 border-l-[6px] border-l-amber-500"><p className="text-[9px] text-slate-400 font-black uppercase tracking-widest">Tareas Críticas</p><h3 className="text-2xl font-black text-amber-600 mt-1">{tareasCriticas}</h3></div>
+              <div className="bg-white p-4 rounded-2xl shadow-sm border border-slate-100 border-l-[6px] border-l-indigo-500"><p className="text-[9px] text-slate-400 font-black uppercase tracking-widest">Auditorías Normativas</p><h3 className="text-2xl font-black text-indigo-600 mt-1">{visibleAudits.filter(a => a.tipo === 'Auditoría').length}</h3></div>
+              <div className="bg-white p-4 rounded-2xl shadow-sm border border-slate-100 border-l-[6px] border-l-teal-500"><p className="text-[9px] text-slate-400 font-black uppercase tracking-widest">Consultorías Clínicas</p><h3 className="text-2xl font-black text-teal-600 mt-1">{visibleAudits.filter(a => a.tipo === 'Consultoría').length}</h3></div>
             </div>
 
             <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
               <div className="bg-white rounded-2xl shadow-sm border border-slate-200 p-5 lg:col-span-2 overflow-hidden">
-                <h3 className="text-sm font-black text-slate-800 uppercase tracking-widest mb-4 flex items-center gap-2"><AlertTriangle size={18} className="text-red-500" /> Casos Requiriendo Rescate</h3>
+                <h3 className="text-xs font-black text-slate-800 uppercase tracking-widest mb-4 flex items-center gap-2"><AlertTriangle size={16} className="text-red-500" /> Casos Requiriendo Rescate</h3>
                 <div className="overflow-x-auto">
                   <table className="w-full text-left border-collapse min-w-[500px]">
                     <thead><tr className="bg-slate-50 text-xs font-bold uppercase tracking-wider text-slate-400"><th className="p-3 rounded-l-lg">ID</th><th className="p-3">Paciente</th><th className="p-3">Destino</th><th className="p-3 rounded-r-lg">Estado</th></tr></thead>
@@ -498,38 +533,48 @@ export default function App() {
               
               <div className="bg-indigo-900 rounded-2xl p-5 text-white shadow-xl relative overflow-hidden flex flex-col">
                 <div className="relative z-10 flex-1 flex flex-col">
-                  <h3 className="text-sm font-black uppercase tracking-widest mb-2 flex items-center gap-2"><Wand2 size={18} className="text-blue-300"/> Asistente de Rescate</h3>
-                  <p className="text-xs text-indigo-200 font-medium mb-4 leading-relaxed">Genera un correo formal automático para solicitar revisión urgente a los directores de los {alertCases.length} casos perdidos.</p>
-                  <button onClick={() => handleGenerateReport('alerts')} disabled={alertCases.length === 0 || isGeneratingReport} className="w-full bg-white text-indigo-900 py-3 rounded-xl text-xs font-black uppercase tracking-widest flex justify-center items-center gap-2 shadow-lg disabled:opacity-50 transition-transform hover:-translate-y-1 mt-auto">
-                    {isGeneratingReport ? <Loader2 size={16} className="animate-spin"/> : <MessageSquare size={16}/>} Redactar Correo
+                  <h3 className="text-xs font-black uppercase tracking-widest mb-2 flex items-center gap-2"><Wand2 size={16} className="text-blue-300"/> Asistente de Rescate</h3>
+                  <p className="text-[10px] text-indigo-200 font-medium mb-4 leading-relaxed">Genera un correo formal automático para solicitar revisión urgente a los directores de los {alertCases.length} casos perdidos.</p>
+                  <button onClick={() => handleGenerateReport('alerts')} disabled={alertCases.length === 0 || isGeneratingReport} className="w-full bg-white text-indigo-900 py-3 rounded-xl text-[10px] font-black uppercase tracking-widest flex justify-center items-center gap-2 shadow-lg disabled:opacity-50 transition-transform hover:-translate-y-1 mt-auto">
+                    {isGeneratingReport ? <Loader2 size={14} className="animate-spin"/> : <MessageSquare size={14}/>} Redactar Correo
                   </button>
                 </div>
+                {/* MOSTRANDO REPORTE EN DASHBOARD */}
+                {reportContent && activeTab === 'dashboard' && (
+                  <div className="mt-4 bg-[#081b30] p-4 rounded-xl border border-white/10 animate-in slide-in-from-top-4 relative z-10">
+                     <div className="flex justify-between items-center mb-3 pb-2 border-b border-white/10">
+                       <span className="text-[9px] font-black uppercase tracking-[0.2em] text-blue-300">Borrador de Correo:</span>
+                       <button onClick={()=>copyToClipboard(reportContent)} className="text-white bg-white/10 hover:bg-white/20 p-1.5 rounded-lg transition-colors"><Copy size={12}/></button>
+                     </div>
+                     <p className="text-[10px] font-medium text-slate-300 whitespace-pre-wrap leading-relaxed max-h-32 overflow-y-auto">{reportContent}</p>
+                  </div>
+                )}
                 <div className="absolute top-0 right-0 w-32 h-32 bg-blue-500/20 rounded-full -mr-10 -mt-10 blur-xl"></div>
               </div>
             </div>
 
             {/* SEGUIMIENTO DE TAREAS */}
             <div className="bg-white rounded-2xl shadow-sm border border-slate-200 p-6">
-              <h3 className="text-sm font-black text-slate-800 uppercase tracking-widest mb-4 flex items-center gap-2"><ListTodo size={18} className="text-blue-500" /> Tareas Intersectoriales Pendientes</h3>
+              <h3 className="text-xs font-black text-slate-800 uppercase tracking-widest mb-4 flex items-center gap-2"><ListTodo size={16} className="text-blue-500" /> Tareas Intersectoriales Pendientes</h3>
               <div className="overflow-x-auto">
                 <table className="w-full text-left border-collapse min-w-[700px]">
-                  <thead><tr className="bg-slate-50 text-xs font-bold uppercase tracking-wider text-slate-400"><th className="p-3 rounded-l-lg w-10">Est.</th><th className="p-3">Origen</th><th className="p-3">Tarea Asignada</th><th className="p-3">Responsable</th><th className="p-3 rounded-r-lg">Acción / Vencimiento</th></tr></thead>
+                  <thead><tr className="bg-slate-50 text-[9px] font-black uppercase tracking-widest text-slate-400"><th className="p-3 rounded-l-lg w-10">Est.</th><th className="p-3">Origen</th><th className="p-3">Tarea Asignada</th><th className="p-3">Responsable</th><th className="p-3 rounded-r-lg">Acción / Vencimiento</th></tr></thead>
                   <tbody className="divide-y divide-slate-50">
                     {allPendingTasks.map(tarea => {
                       const statusInfo = getTaskStatus(tarea.fechaCumplimiento);
                       return (
                         <tr key={tarea.id} className="hover:bg-slate-50 transition-colors group">
                           <td className="p-3 text-slate-300">
-                             <button onClick={() => tarea.source === 'Caso' ? toggleTaskCompletion(tarea.parentId, tarea.id) : toggleDocTaskCompletion(tarea.parentId, tarea.id)} className="hover:text-emerald-500 transition-colors"><Square size={18} /></button>
+                             <button onClick={() => tarea.source === 'Caso' ? toggleTaskCompletion(tarea.parentId, tarea.id) : toggleDocTaskCompletion(tarea.parentId, tarea.id)} className="hover:text-emerald-500 transition-colors"><Square size={16} /></button>
                           </td>
-                          <td className="p-3"><div className="text-sm font-bold text-slate-800 flex items-center gap-2">{tarea.parentName} {statusInfo.status === 'upcoming' && <span className="bg-amber-100 text-amber-700 px-2 py-1 rounded text-[10px] uppercase animate-pulse">Próximo</span>} {statusInfo.status === 'overdue' && <span className="bg-red-100 text-red-700 px-2 py-1 rounded text-[10px] uppercase">Vencida</span>}</div><div className="text-[10px] text-slate-400 mt-1 uppercase tracking-widest font-bold">{tarea.source}</div></td>
-                          <td className="p-3 text-sm font-medium text-slate-600">{tarea.descripcion}</td>
-                          <td className="p-3 text-xs font-bold text-slate-500">{tarea.responsable || 'No asignado'}</td>
-                          <td className="p-3"><span className={`px-3 py-1.5 text-xs font-bold uppercase tracking-widest rounded-lg flex items-center gap-1.5 w-fit shadow-sm whitespace-nowrap ${statusInfo.bgClass}`}>{statusInfo.showWarning && <AlertTriangle size={14}/>}{tarea.fechaCumplimiento || 'Sin Fecha'}</span></td>
+                          <td className="p-3"><div className="text-[11px] font-black text-slate-800 flex items-center gap-2">{tarea.parentName} {statusInfo.status === 'upcoming' && <span className="bg-amber-100 text-amber-700 px-1.5 py-0.5 rounded text-[7px] uppercase animate-pulse">Próximo</span>} {statusInfo.status === 'overdue' && <span className="bg-red-100 text-red-700 px-1.5 py-0.5 rounded text-[7px] uppercase">Vencida</span>}</div><div className="text-[8px] text-slate-400 mt-1 uppercase tracking-widest font-bold">{tarea.source}</div></td>
+                          <td className="p-3 text-xs font-medium text-slate-600">{tarea.descripcion}</td>
+                          <td className="p-3 text-[10px] font-bold text-slate-500">{tarea.responsable || 'No asignado'}</td>
+                          <td className="p-3"><span className={`px-2.5 py-1 text-[9px] font-black uppercase tracking-widest rounded-lg flex items-center gap-1.5 w-fit shadow-sm whitespace-nowrap ${statusInfo.bgClass}`}>{statusInfo.showWarning && <AlertTriangle size={10}/>}{tarea.fechaCumplimiento || 'Sin Fecha'}</span></td>
                         </tr>
                       );
                     })}
-                    {allPendingTasks.length === 0 && (<tr><td colSpan="5" className="p-8 text-center text-slate-400 font-bold text-xs uppercase tracking-widest">No hay tareas pendientes registradas en la red.</td></tr>)}
+                    {allPendingTasks.length === 0 && (<tr><td colSpan="5" className="p-8 text-center text-slate-400 font-bold text-[10px] uppercase tracking-widest">No hay tareas pendientes registradas en la red.</td></tr>)}
                   </tbody>
                 </table>
               </div>
@@ -541,8 +586,8 @@ export default function App() {
         {activeTab === 'stats' && (
           <div className="space-y-6 animate-in fade-in mt-12 md:mt-0">
             <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
-              <div><h2 className="text-2xl font-black text-slate-800 tracking-tight">Estadísticas de Continuidad</h2><p className="text-sm text-slate-500 font-medium mt-1">Análisis de tiempos de respuesta en la red</p></div>
-              <button onClick={handleExportCSV} className="bg-emerald-600 text-white px-5 py-2.5 rounded-xl text-xs font-black uppercase tracking-widest flex items-center gap-2 hover:bg-emerald-700 transition-all shadow-md"><Download size={16}/> Exportar Data Cruda</button>
+              <div><h2 className="text-2xl font-black text-slate-800 tracking-tight">Estadísticas de Continuidad</h2><p className="text-xs text-slate-500 font-medium mt-1">Análisis de tiempos de respuesta en la red</p></div>
+              <button onClick={handleExportCSV} className="bg-emerald-600 text-white px-5 py-2.5 rounded-xl text-[10px] font-black uppercase tracking-widest flex items-center gap-2 hover:bg-emerald-700 transition-all shadow-md"><Download size={14}/> Exportar Data Cruda</button>
             </div>
 
             <div className="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm">
@@ -550,35 +595,35 @@ export default function App() {
                  <div className="flex items-center gap-4">
                    <div className="p-3 bg-blue-50 text-blue-600 rounded-xl"><Target size={24}/></div>
                    <div>
-                     <h3 className="font-black text-slate-800 uppercase text-xs tracking-widest">Plazo Meta Operacional</h3>
-                     <p className="text-xs text-slate-500 mt-1 font-medium">Días tolerables para el "Ingreso Efectivo" según la capacidad local.</p>
+                     <h3 className="font-black text-slate-800 uppercase text-[11px] tracking-widest">Plazo Meta Operacional</h3>
+                     <p className="text-[10px] text-slate-500 mt-1 font-medium">Días tolerables para el "Ingreso Efectivo" según la capacidad local.</p>
                    </div>
                  </div>
-                 <div className="flex items-center gap-3 bg-slate-50 p-2 rounded-xl border border-slate-200">
-                    <span className="text-[10px] font-black text-slate-400 ml-2 uppercase tracking-widest">META RED:</span>
-                    <input type="number" value={targetDays} onChange={(e) => handleUpdateTarget(e.target.value)} className="w-20 p-2 bg-white border border-blue-100 rounded-lg text-center font-black text-blue-600 outline-none focus:border-blue-500 text-base shadow-sm"/>
-                    <span className="text-[10px] font-black text-slate-500 mr-2 uppercase tracking-widest">Días</span>
+                 <div className="flex items-center gap-2 bg-slate-50 p-2 rounded-xl border border-slate-200">
+                    <span className="text-[9px] font-black text-slate-400 ml-2 uppercase tracking-widest">META RED:</span>
+                    <input type="number" value={targetDays} onChange={(e) => handleUpdateTarget(e.target.value)} className="w-16 p-2 bg-white border border-blue-100 rounded-lg text-center font-black text-blue-600 outline-none focus:border-blue-500 text-sm shadow-sm"/>
+                    <span className="text-[9px] font-black text-slate-500 mr-2 uppercase tracking-widest">Días</span>
                  </div>
               </div>
             </div>
 
             <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
               <div className="bg-white p-6 rounded-2xl shadow-sm border border-slate-100 border-l-[8px] border-l-indigo-500">
-                <div className="flex justify-between items-start mb-3"><div className="p-2 bg-indigo-50 rounded-xl text-indigo-600"><Timer size={20}/></div><span className="text-[10px] font-black text-slate-400 uppercase tracking-[0.2em] bg-slate-50 px-2 py-1 rounded-lg">Hito A-B</span></div>
-                <h3 className="text-xs font-black text-slate-400 uppercase tracking-widest">Promedio Enlace Administrativo</h3>
-                <p className="text-4xl font-black text-slate-800 mt-2">{redMetrics.avgEnlace} <span className="text-sm font-bold text-slate-300 uppercase tracking-widest">Días</span></p>
+                <div className="flex justify-between items-start mb-3"><div className="p-2 bg-indigo-50 rounded-xl text-indigo-600"><Timer size={18}/></div><span className="text-[8px] font-black text-slate-400 uppercase tracking-[0.2em] bg-slate-50 px-2 py-1 rounded-lg">Hito A-B</span></div>
+                <h3 className="text-[9px] font-black text-slate-400 uppercase tracking-widest">Promedio Enlace Administrativo</h3>
+                <p className="text-4xl font-black text-slate-800 mt-1">{redMetrics.avgEnlace} <span className="text-xs font-bold text-slate-300 uppercase tracking-widest">Días</span></p>
               </div>
 
               <div className="bg-white p-6 rounded-2xl shadow-sm border border-slate-100 border-l-[8px] border-l-blue-500">
-                <div className="flex justify-between items-start mb-3"><div className="p-2 bg-blue-50 rounded-xl text-blue-600"><BarChart3 size={20}/></div><span className="text-[10px] font-black text-slate-400 uppercase tracking-[0.2em] bg-slate-50 px-2 py-1 rounded-lg">Hito A-C</span></div>
-                <h3 className="text-xs font-black text-slate-400 uppercase tracking-widest">Promedio Ingreso Efectivo</h3>
-                <p className="text-4xl font-black text-slate-800 mt-2">{redMetrics.avgIngreso} <span className="text-sm font-bold text-slate-300 uppercase tracking-widest">Días</span></p>
+                <div className="flex justify-between items-start mb-3"><div className="p-2 bg-blue-50 rounded-xl text-blue-600"><BarChart3 size={18}/></div><span className="text-[8px] font-black text-slate-400 uppercase tracking-[0.2em] bg-slate-50 px-2 py-1 rounded-lg">Hito A-C</span></div>
+                <h3 className="text-[9px] font-black text-slate-400 uppercase tracking-widest">Promedio Ingreso Efectivo</h3>
+                <p className="text-4xl font-black text-slate-800 mt-1">{redMetrics.avgIngreso} <span className="text-xs font-bold text-slate-300 uppercase tracking-widest">Días</span></p>
               </div>
 
               <div className="bg-white p-6 rounded-2xl shadow-sm border border-slate-100 border-l-[8px] border-l-red-500 relative overflow-hidden">
-                <div className="flex justify-between items-start mb-3 relative z-10"><div className="p-2 bg-red-50 rounded-xl text-red-600"><AlertTriangle size={20}/></div><div className="px-2 py-1 bg-red-100 text-red-700 text-[10px] font-black rounded-lg uppercase tracking-[0.2em] shadow-sm">Brecha</div></div>
-                <h3 className="text-xs font-black text-slate-400 uppercase tracking-widest relative z-10">Casos sobre la meta ({targetDays} d)</h3>
-                <p className="text-4xl font-black text-slate-800 mt-2 relative z-10">{redMetrics.fueraDePlazo} <span className="text-sm font-bold text-slate-300 uppercase tracking-widest">Casos</span></p>
+                <div className="flex justify-between items-start mb-3 relative z-10"><div className="p-2 bg-red-50 rounded-xl text-red-600"><AlertTriangle size={18}/></div><div className="px-2 py-1 bg-red-100 text-red-700 text-[8px] font-black rounded-lg uppercase tracking-[0.2em] shadow-sm">Brecha</div></div>
+                <h3 className="text-[9px] font-black text-slate-400 uppercase tracking-widest relative z-10">Casos sobre la meta ({targetDays} d)</h3>
+                <p className="text-4xl font-black text-slate-800 mt-1 relative z-10">{redMetrics.fueraDePlazo} <span className="text-xs font-bold text-slate-300 uppercase tracking-widest">Casos</span></p>
                 {redMetrics.fueraDePlazo > 0 && <div className="absolute top-0 right-0 w-24 h-24 bg-red-50 rounded-full -mr-8 -mt-8 blur-xl"></div>}
               </div>
             </div>
@@ -587,18 +632,18 @@ export default function App() {
               <div className="bg-gradient-to-br from-indigo-900 to-[#0a2540] rounded-2xl p-8 text-white shadow-xl relative overflow-hidden">
                  <div className="relative z-10 flex flex-col md:flex-row items-center justify-between gap-6">
                    <div className="max-w-2xl">
-                     <h3 className="text-xl font-black mb-2 flex items-center gap-2"><TrendingUp size={24} className="text-blue-400"/> Análisis Estratégico de Brechas (IA)</h3>
-                     <p className="text-sm text-blue-100 opacity-90 font-medium leading-relaxed">Basado en tu meta, {redMetrics.fueraDePlazo} pacientes sufren demoras críticas. Genera un informe para presentar a las direcciones de la red.</p>
+                     <h3 className="text-lg font-black mb-2 flex items-center gap-2"><TrendingUp size={20} className="text-blue-400"/> Análisis Estratégico de Brechas (IA)</h3>
+                     <p className="text-xs text-blue-100 opacity-90 font-medium leading-relaxed">Basado en tu meta, {redMetrics.fueraDePlazo} pacientes sufren demoras críticas. Genera un informe para presentar a las direcciones de la red.</p>
                    </div>
-                   <button onClick={() => handleGenerateReport('stats')} disabled={isGeneratingReport} className="bg-white text-indigo-900 px-6 py-4 rounded-xl text-xs font-black uppercase tracking-widest hover:bg-blue-50 transition-all flex items-center gap-2 shadow-lg shrink-0 disabled:opacity-50">
-                     {isGeneratingReport ? <Loader2 size={18} className="animate-spin"/> : <FileText size={18}/>} Procesar Reporte
+                   <button onClick={() => handleGenerateReport('stats')} disabled={isGeneratingReport} className="bg-white text-indigo-900 px-6 py-3 rounded-xl text-[10px] font-black uppercase tracking-widest hover:bg-blue-50 transition-all flex items-center gap-2 shadow-lg shrink-0 disabled:opacity-50">
+                     {isGeneratingReport ? <Loader2 size={16} className="animate-spin"/> : <FileText size={16}/>} Procesar Reporte
                    </button>
                  </div>
                  <div className="absolute top-0 right-0 w-48 h-48 bg-blue-500/10 rounded-full -mr-16 -mt-16 blur-2xl"></div>
-                 {reportContent && (
+                 {reportContent && activeTab === 'stats' && (
                    <div className="mt-6 bg-[#081b30] p-6 rounded-xl border border-white/10 animate-in slide-in-from-top-4 relative z-10">
-                      <div className="flex justify-between items-center mb-4 pb-3 border-b border-white/10"><span className="text-[10px] font-black uppercase tracking-[0.2em] text-blue-300">Borrador Directivo Generado:</span><button onClick={()=>copyToClipboard(reportContent)} className="text-white bg-white/10 hover:bg-white/20 p-2 rounded-lg transition-colors"><Copy size={16}/></button></div>
-                      <p className="text-sm font-medium text-slate-300 whitespace-pre-wrap leading-relaxed">{reportContent}</p>
+                      <div className="flex justify-between items-center mb-4 pb-3 border-b border-white/10"><span className="text-[9px] font-black uppercase tracking-[0.2em] text-blue-300">Borrador Directivo Generado:</span><button onClick={()=>copyToClipboard(reportContent)} className="text-white bg-white/10 hover:bg-white/20 p-2 rounded-lg transition-colors"><Copy size={14}/></button></div>
+                      <p className="text-xs font-medium text-slate-300 whitespace-pre-wrap leading-relaxed">{reportContent}</p>
                    </div>
                  )}
               </div>
@@ -606,12 +651,12 @@ export default function App() {
           </div>
         )}
 
-        {/* PESTAÑA 3: CASOS DE RED (AUMENTADOS TAMAÑOS DE FUENTES Y APLICADO WHITESPACE-NOWRAP) */}
+        {/* PESTAÑA 3: CASOS DE RED */}
         {activeTab === 'cases' && (
           <div className="space-y-6 animate-in fade-in mt-12 md:mt-0">
             <div className="flex flex-col md:flex-row justify-between items-start md:items-end gap-4">
-              <div><h2 className="text-2xl font-black text-slate-800 tracking-tight">Casos en Red</h2><p className="text-sm text-slate-500 font-medium mt-1">Gestión individual de traslados intersectoriales</p></div>
-              <button onClick={() => { setEditingCaseId(null); setCaseForm(defaultCaseState); setIsCaseModalOpen(true); }} className="bg-blue-600 text-white px-6 py-3 rounded-xl text-xs font-black uppercase tracking-widest hover:bg-blue-700 transition-all shadow-md flex items-center gap-2"><Plus size={18}/> Nuevo Seguimiento</button>
+              <div><h2 className="text-2xl font-black text-slate-800 tracking-tight">Casos en Red</h2><p className="text-xs text-slate-500 font-medium mt-1">Gestión individual de traslados intersectoriales</p></div>
+              <button onClick={() => { setEditingCaseId(null); setCaseForm(defaultCaseState); setCaseSummary(''); setIsCaseModalOpen(true); }} className="bg-blue-600 text-white px-6 py-3 rounded-xl text-[10px] font-black uppercase tracking-widest hover:bg-blue-700 transition-all shadow-md flex items-center gap-2"><Plus size={16}/> Nuevo Seguimiento</button>
             </div>
             
             <div className="bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden">
@@ -649,7 +694,7 @@ export default function App() {
                             </div>
                           </td>
                           <td className="p-4"><div className="flex justify-center"><StatusBadge status={c.estado}/></div></td>
-                          <td className="p-4 text-right"><button onClick={() => { setEditingCaseId(c.id); setCaseForm({ ...c, rut: c.paciente, tutor: c.tutor || {nombre:'', relacion:'', telefono:''}, referentes: c.referentes || [] }); setIsCaseModalOpen(true); }} className="text-slate-400 hover:text-blue-600 bg-slate-50 hover:bg-blue-50 p-2.5 rounded-lg transition-all border border-slate-100 hover:border-blue-200"><Edit2 size={18}/></button></td>
+                          <td className="p-4 text-right"><button onClick={() => { setEditingCaseId(c.id); setCaseForm({ ...c, rut: c.paciente, tutor: c.tutor || {nombre:'', relacion:'', telefono:''}, referentes: c.referentes || [] }); setCaseSummary(''); setIsCaseModalOpen(true); }} className="text-slate-400 hover:text-blue-600 bg-slate-50 hover:bg-blue-50 p-2.5 rounded-lg transition-all border border-slate-100 hover:border-blue-200"><Edit2 size={18}/></button></td>
                         </tr>
                       );
                     })}
@@ -665,23 +710,23 @@ export default function App() {
         {activeTab === 'docs' && (
           <div className="space-y-6 animate-in fade-in mt-12 md:mt-0">
             <div className="flex flex-col md:flex-row justify-between items-start md:items-end gap-4">
-              <div><h2 className="text-2xl font-black text-slate-800 tracking-tight">Normativas y Protocolos</h2><p className="text-sm text-slate-500 font-medium mt-1">Desarrollo documental de la red</p></div>
-              <button onClick={() => { setEditingDocId(null); setDocForm({ nombre: '', ambito: ambitosProtocolo[0], fase: 'Levantamiento', avance: 10, notas: '', bitacora: [], archivos: [] }); setActiveDocModalTab('datos'); setIsDocModalOpen(true); }} className="bg-blue-600 text-white px-6 py-3 rounded-xl text-xs font-black uppercase tracking-widest hover:bg-blue-700 shadow-md flex items-center gap-2"><Plus size={18}/> Nuevo Protocolo</button>
+              <div><h2 className="text-2xl font-black text-slate-800 tracking-tight">Normativas y Protocolos</h2><p className="text-xs text-slate-500 font-medium mt-1">Desarrollo documental de la red</p></div>
+              <button onClick={() => { setEditingDocId(null); setDocForm({ nombre: '', ambito: ambitosProtocolo[0], fase: 'Levantamiento', avance: 10, notas: '', bitacora: [], archivos: [] }); setActiveDocModalTab('datos'); setIsDocModalOpen(true); }} className="bg-blue-600 text-white px-6 py-3 rounded-xl text-[10px] font-black uppercase tracking-widest hover:bg-blue-700 shadow-md flex items-center gap-2"><Plus size={18}/> Nuevo Protocolo</button>
             </div>
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
               {docs.map((d) => (
                 <div key={d.id} className="bg-white p-6 rounded-2xl shadow-sm border border-slate-200 hover:border-blue-200 transition-colors flex flex-col justify-between">
                   <div>
-                    <div className="flex justify-between items-start mb-4"><span className="text-[10px] font-black text-blue-600 bg-blue-50 px-3 py-1.5 rounded-lg uppercase tracking-widest">{d.id}</span><button onClick={() => { setEditingDocId(d.id); setDocForm(d); setActiveDocModalTab('datos'); setIsDocModalOpen(true); }} className="text-slate-400 hover:text-blue-600 p-2 bg-slate-50 rounded-lg"><Edit2 size={16} /></button></div>
-                    <h3 className="text-xl font-black text-slate-800 mb-2 leading-tight">{d.nombre}</h3><p className="text-xs font-bold text-slate-400 mb-6 uppercase tracking-widest flex items-center gap-2"><Activity size={14}/> {d.ambito} • {d.fase}</p>
+                    <div className="flex justify-between items-start mb-3"><span className="text-[9px] font-black text-blue-600 bg-blue-50 px-2 py-1 rounded-lg uppercase tracking-widest">{d.id}</span><button onClick={() => { setEditingDocId(d.id); setDocForm(d); setActiveDocModalTab('datos'); setIsDocModalOpen(true); }} className="text-slate-300 hover:text-blue-600 p-1.5 bg-slate-50 rounded-lg"><Edit2 size={14} /></button></div>
+                    <h3 className="text-lg font-black text-slate-800 mb-1 leading-tight">{d.nombre}</h3><p className="text-[10px] font-bold text-slate-400 mb-4 uppercase tracking-widest flex items-center gap-1.5"><Activity size={12}/> {d.ambito} • {d.fase}</p>
                   </div>
                   <div>
-                    <div className="flex justify-between text-xs font-bold uppercase tracking-widest mb-2 text-slate-400"><span>Avance Técnico</span><span>{d.avance}%</span></div>
-                    <div className="w-full bg-slate-100 rounded-full h-3 overflow-hidden"><div className="bg-blue-500 h-3 rounded-full transition-all" style={{ width: `${d.avance}%` }}></div></div>
+                    <div className="flex justify-between text-[9px] font-black uppercase tracking-widest mb-1.5 text-slate-400"><span>Avance Técnico</span><span>{d.avance}%</span></div>
+                    <div className="w-full bg-slate-100 rounded-full h-2.5 overflow-hidden"><div className="bg-blue-500 h-2.5 rounded-full transition-all" style={{ width: `${d.avance}%` }}></div></div>
                   </div>
                 </div>
               ))}
-              {docs.length === 0 && <div className="col-span-2 text-center py-20 text-slate-300 font-black uppercase tracking-widest text-sm">Sin protocolos registrados.</div>}
+              {docs.length === 0 && <div className="col-span-2 text-center py-16 text-slate-300 font-black uppercase tracking-widest text-xs">Sin protocolos registrados.</div>}
             </div>
           </div>
         )}
@@ -696,28 +741,28 @@ export default function App() {
           return (
             <div className="space-y-6 animate-in fade-in mt-12 md:mt-0">
               <div className="flex flex-col md:flex-row justify-between items-start md:items-end gap-4">
-                <div><h2 className="text-2xl font-black text-slate-800 tracking-tight">{tipoLabel === 'Auditoría' ? 'Auditorías Normativas' : 'Consultorías Clínicas'}</h2><p className="text-sm text-slate-500 font-medium mt-1">Evaluación en dispositivos de la red</p></div>
-                <div className="flex flex-wrap gap-4">
-                  <select value={currentFilter} onChange={e => setFilter(e.target.value)} className="px-4 py-3 border-2 border-slate-200 rounded-xl text-xs font-bold bg-white outline-none focus:border-blue-500 uppercase tracking-widest text-slate-600"><option value="Todos">Toda la Red</option>{centros.map(c => <option key={c} value={c}>{c}</option>)}</select>
-                  {currentUser?.rol === 'Admin' && (<button onClick={() => { setTemplateForm({nombre: '', criterios: [''], rangos: [], tipo: 'Ambos'}); setIsTemplateModalOpen(true); }} className="bg-white border-2 border-slate-200 text-slate-600 hover:bg-slate-50 px-6 py-3 rounded-xl text-xs font-black uppercase tracking-widest flex items-center gap-2"><Settings size={16} /> Pautas</button>)}
-                  <button onClick={() => { setAuditForm({ centro: centros[0] || '', templateId: auditTemplates.find(t => t.tipo === 'Ambos' || t.tipo === tipoLabel)?.id || '', answers: {}, tipo: tipoLabel }); setIsAuditModalOpen(true); }} className="bg-blue-600 hover:bg-blue-700 text-white px-8 py-3 rounded-xl text-xs font-black uppercase tracking-widest flex items-center gap-2 shadow-md"><ClipboardCheck size={18} /> Evaluar</button>
+                <div><h2 className="text-2xl font-black text-slate-800 tracking-tight">{tipoLabel === 'Auditoría' ? 'Auditorías Normativas' : 'Consultorías Clínicas'}</h2><p className="text-xs text-slate-500 font-medium mt-1">Evaluación en dispositivos de la red</p></div>
+                <div className="flex flex-wrap gap-3">
+                  <select value={currentFilter} onChange={e => setFilter(e.target.value)} className="px-3 py-2.5 border-2 border-slate-200 rounded-xl text-[10px] font-bold bg-white outline-none focus:border-blue-500 uppercase tracking-widest text-slate-600"><option value="Todos">Toda la Red</option>{centros.map(c => <option key={c} value={c}>{c}</option>)}</select>
+                  {currentUser?.rol === 'Admin' && (<button onClick={() => { setTemplateForm({nombre: '', criterios: [''], rangos: [], tipo: 'Ambos'}); setIsTemplateModalOpen(true); }} className="bg-white border-2 border-slate-200 text-slate-600 hover:bg-slate-50 px-5 py-2.5 rounded-xl text-[10px] font-black uppercase tracking-widest flex items-center gap-2"><Settings size={14} /> Pautas</button>)}
+                  <button onClick={() => { setAuditForm({ centro: centros[0] || '', templateId: auditTemplates.find(t => t.tipo === 'Ambos' || t.tipo === tipoLabel)?.id || '', answers: {}, tipo: tipoLabel }); setIsAuditModalOpen(true); }} className="bg-blue-600 hover:bg-blue-700 text-white px-6 py-2.5 rounded-xl text-[10px] font-black uppercase tracking-widest flex items-center gap-2 shadow-md"><ClipboardCheck size={16} /> Evaluar</button>
                 </div>
               </div>
-              {filteredAudits.length === 0 ? (<div className="text-center py-20 bg-white rounded-2xl border border-slate-100 shadow-sm"><ClipboardCheck size={48} className="mx-auto text-slate-200 mb-4"/><p className="text-slate-400 font-black uppercase tracking-widest text-sm">No hay evaluaciones en este filtro.</p></div>) : (
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+              {filteredAudits.length === 0 ? (<div className="text-center py-16 bg-white rounded-2xl border border-slate-100 shadow-sm"><ClipboardCheck size={40} className="mx-auto text-slate-200 mb-3"/><p className="text-slate-400 font-black uppercase tracking-widest text-[10px]">No hay evaluaciones en este filtro.</p></div>) : (
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                   {filteredAudits.map(a => {
                     const template = auditTemplates.find(t => t.id === a.templateId);
                     return (
-                    <div key={a.id} className="bg-white p-8 rounded-2xl shadow-sm border border-slate-100 flex items-center justify-between hover:border-blue-200 transition-colors">
+                    <div key={a.id} className="bg-white p-6 rounded-2xl shadow-sm border border-slate-100 flex items-center justify-between hover:border-blue-200 transition-colors">
                        <div>
-                         <h3 className="font-black text-slate-800 uppercase text-sm mb-2">{a.centro}</h3>
-                         <p className="text-[10px] text-blue-600 font-black uppercase tracking-widest mb-3 bg-blue-50 px-3 py-1 rounded w-fit">{template ? template.nombre : 'Pauta Eliminada'}</p>
-                         <p className="text-[10px] text-slate-400 font-bold uppercase tracking-widest flex items-center gap-1.5"><Calendar size={12}/> {a.fecha} • Eval: {a.evaluador}</p>
+                         <h3 className="font-black text-slate-800 uppercase text-xs mb-1">{a.centro}</h3>
+                         <p className="text-[9px] text-blue-600 font-black uppercase tracking-widest mb-2 bg-blue-50 px-2 py-0.5 rounded w-fit">{template ? template.nombre : 'Pauta Eliminada'}</p>
+                         <p className="text-[9px] text-slate-400 font-bold uppercase tracking-widest flex items-center gap-1"><Calendar size={10}/> {a.fecha} • Eval: {a.evaluador}</p>
                        </div>
                        <div className="text-right">
-                          <div className="text-4xl font-black text-slate-800 mb-1">{a.cumplimiento}%</div>
-                          <span className="text-[10px] uppercase text-slate-400 font-black block mb-2 tracking-[0.2em]">{a.puntaje}</span>
-                          <span className={`text-[10px] uppercase tracking-widest px-3 py-1.5 rounded-lg font-black ${a.estado === 'Óptimo' || a.cumplimiento >= 75 ? 'bg-emerald-100 text-emerald-700' : 'bg-red-100 text-red-700'}`}>{a.estado}</span>
+                          <div className="text-3xl font-black text-slate-800">{a.cumplimiento}%</div>
+                          <span className="text-[8px] uppercase text-slate-400 font-black block mb-1.5 tracking-[0.2em]">{a.puntaje}</span>
+                          <span className={`text-[8px] uppercase tracking-widest px-2 py-1 rounded-lg font-black ${a.estado === 'Óptimo' || a.cumplimiento >= 75 ? 'bg-emerald-100 text-emerald-700' : 'bg-red-100 text-red-700'}`}>{a.estado}</span>
                        </div>
                     </div>
                     );
@@ -732,25 +777,25 @@ export default function App() {
         {activeTab === 'dir' && (
           <div className="space-y-6 animate-in fade-in mt-12 md:mt-0">
             <div className="flex flex-col md:flex-row justify-between items-start md:items-end gap-4">
-              <div><h2 className="text-2xl font-black text-slate-800 tracking-tight">Directorio Intersectorial</h2><p className="text-sm text-slate-500 font-medium mt-1">Contactos operativos de la red</p></div>
-              <div className="flex gap-4 items-center w-full md:w-auto">
-                <div className="relative flex-1 md:w-64"><div className="absolute inset-y-0 left-0 pl-4 flex items-center"><Search size={18} className="text-slate-400"/></div><input type="text" value={dirSearch} onChange={e => setDirSearch(e.target.value)} className="w-full pl-10 pr-4 py-3 border-2 border-slate-200 rounded-xl text-sm font-bold outline-none focus:border-blue-500 bg-white" placeholder="Buscar contacto..."/></div>
-                <button onClick={() => { setEditingDirId(null); setDirForm({ nombre: '', cargo: '', institucion: '', telefono: '', correo: '' }); setIsDirModalOpen(true); }} className="bg-blue-600 hover:bg-blue-700 text-white px-6 py-3 rounded-xl text-xs font-black uppercase tracking-widest flex items-center gap-2 shadow-md"><Plus size={18} /> Nuevo</button>
+              <div><h2 className="text-2xl font-black text-slate-800 tracking-tight">Directorio Intersectorial</h2><p className="text-xs text-slate-500 font-medium mt-1">Contactos operativos de la red</p></div>
+              <div className="flex gap-3 items-center w-full md:w-auto">
+                <div className="relative flex-1 md:w-64"><div className="absolute inset-y-0 left-0 pl-3 flex items-center"><Search size={14} className="text-slate-400"/></div><input type="text" value={dirSearch} onChange={e => setDirSearch(e.target.value)} className="w-full pl-8 pr-3 py-2.5 border-2 border-slate-200 rounded-xl text-xs font-bold outline-none focus:border-blue-500 bg-white" placeholder="Buscar contacto..."/></div>
+                <button onClick={() => { setEditingDirId(null); setDirForm({ nombre: '', cargo: '', institucion: '', telefono: '', correo: '' }); setIsDirModalOpen(true); }} className="bg-blue-600 hover:bg-blue-700 text-white px-5 py-2.5 rounded-xl text-[10px] font-black uppercase tracking-widest flex items-center gap-2 shadow-md"><Plus size={16} /> Nuevo</button>
               </div>
             </div>
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
               {directory.filter(d => d.nombre.toLowerCase().includes(dirSearch.toLowerCase()) || d.institucion.toLowerCase().includes(dirSearch.toLowerCase())).map(d => (
-                <div key={d.id} className="bg-white p-8 rounded-2xl shadow-sm border border-slate-100 relative group hover:border-blue-200 transition-colors">
-                   <div className="absolute top-4 right-4 opacity-0 group-hover:opacity-100 transition-opacity flex gap-2">
-                     <button onClick={() => { setEditingDirId(d.id); setDirForm(d); setIsDirModalOpen(true); }} className="p-2 bg-slate-50 hover:bg-blue-50 text-slate-500 hover:text-blue-600 rounded-lg"><Edit2 size={16}/></button>
-                     <button onClick={() => deleteFromCloud('directory', d.id)} className="p-2 bg-slate-50 hover:bg-red-50 text-slate-500 hover:text-red-600 rounded-lg"><Trash2 size={16}/></button>
+                <div key={d.id} className="bg-white p-6 rounded-2xl shadow-sm border border-slate-100 relative group hover:border-blue-200 transition-colors">
+                   <div className="absolute top-3 right-3 opacity-0 group-hover:opacity-100 transition-opacity flex gap-1.5">
+                     <button onClick={() => { setEditingDirId(d.id); setDirForm(d); setIsDirModalOpen(true); }} className="p-1.5 bg-slate-50 hover:bg-blue-50 text-slate-400 hover:text-blue-600 rounded-lg"><Edit2 size={14}/></button>
+                     <button onClick={() => deleteFromCloud('directory', d.id)} className="p-1.5 bg-slate-50 hover:bg-red-50 text-slate-400 hover:text-red-600 rounded-lg"><Trash2 size={14}/></button>
                    </div>
-                   <h3 className="font-black text-slate-800 text-lg flex items-center gap-3 mb-2"><div className="p-2 bg-blue-50 text-blue-600 rounded-lg"><User size={20}/></div> {d.nombre}</h3>
-                   <p className="text-[10px] text-indigo-600 font-black uppercase tracking-widest mb-4 ml-12">{d.cargo} • {d.institucion}</p>
-                   <div className="space-y-1 ml-12"><p className="text-xs font-bold text-slate-500">{d.telefono}</p><p className="text-xs font-bold text-slate-500">{d.correo}</p></div>
+                   <h3 className="font-black text-slate-800 text-base flex items-center gap-2.5 mb-1"><div className="p-1.5 bg-blue-50 text-blue-600 rounded-lg"><User size={16}/></div> {d.nombre}</h3>
+                   <p className="text-[10px] text-indigo-600 font-black uppercase tracking-widest mb-3 ml-9">{d.cargo} • {d.institucion}</p>
+                   <div className="space-y-0.5 ml-9"><p className="text-[10px] font-bold text-slate-500">{d.telefono}</p><p className="text-[10px] font-bold text-slate-500">{d.correo}</p></div>
                 </div>
               ))}
-              {directory.length === 0 && <div className="col-span-3 text-center py-20 text-slate-300 font-black uppercase tracking-widest text-sm">Directorio vacío.</div>}
+              {directory.length === 0 && <div className="col-span-3 text-center py-16 text-slate-300 font-black uppercase tracking-widest text-xs">Directorio vacío.</div>}
             </div>
           </div>
         )}
@@ -759,24 +804,24 @@ export default function App() {
         {activeTab === 'users' && currentUser.rol === 'Admin' && (
           <div className="space-y-6 animate-in fade-in mt-12 md:mt-0">
             <div className="flex flex-col md:flex-row justify-between items-start md:items-end gap-4">
-              <div><h2 className="text-2xl font-black text-slate-800 tracking-tight">Gestión de Usuarios</h2><p className="text-sm text-slate-500 font-medium mt-1">Control de accesos y privilegios</p></div>
-              <button onClick={() => { setEditingUserId(null); setUserForm({ rut: '', nombre: '', iniciales: '', cargo: '', password: '', rol: 'Usuario', centrosAsignados: [] }); setIsUserModalOpen(true); }} className="bg-blue-600 hover:bg-blue-700 text-white px-8 py-3 rounded-xl text-xs font-black uppercase tracking-widest flex items-center gap-2 shadow-md"><UserPlus size={18} /> Crear Credencial</button>
+              <div><h2 className="text-2xl font-black text-slate-800 tracking-tight">Gestión de Usuarios</h2><p className="text-xs text-slate-500 font-medium mt-1">Control de accesos y privilegios</p></div>
+              <button onClick={() => { setEditingUserId(null); setUserForm({ rut: '', nombre: '', iniciales: '', cargo: '', password: '', rol: 'Usuario', centrosAsignados: [] }); setIsUserModalOpen(true); }} className="bg-blue-600 hover:bg-blue-700 text-white px-6 py-3 rounded-xl text-[10px] font-black uppercase tracking-widest flex items-center gap-2 shadow-md"><UserPlus size={16} /> Crear Credencial</button>
             </div>
             <div className="bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden">
               <div className="overflow-x-auto">
-                <table className="w-full text-left border-collapse min-w-[800px]">
-                  <thead className="bg-slate-50 border-b border-slate-100"><tr className="text-[10px] font-black text-slate-500 uppercase tracking-wider"><th className="p-6">Profesional</th><th className="p-6">Rol</th><th className="p-6">Visibilidad</th><th className="p-6 text-right">Ajustes</th></tr></thead>
+                <table className="w-full text-left border-collapse min-w-[700px]">
+                  <thead className="bg-slate-50 border-b border-slate-100"><tr className="text-[9px] font-black text-slate-400 uppercase tracking-widest"><th className="p-4">Profesional</th><th className="p-4">Rol</th><th className="p-4">Visibilidad</th><th className="p-4 text-right">Ajustes</th></tr></thead>
                   <tbody className="divide-y divide-slate-50">
                     {users.map(u => (
                       <tr key={u.id} className="hover:bg-slate-50/80 transition-colors">
-                        <td className="p-6"><div className="flex items-center gap-4"><div className="w-12 h-12 rounded-xl bg-blue-50 text-blue-600 font-black flex items-center justify-center text-lg border border-blue-100">{u.iniciales}</div><div><p className="font-black text-slate-800 uppercase text-sm">{u.nombre}</p><p className="text-[10px] font-bold text-slate-500 uppercase tracking-widest mt-1">{u.rut} • {u.cargo}</p></div></div></td>
-                        <td className="p-6"><span className={`px-3 py-1.5 rounded-lg text-[10px] font-black uppercase tracking-[0.2em] flex items-center gap-2 w-fit border shadow-sm ${u.rol === 'Admin' ? 'bg-indigo-50 text-indigo-700 border-indigo-100' : 'bg-white text-slate-600 border-slate-200'}`}>{u.rol === 'Admin' && <Shield size={12}/>} {u.rol}</span></td>
-                        <td className="p-6 text-[10px] font-black tracking-widest uppercase">
+                        <td className="p-4"><div className="flex items-center gap-3"><div className="w-10 h-10 rounded-xl bg-blue-50 text-blue-600 font-black flex items-center justify-center text-sm border border-blue-100">{u.iniciales}</div><div><p className="font-black text-slate-800 uppercase text-xs">{u.nombre}</p><p className="text-[9px] font-bold text-slate-400 uppercase tracking-widest mt-0.5">{u.rut} • {u.cargo}</p></div></div></td>
+                        <td className="p-4"><span className={`px-2.5 py-1 rounded-lg text-[9px] font-black uppercase tracking-[0.2em] flex items-center gap-1.5 w-fit border shadow-sm ${u.rol === 'Admin' ? 'bg-indigo-50 text-indigo-700 border-indigo-100' : 'bg-white text-slate-600 border-slate-200'}`}>{u.rol === 'Admin' && <Shield size={10}/>} {u.rol}</span></td>
+                        <td className="p-4 text-[9px] font-black tracking-widest uppercase">
                           {u.rol === 'Admin' ? <span className="text-indigo-500">Acceso Total</span> : 
-                           u.centrosAsignados?.length > 0 ? <div className="flex flex-wrap gap-2">{u.centrosAsignados.map(c => <span key={c} className="bg-slate-100 text-slate-600 px-3 py-1.5 rounded border border-slate-200">{c}</span>)}</div> : 
-                           <span className="text-red-500 bg-red-50 px-3 py-1.5 rounded">Bloqueado</span>}
+                           u.centrosAsignados?.length > 0 ? <div className="flex flex-wrap gap-1.5">{u.centrosAsignados.map(c => <span key={c} className="bg-slate-100 text-slate-500 px-2 py-1 rounded-md border border-slate-200">{c}</span>)}</div> : 
+                           <span className="text-red-500 bg-red-50 px-2 py-1 rounded-md">Bloqueado</span>}
                         </td>
-                        <td className="p-6 text-right"><button onClick={() => { setEditingUserId(u.id); setUserForm(u); setIsUserModalOpen(true); }} className="p-2.5 text-slate-400 hover:text-blue-600 bg-white border border-slate-100 shadow-sm rounded-lg transition-all mr-2"><Edit2 size={16}/></button>{u.rol !== 'Admin' && <button onClick={() => deleteFromCloud('users', u.id)} className="p-2.5 text-slate-400 hover:text-red-600 bg-white border border-slate-100 shadow-sm rounded-lg transition-all"><Trash2 size={16}/></button>}</td>
+                        <td className="p-4 text-right"><button onClick={() => { setEditingUserId(u.id); setUserForm(u); setIsUserModalOpen(true); }} className="p-2 text-slate-400 hover:text-blue-600 bg-white border border-slate-100 shadow-sm rounded-lg transition-all mr-1.5"><Edit2 size={14}/></button>{u.rol !== 'Admin' && <button onClick={() => deleteFromCloud('users', u.id)} className="p-2 text-slate-400 hover:text-red-600 bg-white border border-slate-100 shadow-sm rounded-lg transition-all"><Trash2 size={14}/></button>}</td>
                       </tr>
                     ))}
                   </tbody>
@@ -789,19 +834,19 @@ export default function App() {
         {/* PESTAÑA 9: CONFIGURACIÓN */}
         {activeTab === 'config' && currentUser.rol === 'Admin' && (
           <div className="space-y-6 animate-in fade-in mt-12 md:mt-0">
-            <div><h2 className="text-2xl font-black text-slate-800 tracking-tight">Configuración del Sistema</h2><p className="text-sm text-slate-500 font-medium mt-1">Ajustes estructurales de la red Reloncaví</p></div>
+            <div><h2 className="text-2xl font-black text-slate-800 tracking-tight">Configuración del Sistema</h2><p className="text-xs text-slate-500 font-medium mt-1">Ajustes estructurales de la red Reloncaví</p></div>
             <div className="bg-white p-8 rounded-2xl shadow-sm border border-slate-200 max-w-3xl">
-               <h3 className="font-black text-slate-800 text-lg flex items-center gap-3 mb-3"><Activity size={20} className="text-blue-600"/> Catálogo de Dispositivos Clínicos</h3>
-               <p className="text-xs text-slate-500 font-medium mb-6 leading-relaxed">Agrega o elimina los centros de salud mental de la red.</p>
-               <div className="flex gap-4 mb-8">
-                 <input type="text" value={newCentroName} onChange={e=>setNewCentroName(e.target.value)} placeholder="Ej: CESFAM Carmela Carvajal..." className="border-2 border-slate-100 p-4 rounded-xl flex-1 text-sm font-bold outline-none focus:border-blue-500 transition-colors"/>
-                 <button onClick={async ()=>{if(newCentroName.trim()) { await saveToCloud('settings', 'centros', { list: [...centros, newCentroName.trim()].sort() }); setNewCentroName(''); }}} className="bg-slate-900 text-white px-8 py-4 rounded-xl text-[10px] font-black uppercase tracking-[0.2em] flex items-center gap-2 hover:bg-black shadow-md transition-all"><Plus size={16}/> Añadir</button>
+               <h3 className="font-black text-slate-800 text-base flex items-center gap-2 mb-2"><Activity size={18} className="text-blue-600"/> Catálogo de Dispositivos Clínicos</h3>
+               <p className="text-[10px] text-slate-500 font-medium mb-6 leading-relaxed">Agrega o elimina los centros de salud mental de la red.</p>
+               <div className="flex gap-3 mb-6">
+                 <input type="text" value={newCentroName} onChange={e=>setNewCentroName(e.target.value)} placeholder="Ej: CESFAM Carmela Carvajal..." className="border-2 border-slate-100 p-3 rounded-xl flex-1 text-xs font-bold outline-none focus:border-blue-500 transition-colors"/>
+                 <button onClick={async ()=>{if(newCentroName.trim()) { await saveToCloud('settings', 'centros', { list: [...centros, newCentroName.trim()].sort() }); setNewCentroName(''); }}} className="bg-slate-900 text-white px-6 py-3 rounded-xl text-[9px] font-black uppercase tracking-[0.2em] flex items-center gap-2 hover:bg-black shadow-md transition-all"><Plus size={14}/> Añadir</button>
                </div>
-               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+               <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
                  {centros.map(c => (
-                   <div key={c} className="flex justify-between items-center bg-slate-50 p-5 rounded-xl border-2 border-slate-100 hover:border-blue-200 transition-colors group">
-                     <span className="text-[11px] font-black text-slate-700 uppercase tracking-widest">{c}</span>
-                     <button onClick={async ()=>{ if(window.confirm(`¿Eliminar ${c}?`)) await saveToCloud('settings', 'centros', { list: centros.filter(x=>x!==c) }); }} className="text-slate-400 hover:text-red-600 p-2 rounded-lg bg-white shadow-sm opacity-0 group-hover:opacity-100 transition-all"><Trash2 size={16}/></button>
+                   <div key={c} className="flex justify-between items-center bg-slate-50 p-4 rounded-xl border-2 border-slate-100 hover:border-blue-200 transition-colors group">
+                     <span className="text-[10px] font-black text-slate-700 uppercase tracking-widest">{c}</span>
+                     <button onClick={async ()=>{ if(window.confirm(`¿Eliminar ${c}?`)) await saveToCloud('settings', 'centros', { list: centros.filter(x=>x!==c) }); }} className="text-slate-300 hover:text-red-600 p-1.5 rounded-lg bg-white shadow-sm opacity-0 group-hover:opacity-100 transition-all"><Trash2 size={14}/></button>
                    </div>
                  ))}
                </div>
@@ -888,13 +933,30 @@ export default function App() {
                        <button onClick={()=>setCaseForm({...caseForm, referentes: [...(caseForm.referentes||[]), {nombre:'', dispositivo:'', contacto:''}]})} className="text-[10px] font-black text-indigo-600 uppercase tracking-widest flex items-center gap-1.5 mt-2 hover:text-indigo-800 transition-colors bg-indigo-100 px-4 py-2 rounded-lg w-fit"><Plus size={14}/> Añadir Referente de Red</button>
                     </div>
                   </div>
+                  
+                  {/* RESUMEN IA */}
+                  <div className="space-y-4 border-t-2 border-slate-100 pt-6">
+                    <div className="flex justify-between items-end">
+                      <h4 className="text-xs font-black text-slate-400 uppercase tracking-widest pb-2 flex items-center gap-2"><Wand2 size={16}/> Resumen Clínico Inteligente</h4>
+                      <button onClick={handleGenerateCaseSummary} disabled={isGeneratingCaseSummary || caseForm.bitacora.length === 0} className="bg-indigo-50 text-indigo-600 px-4 py-2.5 rounded-xl text-[10px] font-black uppercase tracking-widest hover:bg-indigo-100 transition-colors flex items-center gap-2 border border-indigo-100 disabled:opacity-50">
+                        {isGeneratingCaseSummary ? <Loader2 size={14} className="animate-spin"/> : <FileText size={14}/>} Generar Resumen
+                      </button>
+                    </div>
+                    {caseSummary && (
+                      <div className="bg-white p-5 rounded-xl border-2 border-indigo-50 text-sm font-medium text-slate-700 relative shadow-sm">
+                        <button onClick={() => copyToClipboard(caseSummary)} className="absolute top-3 right-3 p-2 text-indigo-400 hover:text-indigo-600 bg-indigo-50 rounded-lg transition-colors"><Copy size={16}/></button>
+                        <p className="pr-8 whitespace-pre-wrap leading-relaxed text-xs">{caseSummary}</p>
+                      </div>
+                    )}
+                    {caseForm.bitacora.length === 0 && !caseSummary && <p className="text-[10px] text-slate-400 italic font-medium uppercase tracking-widest">Agrega eventos en la bitácora para habilitar el resumen inteligente.</p>}
+                  </div>
 
                 </div>
               )}
               {activeModalTab === 'bitacora' && (
                 <div className="space-y-8 animate-in slide-in-from-right-4 h-full flex flex-col">
                   <div className="bg-slate-50 p-6 rounded-2xl border-2 border-slate-200 shrink-0 shadow-inner">
-                    <h4 className="text-[11px] font-black text-slate-600 uppercase tracking-widest mb-4">Nuevo Hito de Intervención / Gestión</h4>
+                    <h4 className="text-[10px] font-black text-slate-600 uppercase tracking-widest mb-4">Nuevo Hito de Intervención / Gestión</h4>
                     <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-4">
                       {/* SELECTOR CON REUNIONES RESTAURADO */}
                       <div className="flex flex-col gap-2"><label className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Tipo</label>
@@ -920,7 +982,7 @@ export default function App() {
                          </div>
                       )}
                     </div>
-                    <div className="flex justify-end"><button onClick={handleAddBitacora} disabled={!newBitacoraEntry.descripcion} className="bg-blue-600 text-white px-8 py-3.5 rounded-xl text-[10px] font-black uppercase tracking-widest hover:bg-blue-700 disabled:opacity-50 shadow-md transition-all flex items-center gap-2"><Plus size={16}/> Registrar Acción</button></div>
+                    <div className="flex justify-end"><button onClick={handleAddBitacora} disabled={!newBitacoraEntry.descripcion} className="bg-blue-600 text-white px-8 py-3.5 rounded-xl text-[10px] font-black uppercase tracking-widest hover:bg-blue-700 disabled:opacity-50 shadow-md transition-all flex items-center gap-2"><Plus size={14}/> Registrar Acción</button></div>
                   </div>
                   
                   <div className="flex-1 space-y-4">
@@ -1018,7 +1080,7 @@ export default function App() {
                        <div key={entry.id} className="p-5 bg-white border-2 border-slate-100 rounded-2xl shadow-sm flex gap-5 items-start group hover:border-blue-200 transition-all">
                          <div className="p-3 bg-slate-50 rounded-xl text-slate-400 shrink-0">{entry.tipo === 'Tarea' ? <CheckSquare size={18} className={entry.completada ? "text-emerald-500" : "text-amber-500"}/> : <MessageSquare size={18}/>}</div>
                          <div className="flex-1 min-w-0">
-                           <div className="flex justify-between items-center mb-2"><span className="text-[10px] font-black uppercase text-blue-600 bg-blue-50 px-2.5 py-1 rounded-lg tracking-widest">{entry.tipo}</span><span className="text-[10px] font-bold text-slate-400 uppercase flex items-center gap-1.5"><Calendar size={12}/> Asignada: {entry.fecha}</span></div>
+                           <div className="flex justify-between items-center mb-1.5"><span className="text-[10px] font-black uppercase text-blue-600 bg-blue-50 px-2.5 py-1 rounded-lg tracking-widest">{entry.tipo}</span><span className="text-[10px] font-bold text-slate-400 uppercase flex items-center gap-1.5"><Calendar size={12}/> Asignada: {entry.fecha}</span></div>
                            <p className={`text-sm font-medium leading-relaxed mb-3 whitespace-pre-wrap ${entry.completada ? 'text-slate-400 line-through' : 'text-slate-700'}`}>{entry.descripcion}</p>
                            <div className="flex gap-3 items-center">
                              <p className="text-[10px] font-black text-slate-500 uppercase tracking-widest italic bg-slate-50 px-3 py-1.5 rounded-lg w-fit border border-slate-100">Resp: {entry.responsable || 'Equipo'}</p>
@@ -1083,17 +1145,35 @@ export default function App() {
             <div className="p-6 md:p-8 overflow-y-auto flex-1 bg-white">
               <div className="grid grid-cols-1 lg:grid-cols-5 gap-8">
                 <div className="lg:col-span-2 space-y-6">
+                  
+                  {/* SECCIÓN ACTUALIZADA DE EXTRACCIÓN CON IA: AHORA INCLUYE EL TEXTAREA VISIBLE */}
                   <div className="bg-indigo-50/50 p-6 rounded-2xl border-2 border-indigo-100 flex flex-col text-center">
                     <h4 className="text-[11px] font-black text-indigo-900 uppercase tracking-[0.2em] mb-2 flex items-center justify-center gap-2"><Wand2 size={16}/> Extracción con IA</h4>
-                    <p className="text-[10px] text-indigo-700/80 mb-4 font-medium leading-relaxed">Sube el PDF de la norma. La IA extraerá los criterios automáticamente.</p>
-                    <label className="flex flex-col items-center justify-center w-full h-24 border-2 border-indigo-300 border-dashed rounded-xl cursor-pointer bg-white hover:bg-indigo-50 transition-colors shadow-sm">
-                      <div className="flex flex-col items-center justify-center pt-3 pb-4">
-                        <UploadCloud className="w-6 h-6 text-indigo-400 mb-1.5" />
-                        <p className="text-[10px] text-indigo-900 font-black uppercase tracking-widest">Cargar Pauta PDF</p>
-                      </div>
-                      <input type="file" className="hidden" accept=".pdf" onChange={handlePdfUploadForAI} />
-                    </label>
-                    {isDigitizing && (<div className="mt-3 flex items-center justify-center gap-2 text-[10px] text-indigo-600 font-black uppercase tracking-widest"><Loader2 size={14} className="animate-spin"/> Procesando archivo...</div>)}
+                    <p className="text-[10px] text-indigo-700/80 mb-4 font-medium leading-relaxed">Sube el PDF o pega el texto directamente.</p>
+                    
+                    <div className="flex flex-col gap-3 w-full">
+                      <label className="flex flex-col items-center justify-center w-full h-20 border-2 border-indigo-300 border-dashed rounded-xl cursor-pointer bg-white hover:bg-indigo-50 transition-colors shadow-sm">
+                        <div className="flex flex-col items-center justify-center pt-2 pb-2">
+                          <UploadCloud className="w-6 h-6 text-indigo-400 mb-1" />
+                          <p className="text-[9px] text-indigo-900 font-black uppercase tracking-widest">1. Cargar PDF</p>
+                        </div>
+                        <input type="file" className="hidden" accept=".pdf" onChange={handlePdfUploadForAI} />
+                      </label>
+                      
+                      <span className="text-[9px] font-black text-indigo-400 uppercase tracking-widest">O LA OPCIÓN MÁS RÁPIDA:</span>
+                      
+                      <textarea 
+                        value={rawTextForAI} 
+                        onChange={e=>setRawTextForAI(e.target.value)} 
+                        className="w-full border-2 border-indigo-200 p-3 rounded-xl text-xs font-medium outline-none focus:border-indigo-400 resize-y min-h-[80px]" 
+                        placeholder="2. Pega el texto de la pauta aquí..."
+                      />
+                      <button onClick={handleProcessRawTextForAI} disabled={!rawTextForAI.trim() || isDigitizing} className="w-full bg-indigo-600 text-white px-4 py-2.5 rounded-xl text-[10px] font-black uppercase tracking-widest hover:bg-indigo-700 disabled:opacity-50 transition-colors flex justify-center items-center gap-2">
+                        {isDigitizing ? <Loader2 size={14} className="animate-spin"/> : <Wand2 size={14}/>} Procesar Texto
+                      </button>
+                    </div>
+
+                    {isDigitizing && (<div className="mt-3 flex items-center justify-center gap-2 text-[10px] text-indigo-600 font-black uppercase tracking-widest"><Loader2 size={14} className="animate-spin"/> Analizando...</div>)}
                   </div>
                   
                   <div className="space-y-4">
@@ -1105,10 +1185,10 @@ export default function App() {
                     <label className="block text-[10px] font-black text-slate-600 uppercase tracking-widest mb-2">Rangos de Resultado (Opcional)</label>
                     <p className="text-[10px] text-slate-400 mb-3 font-medium leading-relaxed">Ej: 0 a 2 pts = Riesgo Alto.</p>
                     {templateForm.rangos.map((r, i) => (
-                       <div key={i} className="flex gap-2 mb-2 items-center">
-                          <input type="number" placeholder="Min" value={r.min} onChange={(e) => {const newR=[...templateForm.rangos]; newR[i].min=e.target.value; setTemplateForm({...templateForm, rangos: newR})}} className="w-14 border-2 border-white rounded-lg p-2.5 text-xs font-black text-center shadow-sm outline-none focus:border-slate-400" />
+                       <div key={i} className="flex gap-1.5 mb-2 items-center">
+                          <input type="number" placeholder="Min" value={r.min} onChange={(e) => {const newR=[...templateForm.rangos]; newR[i].min=e.target.value; setTemplateForm({...templateForm, rangos: newR})}} className="w-12 border-2 border-white rounded-lg p-2.5 text-[10px] font-black text-center shadow-sm outline-none focus:border-slate-400" />
                           <span className="text-[10px] font-black text-slate-300">-</span>
-                          <input type="number" placeholder="Max" value={r.max} onChange={(e) => {const newR=[...templateForm.rangos]; newR[i].max=e.target.value; setTemplateForm({...templateForm, rangos: newR})}} className="w-14 border-2 border-white rounded-lg p-2.5 text-xs font-black text-center shadow-sm outline-none focus:border-slate-400" />
+                          <input type="number" placeholder="Max" value={r.max} onChange={(e) => {const newR=[...templateForm.rangos]; newR[i].max=e.target.value; setTemplateForm({...templateForm, rangos: newR})}} className="w-12 border-2 border-white rounded-lg p-2.5 text-[10px] font-black text-center shadow-sm outline-none focus:border-slate-400" />
                           <input type="text" placeholder="Ej: Parcial" value={r.resultado} onChange={(e) => {const newR=[...templateForm.rangos]; newR[i].resultado=e.target.value; setTemplateForm({...templateForm, rangos: newR})}} className="flex-1 border-2 border-white rounded-lg p-2.5 text-xs font-bold shadow-sm outline-none focus:border-slate-400" />
                           <button onClick={()=>{const newR=[...templateForm.rangos]; newR.splice(i,1); setTemplateForm({...templateForm, rangos: newR});}} className="p-2.5 bg-red-50 text-red-500 rounded-lg hover:bg-red-100 transition-colors"><Trash2 size={14}/></button>
                        </div>
@@ -1220,14 +1300,14 @@ export default function App() {
             </div>
             <div className="p-6 md:p-8 overflow-y-auto space-y-4 flex-1">
               <div className="grid grid-cols-2 gap-4">
-                <div><label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1.5">RUT Acceso *</label><input type="text" value={userForm.rut} onChange={e=>setUserForm({...userForm, rut: e.target.value})} className="w-full border-2 border-slate-100 p-3 rounded-xl text-sm font-bold outline-none focus:border-indigo-500" placeholder="11.111.111-1"/></div>
-                <div><label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1.5">Contraseña *</label><input type="text" value={userForm.password} onChange={e=>setUserForm({...userForm, password: e.target.value})} className="w-full border-2 border-slate-100 p-3 rounded-xl text-sm font-bold outline-none focus:border-indigo-500" placeholder="••••••"/></div>
+                <div><label className="block text-[9px] font-black text-slate-400 uppercase tracking-widest mb-1.5">RUT Acceso *</label><input type="text" value={userForm.rut} onChange={e=>setUserForm({...userForm, rut: e.target.value})} className="w-full border-2 border-slate-100 p-3 rounded-xl text-sm font-bold outline-none focus:border-indigo-500" placeholder="11.111.111-1"/></div>
+                <div><label className="block text-[9px] font-black text-slate-400 uppercase tracking-widest mb-1.5">Contraseña *</label><input type="text" value={userForm.password} onChange={e=>setUserForm({...userForm, password: e.target.value})} className="w-full border-2 border-slate-100 p-3 rounded-xl text-sm font-bold outline-none focus:border-indigo-500" placeholder="••••••"/></div>
               </div>
               <div className="grid grid-cols-4 gap-4">
-                <div className="col-span-3"><label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1.5">Nombre Completo *</label><input type="text" value={userForm.nombre} onChange={e=>setUserForm({...userForm, nombre: e.target.value})} className="w-full border-2 border-slate-100 p-3 rounded-xl text-sm font-bold outline-none focus:border-indigo-500" placeholder="Dra. Andrea Silva"/></div>
-                <div className="col-span-1"><label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1.5">Iniciales</label><input type="text" value={userForm.iniciales} onChange={e=>setUserForm({...userForm, iniciales: e.target.value.toUpperCase()})} className="w-full border-2 border-slate-100 p-3 rounded-xl text-sm font-bold text-center outline-none focus:border-indigo-500" placeholder="AS" maxLength={3}/></div>
+                <div className="col-span-3"><label className="block text-[9px] font-black text-slate-400 uppercase tracking-widest mb-1.5">Nombre Completo *</label><input type="text" value={userForm.nombre} onChange={e=>setUserForm({...userForm, nombre: e.target.value})} className="w-full border-2 border-slate-100 p-3 rounded-xl text-sm font-bold outline-none focus:border-indigo-500" placeholder="Dra. Andrea Silva"/></div>
+                <div className="col-span-1"><label className="block text-[9px] font-black text-slate-400 uppercase tracking-widest mb-1.5">Iniciales</label><input type="text" value={userForm.iniciales} onChange={e=>setUserForm({...userForm, iniciales: e.target.value.toUpperCase()})} className="w-full border-2 border-slate-100 p-3 rounded-xl text-sm font-bold text-center outline-none focus:border-indigo-500" placeholder="AS" maxLength={3}/></div>
               </div>
-              <div><label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1.5">Cargo Institucional</label><input type="text" value={userForm.cargo} onChange={e=>setUserForm({...userForm, cargo: e.target.value})} className="w-full border-2 border-slate-100 p-3 rounded-xl text-sm font-bold outline-none focus:border-indigo-500" placeholder="Ej: Directora COSAM"/></div>
+              <div><label className="block text-[9px] font-black text-slate-400 uppercase tracking-widest mb-1.5">Cargo Institucional</label><input type="text" value={userForm.cargo} onChange={e=>setUserForm({...userForm, cargo: e.target.value})} className="w-full border-2 border-slate-100 p-3 rounded-xl text-sm font-bold outline-none focus:border-indigo-500" placeholder="Ej: Directora COSAM"/></div>
               <div className="border-t-2 border-slate-100 pt-4 mt-2">
                 <label className="block text-[10px] font-black text-slate-800 mb-2 uppercase tracking-widest">Nivel de Privilegios</label>
                 <select value={userForm.rol} onChange={e=>setUserForm({...userForm, rol: e.target.value})} className="w-full border-2 border-slate-100 p-3 rounded-xl text-sm font-black outline-none focus:border-indigo-500 mb-3 bg-slate-50 text-slate-600 cursor-pointer">
@@ -1236,11 +1316,11 @@ export default function App() {
                 </select>
                 {userForm.rol === 'Usuario' && (
                   <div className="bg-indigo-50 p-4 rounded-2xl border-2 border-indigo-100">
-                    <p className="text-[10px] text-indigo-800 font-black uppercase tracking-widest mb-3">Dispositivos Permitidos:</p>
+                    <p className="text-[9px] text-indigo-800 font-black uppercase tracking-widest mb-3">Dispositivos Permitidos:</p>
                     <div className="space-y-1.5 max-h-[120px] overflow-y-auto pr-2">
                       {centros.map(c => (
                         <label key={c} className="flex items-center gap-3 text-sm font-bold text-slate-700 cursor-pointer p-2 hover:bg-indigo-100 rounded-lg transition-colors">
-                          <input type="checkbox" checked={userForm.centrosAsignados.includes(c)} onChange={() => { const isAsignado = userForm.centrosAsignados.includes(c); setUserForm({ ...userForm, centrosAsignados: isAsignado ? userForm.centrosAsignados.filter(x => x !== c) : [...userForm.centrosAsignados, c] }); }} className="w-5 h-5 accent-indigo-600" /> {c}
+                          <input type="checkbox" checked={userForm.centrosAsignados.includes(c)} onChange={() => { const isAsignado = userForm.centrosAsignados.includes(c); setUserForm({ ...userForm, centrosAsignados: isAsignado ? userForm.centrosAsignados.filter(x => x !== c) : [...userForm.centrosAsignados, c] }); }} className="w-4 h-4 accent-indigo-600" /> {c}
                         </label>
                       ))}
                     </div>
@@ -1262,9 +1342,9 @@ export default function App() {
           <div className="bg-white rounded-3xl shadow-2xl w-full max-w-sm max-h-[90vh] flex flex-col border border-slate-200 overflow-hidden">
             <div className="bg-blue-600 p-6 text-white flex justify-between items-center shrink-0"><h3 className="font-black text-lg uppercase tracking-widest flex items-center gap-2"><Key size={20}/> Seguridad</h3><button onClick={() => setIsProfileModalOpen(false)} className="text-white/60 hover:text-white font-bold text-3xl">&times;</button></div>
             <div className="p-6 space-y-4 overflow-y-auto flex-1">
-              <div><label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1.5">Contraseña Actual</label><input type="password" value={passwordForm.current} onChange={e=>setPasswordForm({...passwordForm, current: e.target.value})} className="w-full border-2 border-slate-100 p-3 rounded-xl text-sm font-bold outline-none focus:border-blue-500" placeholder="••••••"/></div>
-              <div className="border-t-2 border-slate-100 pt-4 mt-2"><label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1.5">Nueva Contraseña</label><input type="password" value={passwordForm.new} onChange={e=>setPasswordForm({...passwordForm, new: e.target.value})} className="w-full border-2 border-slate-100 p-3 rounded-xl text-sm font-bold outline-none focus:border-blue-500" placeholder="••••••"/></div>
-              <div><label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1.5">Repetir Nueva Contraseña</label><input type="password" value={passwordForm.confirm} onChange={e=>setPasswordForm({...passwordForm, confirm: e.target.value})} className="w-full border-2 border-slate-100 p-3 rounded-xl text-sm font-bold outline-none focus:border-blue-500" placeholder="••••••"/></div>
+              <div><label className="block text-[9px] font-black text-slate-400 uppercase tracking-widest mb-1.5">Contraseña Actual</label><input type="password" value={passwordForm.current} onChange={e=>setPasswordForm({...passwordForm, current: e.target.value})} className="w-full border-2 border-slate-100 p-3 rounded-xl text-sm font-bold outline-none focus:border-blue-500" placeholder="••••••"/></div>
+              <div className="border-t-2 border-slate-100 pt-4 mt-2"><label className="block text-[9px] font-black text-slate-400 uppercase tracking-widest mb-1.5">Nueva Contraseña</label><input type="password" value={passwordForm.new} onChange={e=>setPasswordForm({...passwordForm, new: e.target.value})} className="w-full border-2 border-slate-100 p-3 rounded-xl text-sm font-bold outline-none focus:border-blue-500" placeholder="••••••"/></div>
+              <div><label className="block text-[9px] font-black text-slate-400 uppercase tracking-widest mb-1.5">Repetir Nueva Contraseña</label><input type="password" value={passwordForm.confirm} onChange={e=>setPasswordForm({...passwordForm, confirm: e.target.value})} className="w-full border-2 border-slate-100 p-3 rounded-xl text-sm font-bold outline-none focus:border-blue-500" placeholder="••••••"/></div>
             </div>
             <div className="bg-slate-50 p-6 border-t border-slate-200 flex justify-end gap-3 shrink-0"><button onClick={() => setIsProfileModalOpen(false)} className="px-6 py-3 text-slate-500 font-bold text-xs uppercase tracking-widest hover:text-slate-700 transition-colors">Cancelar</button><button onClick={handleUpdatePassword} className="px-8 py-3 bg-blue-600 text-white font-black text-[10px] uppercase tracking-[0.2em] rounded-xl shadow-md hover:bg-blue-700 transition-colors">Actualizar</button></div>
           </div>
@@ -1286,8 +1366,8 @@ export default function App() {
 }
 
 const StatusBadge = ({ status }) => {
-  if(status === 'Alerta') return <span className="px-3 py-1.5 bg-red-100 text-red-700 rounded-lg text-[9px] font-black uppercase tracking-[0.2em] flex items-center gap-1.5 animate-pulse shadow-sm border border-red-200 w-fit"><AlertTriangle size={12} /> Alerta</span>;
-  if(status === 'Pendiente') return <span className="px-3 py-1.5 bg-amber-100 text-amber-700 rounded-lg text-[9px] font-black uppercase tracking-[0.2em] flex items-center gap-1.5 shadow-sm border border-amber-200 w-fit"><Clock size={12} /> En Tránsito</span>;
-  if(status === 'Concretado') return <span className="px-3 py-1.5 bg-emerald-100 text-emerald-700 rounded-lg text-[9px] font-black uppercase tracking-[0.2em] flex items-center gap-1.5 shadow-sm border border-emerald-200 w-fit"><CheckCircle size={12} /> Cerrado</span>;
+  if(status === 'Alerta') return <span className="px-3 py-1.5 bg-red-100 text-red-700 rounded-lg text-[9px] font-black uppercase tracking-[0.2em] flex items-center gap-1.5 animate-pulse shadow-sm border border-red-200 w-fit"><AlertTriangle size={10} /> Alerta</span>;
+  if(status === 'Pendiente') return <span className="px-3 py-1.5 bg-amber-100 text-amber-700 rounded-lg text-[9px] font-black uppercase tracking-[0.2em] flex items-center gap-1.5 shadow-sm border border-amber-200 w-fit"><Clock size={10} /> En Tránsito</span>;
+  if(status === 'Concretado') return <span className="px-3 py-1.5 bg-emerald-100 text-emerald-700 rounded-lg text-[9px] font-black uppercase tracking-[0.2em] flex items-center gap-1.5 shadow-sm border border-emerald-200 w-fit"><CheckCircle size={10} /> Cerrado</span>;
   return <span className="px-3 py-1.5 bg-slate-100 text-slate-600 rounded-lg text-[9px] font-black uppercase tracking-[0.2em] border border-slate-200 w-fit">{status}</span>;
 };
