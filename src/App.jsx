@@ -9,14 +9,6 @@ import {
   Wand2, GitCommit, Search, Settings, Filter, UserPlus, Shield, Key, Timer, TrendingUp, BarChart3, Target
 } from 'lucide-react';
 
-/**
- * instrucciones para PERMANENCIA DEFINITIVA:
- * 1. Ve a tu consola de Firebase (https://console.firebase.google.com/)
- * 2. Entra en "Firestore Database" -> Pestaña "Rules" (Reglas).
- * 3. Cambia la regla por: allow read, write: if request.auth != null;
- * 4. Haz clic en "Publicar". 
- */
-
 const firebaseConfig = typeof __firebase_config !== 'undefined' ? JSON.parse(__firebase_config) : {
   apiKey: "AIzaSyADlW5WRPWOokJQbVFUF9UuYRxLXa4-MqU",
   authDomain: "sgcc-reloncavi.firebaseapp.com",
@@ -54,13 +46,13 @@ const getTaskStatus = (fecha) => {
   return { status: 'safe', bgClass: 'bg-emerald-100 text-emerald-800', textClass: 'text-emerald-600', showWarning: false };
 };
 
-// --- ACTUALIZADO: REPARACIÓN IA PARA SOPORTAR ARCHIVOS (PDF) Y TEXTO ---
 const generateTextWithRetry = async (prompt, systemInstruction = "", inlineData = null, retries = 5) => {
   const delays = [1000, 2000, 4000, 8000, 16000];
   const parts = [{ text: prompt }];
   if (inlineData) parts.push({ inlineData });
   const payload = { contents: [{ parts }] };
   if (systemInstruction) payload.systemInstruction = { parts: [{ text: systemInstruction }] };
+  
   for (let i = 0; i < retries; i++) {
     try {
       const response = await fetch(
@@ -72,7 +64,7 @@ const generateTextWithRetry = async (prompt, systemInstruction = "", inlineData 
       if (result.candidates && result.candidates[0].content.parts[0].text) {
         return result.candidates[0].content.parts[0].text;
       } else {
-        throw new Error("No text returned from AI");
+        throw new Error("Respuesta vacía de la IA");
       }
     } catch (error) {
       if (i === retries - 1) throw error;
@@ -111,7 +103,7 @@ export default function App() {
   const [caseForm, setCaseForm] = useState(defaultCaseState);
   const [activeModalTab, setActiveModalTab] = useState('datos');
   const [isCaseModalOpen, setIsCaseModalOpen] = useState(false);
-  const [newBitacoraEntry, setNewBitacoraEntry] = useState({ tipo: 'Nota', descripcion: '', responsable: '', fechaCumplimiento: '' });
+  const [newBitacoraEntry, setNewBitacoraEntry] = useState({ tipo: 'Nota Adm.', descripcion: '', responsable: '', fechaCumplimiento: '' });
 
   const [isDocModalOpen, setIsDocModalOpen] = useState(false);
   const [editingDocId, setEditingDocId] = useState(null);
@@ -268,8 +260,9 @@ export default function App() {
   const handleAddBitacora = () => {
     if (!newBitacoraEntry.descripcion) return;
     setCaseForm({ ...caseForm, bitacora: [{ id: Date.now(), ...newBitacoraEntry, fecha: new Date().toISOString().split('T')[0], completada: false }, ...caseForm.bitacora] });
-    setNewBitacoraEntry({ tipo: 'Nota', descripcion: '', responsable: '', fechaCumplimiento: '' });
+    setNewBitacoraEntry({ tipo: 'Nota Adm.', descripcion: '', responsable: '', fechaCumplimiento: '' });
   };
+  
   const toggleTaskCompletion = async (caseId, entryId) => {
      const caso = cases.find(c => c.id === caseId);
      if (!caso) return;
@@ -289,6 +282,7 @@ export default function App() {
     setDocForm(prev => ({ ...prev, bitacora: [{ id: Date.now(), ...newDocBitacoraEntry, fecha: new Date().toISOString().split('T')[0], completada: false }, ...(prev.bitacora || [])] }));
     setNewDocBitacoraEntry({ tipo: 'Tarea', descripcion: '', responsable: '', fechaCumplimiento: '' });
   };
+  
   const toggleDocTaskCompletion = async (docId, entryId) => {
      const documento = docs.find(d => d.id === docId);
      if (!documento) return;
@@ -330,7 +324,6 @@ export default function App() {
     setIsAuditModalOpen(false);
   };
 
-  // --- ACTUALIZADO: LECTURA EN BASE64 PARA IA ---
   const handlePdfUploadForAI = async (e) => {
     const file = e.target.files[0];
     if (!file) return;
@@ -339,23 +332,26 @@ export default function App() {
     const reader = new FileReader();
     reader.onloadend = async () => {
       const base64Data = reader.result.split(',')[1];
-      const inlineData = { mimeType: file.type, data: base64Data };
-      const prompt = `Actúa como auditor técnico en salud. Extrae los criterios a evaluar del documento adjunto. Devuelve ÚNICAMENTE los criterios encontrados, uno por línea, listos para un checklist de Sí/No. Omite toda introducción o conclusión.`;
+      const inlineData = { mimeType: file.type || 'application/pdf', data: base64Data };
+      const prompt = `Actúa como auditor técnico en salud. Extrae los criterios o puntos a evaluar del documento adjunto. Devuelve ÚNICAMENTE los criterios encontrados, uno por línea, listos para un checklist de Sí/No. Omite introducciones, saludos o conclusiones.`;
       
       try {
         const result = await generateTextWithRetry(prompt, "", inlineData);
         const criteriosGenerados = result.split('\n').map(c => c.trim().replace(/^[-*•\d.)]+\s*/, '')).filter(c => c.length > 2);
+        
+        if(criteriosGenerados.length === 0) throw new Error("No se encontraron criterios.");
+        
         setTemplateForm({...templateForm, nombre: `Evaluación: ${file.name}`, criterios: [...templateForm.criterios.filter(c=>c!==''), ...criteriosGenerados]});
-        alert(`¡Documento procesado correctamente!`);
+        alert(`¡Documento procesado correctamente! Se encontraron ${criteriosGenerados.length} criterios.`);
       } catch (err) { 
         console.error(err);
-        alert("Error al procesar con IA. Asegúrate de que el documento sea legible (PDF)."); 
+        alert("El archivo es muy pesado o no tiene formato de texto extraíble. Intenta subir un documento más liviano o redacta los criterios manualmente en el formulario inferior."); 
       } finally { 
         setIsDigitizing(false); 
       }
     };
-    reader.onerror = () => { alert("Error al leer el archivo."); setIsDigitizing(false); };
-    reader.readAsDataURL(file); // Inicia la lectura a Base64
+    reader.onerror = () => { alert("Error al leer el archivo desde el navegador."); setIsDigitizing(false); };
+    reader.readAsDataURL(file);
   };
 
   const handleSaveDir = async () => {
@@ -388,7 +384,7 @@ export default function App() {
         <div className="text-center mb-6">
           <div className="w-14 h-14 bg-blue-600 rounded-2xl flex items-center justify-center mx-auto mb-3 shadow-lg shadow-blue-200"><Activity size={28} className="text-white" /></div>
           <h1 className="text-2xl font-bold text-slate-800">SGCC-SM</h1>
-          <p className="text-[10px] font-black text-blue-500 uppercase tracking-widest mt-1">Hospital Puerto Montt</p>
+          <p className="text-xs font-black text-blue-500 uppercase tracking-widest mt-1">Hospital Puerto Montt</p>
         </div>
         <form onSubmit={handleLogin} className="space-y-4">
           <div>
@@ -399,8 +395,8 @@ export default function App() {
             <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1 flex items-center gap-1"><Lock size={12}/> CONTRASEÑA</label>
             <input type="password" value={loginData.password} onChange={(e) => setLoginData({...loginData, password: e.target.value})} className="w-full border-2 border-slate-100 p-3 rounded-xl outline-none focus:border-blue-500 transition-all text-sm font-bold" placeholder="••••••" />
           </div>
-          {loginError && <p className="text-red-500 text-[10px] text-center font-black uppercase tracking-widest">{loginError}</p>}
-          <button type="submit" className="w-full bg-blue-600 text-white font-black text-xs uppercase tracking-widest py-3 rounded-xl hover:bg-blue-700 shadow-lg shadow-blue-100 transition-all">INGRESAR AL SISTEMA</button>
+          {loginError && <p className="text-red-500 text-xs text-center font-black uppercase tracking-widest">{loginError}</p>}
+          <button type="submit" className="w-full bg-blue-600 text-white font-black text-sm uppercase tracking-widest py-3 rounded-xl hover:bg-blue-700 shadow-lg shadow-blue-100 transition-all">INGRESAR AL SISTEMA</button>
         </form>
         <div className="mt-6 text-center pt-4 border-t border-slate-100"><p className="text-[10px] text-slate-400 font-bold uppercase tracking-tighter flex items-center justify-center gap-1"><Shield size={12}/> Acceso restringido red Reloncaví</p></div>
       </div>
@@ -413,7 +409,7 @@ export default function App() {
       <aside className="w-full md:w-64 bg-[#0a2540] text-white flex flex-col h-screen sticky top-0 shrink-0 shadow-xl overflow-y-auto">
         <div className="p-5 border-b border-white/5">
           <h1 className="text-xl font-bold tracking-tight">SGCC-SM</h1>
-          <p className="text-[10px] text-blue-400 font-black uppercase tracking-widest mt-1">UHCIP INFANTO JUVENIL</p>
+          <p className="text-xs text-blue-400 font-black uppercase tracking-widest mt-1">UHCIP INFANTO JUVENIL</p>
         </div>
         <nav className="flex-1 p-3 space-y-1">
           <button onClick={() => setActiveTab('dashboard')} className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl text-xs font-bold uppercase tracking-widest transition-all ${activeTab === 'dashboard' ? 'bg-blue-600 shadow-lg' : 'hover:bg-white/5 opacity-80'}`}><LayoutDashboard size={18}/> Panel Principal</button>
@@ -421,14 +417,14 @@ export default function App() {
           <button onClick={() => setActiveTab('cases')} className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl text-xs font-bold uppercase tracking-widest transition-all ${activeTab === 'cases' ? 'bg-blue-600 shadow-lg' : 'hover:bg-white/5 opacity-80'}`}><Users size={18}/> Casos de Red</button>
           <button onClick={() => setActiveTab('docs')} className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl text-xs font-bold uppercase tracking-widest transition-all ${activeTab === 'docs' ? 'bg-blue-600 shadow-lg' : 'hover:bg-white/5 opacity-80'}`}><FileText size={18}/> Protocolos</button>
           
-          <div className="pt-5 pb-2 px-4 text-[9px] font-black text-blue-400 uppercase tracking-widest">Evaluación y Red</div>
+          <div className="pt-5 pb-2 px-4 text-[10px] font-black text-blue-400 uppercase tracking-widest">Evaluación y Red</div>
           <button onClick={() => setActiveTab('auditorias')} className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl text-xs font-bold uppercase tracking-widest transition-all ${activeTab === 'auditorias' ? 'bg-blue-600 shadow-lg' : 'hover:bg-white/5 opacity-80'}`}><ClipboardCheck size={18}/> Auditorías</button>
           <button onClick={() => setActiveTab('consultorias')} className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl text-xs font-bold uppercase tracking-widest transition-all ${activeTab === 'consultorias' ? 'bg-blue-600 shadow-lg' : 'hover:bg-white/5 opacity-80'}`}><MessageSquare size={18}/> Consultorías</button>
           <button onClick={() => setActiveTab('dir')} className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl text-xs font-bold uppercase tracking-widest transition-all ${activeTab === 'dir' ? 'bg-blue-600 shadow-lg' : 'hover:bg-white/5 opacity-80'}`}><BookOpen size={18}/> Directorio</button>
 
           {currentUser.rol === 'Admin' && (
              <>
-               <div className="pt-5 pb-2 px-4 text-[9px] font-black text-blue-400 uppercase tracking-widest">Administración</div>
+               <div className="pt-5 pb-2 px-4 text-[10px] font-black text-blue-400 uppercase tracking-widest">Administración</div>
                <button onClick={() => setActiveTab('users')} className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl text-xs font-bold uppercase tracking-widest transition-all ${activeTab === 'users' ? 'bg-blue-600 shadow-lg' : 'hover:bg-white/5 opacity-80'}`}><UserPlus size={18}/> Usuarios</button>
                <button onClick={() => setActiveTab('config')} className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl text-xs font-bold uppercase tracking-widest transition-all ${activeTab === 'config' ? 'bg-blue-600 shadow-lg' : 'hover:bg-white/5 opacity-80'}`}><Settings size={18}/> Ajustes</button>
              </>
@@ -457,12 +453,12 @@ export default function App() {
               <div className="absolute right-0 mt-2 w-80 bg-white rounded-2xl shadow-xl border border-slate-100 overflow-hidden fade-in">
                 <div className="bg-[#0a2540] text-white px-4 py-3 font-bold flex justify-between items-center text-xs">Notificaciones <span className="bg-blue-600 text-[10px] px-2 py-0.5 rounded-full">{notifications.length}</span></div>
                 <div className="max-h-80 overflow-y-auto">
-                  {notifications.length === 0 ? (<div className="p-6 text-center text-xs text-slate-500 font-medium">No hay notificaciones pendientes.</div>) : (
+                  {notifications.length === 0 ? (<div className="p-6 text-center text-sm text-slate-500 font-medium">No hay notificaciones pendientes.</div>) : (
                     <div className="divide-y divide-slate-50">
                       {notifications.map(n => (
                         <div key={n.id} className="p-4 hover:bg-slate-50 transition-colors flex gap-3 items-start">
-                          <div className="mt-0.5">{n.type === 'alerta' || n.type === 'overdue' ? <AlertTriangle size={14} className="text-red-500"/> : <Bell size={14} className="text-amber-500"/>}</div>
-                          <div><p className="text-xs font-bold text-slate-800">{n.title}</p><p className="text-[10px] text-slate-500 mt-1 font-medium">{n.desc}</p></div>
+                          <div className="mt-0.5">{n.type === 'alerta' || n.type === 'overdue' ? <AlertTriangle size={16} className="text-red-500"/> : <Bell size={16} className="text-amber-500"/>}</div>
+                          <div><p className="text-sm font-bold text-slate-800">{n.title}</p><p className="text-xs text-slate-500 mt-1 font-medium">{n.desc}</p></div>
                         </div>
                       ))}
                     </div>
@@ -476,31 +472,36 @@ export default function App() {
         {/* PESTAÑA 1: DASHBOARD CLÁSICO */}
         {activeTab === 'dashboard' && (
           <div className="space-y-6 animate-in fade-in mt-12 md:mt-0">
-            <div><h2 className="text-2xl font-black text-slate-800 tracking-tight">Panel de Gestión Integral</h2><p className="text-xs text-slate-500 font-medium mt-1">Resumen de actividad clínica y normativa</p></div>
+            <div><h2 className="text-2xl font-black text-slate-800 tracking-tight">Panel de Gestión Integral</h2><p className="text-sm text-slate-500 font-medium mt-1">Resumen de actividad clínica y normativa</p></div>
 
             <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
-              <div className="bg-white p-4 rounded-2xl shadow-sm border border-slate-100 border-l-[6px] border-l-red-500"><p className="text-[9px] text-slate-400 font-black uppercase tracking-widest">Pérdida Continuidad</p><h3 className="text-2xl font-black text-red-600 mt-1">{alertCases.length}</h3></div>
-              <div className="bg-white p-4 rounded-2xl shadow-sm border border-slate-100 border-l-[6px] border-l-blue-500"><p className="text-[9px] text-slate-400 font-black uppercase tracking-widest">Pacientes en Tránsito</p><h3 className="text-2xl font-black text-blue-600 mt-1">{visibleCases.filter(c => c.estado === 'Pendiente').length}</h3></div>
-              <div className="bg-white p-4 rounded-2xl shadow-sm border border-slate-100 border-l-[6px] border-l-amber-500"><p className="text-[9px] text-slate-400 font-black uppercase tracking-widest">Tareas Críticas</p><h3 className="text-2xl font-black text-amber-600 mt-1">{tareasCriticas}</h3></div>
-              <div className="bg-white p-4 rounded-2xl shadow-sm border border-slate-100 border-l-[6px] border-l-indigo-500"><p className="text-[9px] text-slate-400 font-black uppercase tracking-widest">Auditorías Normativas</p><h3 className="text-2xl font-black text-indigo-600 mt-1">{visibleAudits.filter(a => a.tipo === 'Auditoría').length}</h3></div>
-              <div className="bg-white p-4 rounded-2xl shadow-sm border border-slate-100 border-l-[6px] border-l-teal-500"><p className="text-[9px] text-slate-400 font-black uppercase tracking-widest">Consultorías Clínicas</p><h3 className="text-2xl font-black text-teal-600 mt-1">{visibleAudits.filter(a => a.tipo === 'Consultoría').length}</h3></div>
+              <div className="bg-white p-4 rounded-2xl shadow-sm border border-slate-100 border-l-[6px] border-l-red-500"><p className="text-[10px] text-slate-400 font-black uppercase tracking-widest">Pérdida Continuidad</p><h3 className="text-2xl font-black text-red-600 mt-1">{alertCases.length}</h3></div>
+              <div className="bg-white p-4 rounded-2xl shadow-sm border border-slate-100 border-l-[6px] border-l-blue-500"><p className="text-[10px] text-slate-400 font-black uppercase tracking-widest">Pacientes en Tránsito</p><h3 className="text-2xl font-black text-blue-600 mt-1">{visibleCases.filter(c => c.estado === 'Pendiente').length}</h3></div>
+              <div className="bg-white p-4 rounded-2xl shadow-sm border border-slate-100 border-l-[6px] border-l-amber-500"><p className="text-[10px] text-slate-400 font-black uppercase tracking-widest">Tareas Críticas</p><h3 className="text-2xl font-black text-amber-600 mt-1">{tareasCriticas}</h3></div>
+              <div className="bg-white p-4 rounded-2xl shadow-sm border border-slate-100 border-l-[6px] border-l-indigo-500"><p className="text-[10px] text-slate-400 font-black uppercase tracking-widest">Auditorías Normativas</p><h3 className="text-2xl font-black text-indigo-600 mt-1">{visibleAudits.filter(a => a.tipo === 'Auditoría').length}</h3></div>
+              <div className="bg-white p-4 rounded-2xl shadow-sm border border-slate-100 border-l-[6px] border-l-teal-500"><p className="text-[10px] text-slate-400 font-black uppercase tracking-widest">Consultorías Clínicas</p><h3 className="text-2xl font-black text-teal-600 mt-1">{visibleAudits.filter(a => a.tipo === 'Consultoría').length}</h3></div>
             </div>
 
             <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
               <div className="bg-white rounded-2xl shadow-sm border border-slate-200 p-5 lg:col-span-2 overflow-hidden">
-                <h3 className="text-xs font-black text-slate-800 uppercase tracking-widest mb-4 flex items-center gap-2"><AlertTriangle size={16} className="text-red-500" /> Casos Requiriendo Rescate</h3>
-                <div className="overflow-x-auto"><table className="w-full text-left border-collapse min-w-[500px]"><thead><tr className="bg-slate-50 text-[9px] font-black uppercase tracking-widest text-slate-400"><th className="p-3 rounded-l-lg">ID</th><th className="p-3">Paciente</th><th className="p-3">Destino</th><th className="p-3 rounded-r-lg">Estado</th></tr></thead><tbody>
-                      {alertCases.map(c => (<tr key={c.id} className="border-b border-slate-50"><td className="p-3 text-[10px] font-bold text-slate-500">{c.id}</td><td className="p-3 text-xs font-black text-slate-800">{c.nombre}</td><td className="p-3 text-[10px] font-bold text-indigo-600">{c.destino}</td><td className="p-3"><StatusBadge status={c.estado}/></td></tr>))}
-                      {alertCases.length === 0 && (<tr><td colSpan="4" className="p-6 text-center text-slate-400 font-bold text-[10px] uppercase tracking-widest">No hay alertas activas en tu red.</td></tr>)}
-                </tbody></table></div>
+                <h3 className="text-sm font-black text-slate-800 uppercase tracking-widest mb-4 flex items-center gap-2"><AlertTriangle size={18} className="text-red-500" /> Casos Requiriendo Rescate</h3>
+                <div className="overflow-x-auto">
+                  <table className="w-full text-left border-collapse min-w-[500px]">
+                    <thead><tr className="bg-slate-50 text-xs font-bold uppercase tracking-wider text-slate-400"><th className="p-3 rounded-l-lg">ID</th><th className="p-3">Paciente</th><th className="p-3">Destino</th><th className="p-3 rounded-r-lg">Estado</th></tr></thead>
+                    <tbody>
+                      {alertCases.map(c => (<tr key={c.id} className="border-b border-slate-50"><td className="p-3 text-xs font-bold text-slate-500 whitespace-nowrap">{c.id}</td><td className="p-3 text-sm font-bold text-slate-800">{c.nombre}</td><td className="p-3 text-xs font-bold text-indigo-600 whitespace-nowrap">{c.destino}</td><td className="p-3"><StatusBadge status={c.estado}/></td></tr>))}
+                      {alertCases.length === 0 && (<tr><td colSpan="4" className="p-6 text-center text-slate-400 font-bold text-xs uppercase tracking-widest">No hay alertas activas en tu red.</td></tr>)}
+                    </tbody>
+                  </table>
+                </div>
               </div>
               
               <div className="bg-indigo-900 rounded-2xl p-5 text-white shadow-xl relative overflow-hidden flex flex-col">
                 <div className="relative z-10 flex-1 flex flex-col">
-                  <h3 className="text-xs font-black uppercase tracking-widest mb-2 flex items-center gap-2"><Wand2 size={16} className="text-blue-300"/> Asistente de Rescate</h3>
-                  <p className="text-[10px] text-indigo-200 font-medium mb-4 leading-relaxed">Genera un correo formal automático para solicitar revisión urgente a los directores de los {alertCases.length} casos perdidos.</p>
-                  <button onClick={() => handleGenerateReport('alerts')} disabled={alertCases.length === 0 || isGeneratingReport} className="w-full bg-white text-indigo-900 py-3 rounded-xl text-[10px] font-black uppercase tracking-widest flex justify-center items-center gap-2 shadow-lg disabled:opacity-50 transition-transform hover:-translate-y-1 mt-auto">
-                    {isGeneratingReport ? <Loader2 size={14} className="animate-spin"/> : <MessageSquare size={14}/>} Redactar Correo
+                  <h3 className="text-sm font-black uppercase tracking-widest mb-2 flex items-center gap-2"><Wand2 size={18} className="text-blue-300"/> Asistente de Rescate</h3>
+                  <p className="text-xs text-indigo-200 font-medium mb-4 leading-relaxed">Genera un correo formal automático para solicitar revisión urgente a los directores de los {alertCases.length} casos perdidos.</p>
+                  <button onClick={() => handleGenerateReport('alerts')} disabled={alertCases.length === 0 || isGeneratingReport} className="w-full bg-white text-indigo-900 py-3 rounded-xl text-xs font-black uppercase tracking-widest flex justify-center items-center gap-2 shadow-lg disabled:opacity-50 transition-transform hover:-translate-y-1 mt-auto">
+                    {isGeneratingReport ? <Loader2 size={16} className="animate-spin"/> : <MessageSquare size={16}/>} Redactar Correo
                   </button>
                 </div>
                 <div className="absolute top-0 right-0 w-32 h-32 bg-blue-500/20 rounded-full -mr-10 -mt-10 blur-xl"></div>
@@ -509,24 +510,29 @@ export default function App() {
 
             {/* SEGUIMIENTO DE TAREAS */}
             <div className="bg-white rounded-2xl shadow-sm border border-slate-200 p-6">
-              <h3 className="text-xs font-black text-slate-800 uppercase tracking-widest mb-4 flex items-center gap-2"><ListTodo size={16} className="text-blue-500" /> Tareas Intersectoriales Pendientes</h3>
-              <div className="overflow-x-auto"><table className="w-full text-left border-collapse min-w-[700px]"><thead><tr className="bg-slate-50 text-[9px] font-black uppercase tracking-widest text-slate-400"><th className="p-3 rounded-l-lg w-10">Est.</th><th className="p-3">Origen (Caso/Doc)</th><th className="p-3">Tarea Asignada</th><th className="p-3">Responsable</th><th className="p-3 rounded-r-lg">Acción / Vencimiento</th></tr></thead><tbody className="divide-y divide-slate-50">
+              <h3 className="text-sm font-black text-slate-800 uppercase tracking-widest mb-4 flex items-center gap-2"><ListTodo size={18} className="text-blue-500" /> Tareas Intersectoriales Pendientes</h3>
+              <div className="overflow-x-auto">
+                <table className="w-full text-left border-collapse min-w-[700px]">
+                  <thead><tr className="bg-slate-50 text-xs font-bold uppercase tracking-wider text-slate-400"><th className="p-3 rounded-l-lg w-10">Est.</th><th className="p-3">Origen</th><th className="p-3">Tarea Asignada</th><th className="p-3">Responsable</th><th className="p-3 rounded-r-lg">Acción / Vencimiento</th></tr></thead>
+                  <tbody className="divide-y divide-slate-50">
                     {allPendingTasks.map(tarea => {
                       const statusInfo = getTaskStatus(tarea.fechaCumplimiento);
                       return (
                         <tr key={tarea.id} className="hover:bg-slate-50 transition-colors group">
                           <td className="p-3 text-slate-300">
-                             <button onClick={() => tarea.source === 'Caso' ? toggleTaskCompletion(tarea.parentId, tarea.id) : toggleDocTaskCompletion(tarea.parentId, tarea.id)} className="hover:text-emerald-500 transition-colors"><Square size={16} /></button>
+                             <button onClick={() => tarea.source === 'Caso' ? toggleTaskCompletion(tarea.parentId, tarea.id) : toggleDocTaskCompletion(tarea.parentId, tarea.id)} className="hover:text-emerald-500 transition-colors"><Square size={18} /></button>
                           </td>
-                          <td className="p-3"><div className="text-[11px] font-black text-slate-800 flex items-center gap-2">{tarea.parentName} {statusInfo.status === 'upcoming' && <span className="bg-amber-100 text-amber-700 px-1.5 py-0.5 rounded text-[7px] uppercase animate-pulse">Próximo</span>} {statusInfo.status === 'overdue' && <span className="bg-red-100 text-red-700 px-1.5 py-0.5 rounded text-[7px] uppercase">Vencida</span>}</div><div className="text-[8px] text-slate-400 mt-1 uppercase tracking-widest font-bold">{tarea.source}</div></td>
-                          <td className="p-3 text-xs font-medium text-slate-600">{tarea.descripcion}</td>
-                          <td className="p-3 text-[10px] font-bold text-slate-500">{tarea.responsable || 'No asignado'}</td>
-                          <td className="p-3"><span className={`px-2.5 py-1 text-[9px] font-black uppercase tracking-widest rounded-lg flex items-center gap-1.5 w-fit shadow-sm ${statusInfo.bgClass}`}>{statusInfo.showWarning && <AlertTriangle size={10}/>}{tarea.fechaCumplimiento || 'Sin Fecha'}</span></td>
+                          <td className="p-3"><div className="text-sm font-bold text-slate-800 flex items-center gap-2">{tarea.parentName} {statusInfo.status === 'upcoming' && <span className="bg-amber-100 text-amber-700 px-2 py-1 rounded text-[10px] uppercase animate-pulse">Próximo</span>} {statusInfo.status === 'overdue' && <span className="bg-red-100 text-red-700 px-2 py-1 rounded text-[10px] uppercase">Vencida</span>}</div><div className="text-[10px] text-slate-400 mt-1 uppercase tracking-widest font-bold">{tarea.source}</div></td>
+                          <td className="p-3 text-sm font-medium text-slate-600">{tarea.descripcion}</td>
+                          <td className="p-3 text-xs font-bold text-slate-500">{tarea.responsable || 'No asignado'}</td>
+                          <td className="p-3"><span className={`px-3 py-1.5 text-xs font-bold uppercase tracking-widest rounded-lg flex items-center gap-1.5 w-fit shadow-sm whitespace-nowrap ${statusInfo.bgClass}`}>{statusInfo.showWarning && <AlertTriangle size={14}/>}{tarea.fechaCumplimiento || 'Sin Fecha'}</span></td>
                         </tr>
                       );
                     })}
-                    {allPendingTasks.length === 0 && (<tr><td colSpan="5" className="p-8 text-center text-slate-400 font-black text-[10px] uppercase tracking-widest">No hay tareas pendientes registradas en la red.</td></tr>)}
-              </tbody></table></div>
+                    {allPendingTasks.length === 0 && (<tr><td colSpan="5" className="p-8 text-center text-slate-400 font-bold text-xs uppercase tracking-widest">No hay tareas pendientes registradas en la red.</td></tr>)}
+                  </tbody>
+                </table>
+              </div>
             </div>
           </div>
         )}
@@ -535,8 +541,8 @@ export default function App() {
         {activeTab === 'stats' && (
           <div className="space-y-6 animate-in fade-in mt-12 md:mt-0">
             <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
-              <div><h2 className="text-2xl font-black text-slate-800 tracking-tight">Estadísticas de Continuidad</h2><p className="text-xs text-slate-500 font-medium mt-1">Análisis de tiempos de respuesta en la red</p></div>
-              <button onClick={handleExportCSV} className="bg-emerald-600 text-white px-5 py-2.5 rounded-xl text-[10px] font-black uppercase tracking-widest flex items-center gap-2 hover:bg-emerald-700 transition-all shadow-md"><Download size={14}/> Exportar Data Cruda</button>
+              <div><h2 className="text-2xl font-black text-slate-800 tracking-tight">Estadísticas de Continuidad</h2><p className="text-sm text-slate-500 font-medium mt-1">Análisis de tiempos de respuesta en la red</p></div>
+              <button onClick={handleExportCSV} className="bg-emerald-600 text-white px-5 py-2.5 rounded-xl text-xs font-black uppercase tracking-widest flex items-center gap-2 hover:bg-emerald-700 transition-all shadow-md"><Download size={16}/> Exportar Data Cruda</button>
             </div>
 
             <div className="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm">
@@ -544,35 +550,35 @@ export default function App() {
                  <div className="flex items-center gap-4">
                    <div className="p-3 bg-blue-50 text-blue-600 rounded-xl"><Target size={24}/></div>
                    <div>
-                     <h3 className="font-black text-slate-800 uppercase text-[11px] tracking-widest">Plazo Meta Operacional</h3>
-                     <p className="text-[10px] text-slate-500 mt-1 font-medium">Días tolerables para el "Ingreso Efectivo" según la capacidad local.</p>
+                     <h3 className="font-black text-slate-800 uppercase text-xs tracking-widest">Plazo Meta Operacional</h3>
+                     <p className="text-xs text-slate-500 mt-1 font-medium">Días tolerables para el "Ingreso Efectivo" según la capacidad local.</p>
                    </div>
                  </div>
-                 <div className="flex items-center gap-2 bg-slate-50 p-2 rounded-xl border border-slate-200">
-                    <span className="text-[9px] font-black text-slate-400 ml-2 uppercase tracking-widest">META RED:</span>
-                    <input type="number" value={targetDays} onChange={(e) => handleUpdateTarget(e.target.value)} className="w-16 p-2 bg-white border border-blue-100 rounded-lg text-center font-black text-blue-600 outline-none focus:border-blue-500 text-sm shadow-sm"/>
-                    <span className="text-[9px] font-black text-slate-500 mr-2 uppercase tracking-widest">Días</span>
+                 <div className="flex items-center gap-3 bg-slate-50 p-2 rounded-xl border border-slate-200">
+                    <span className="text-[10px] font-black text-slate-400 ml-2 uppercase tracking-widest">META RED:</span>
+                    <input type="number" value={targetDays} onChange={(e) => handleUpdateTarget(e.target.value)} className="w-20 p-2 bg-white border border-blue-100 rounded-lg text-center font-black text-blue-600 outline-none focus:border-blue-500 text-base shadow-sm"/>
+                    <span className="text-[10px] font-black text-slate-500 mr-2 uppercase tracking-widest">Días</span>
                  </div>
               </div>
             </div>
 
             <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
               <div className="bg-white p-6 rounded-2xl shadow-sm border border-slate-100 border-l-[8px] border-l-indigo-500">
-                <div className="flex justify-between items-start mb-3"><div className="p-2 bg-indigo-50 rounded-xl text-indigo-600"><Timer size={18}/></div><span className="text-[8px] font-black text-slate-400 uppercase tracking-[0.2em] bg-slate-50 px-2 py-1 rounded-lg">Hito A-B</span></div>
-                <h3 className="text-[9px] font-black text-slate-400 uppercase tracking-widest">Promedio Enlace Administrativo</h3>
-                <p className="text-4xl font-black text-slate-800 mt-1">{redMetrics.avgEnlace} <span className="text-xs font-bold text-slate-300 uppercase tracking-widest">Días</span></p>
+                <div className="flex justify-between items-start mb-3"><div className="p-2 bg-indigo-50 rounded-xl text-indigo-600"><Timer size={20}/></div><span className="text-[10px] font-black text-slate-400 uppercase tracking-[0.2em] bg-slate-50 px-2 py-1 rounded-lg">Hito A-B</span></div>
+                <h3 className="text-xs font-black text-slate-400 uppercase tracking-widest">Promedio Enlace Administrativo</h3>
+                <p className="text-4xl font-black text-slate-800 mt-2">{redMetrics.avgEnlace} <span className="text-sm font-bold text-slate-300 uppercase tracking-widest">Días</span></p>
               </div>
 
               <div className="bg-white p-6 rounded-2xl shadow-sm border border-slate-100 border-l-[8px] border-l-blue-500">
-                <div className="flex justify-between items-start mb-3"><div className="p-2 bg-blue-50 rounded-xl text-blue-600"><BarChart3 size={18}/></div><span className="text-[8px] font-black text-slate-400 uppercase tracking-[0.2em] bg-slate-50 px-2 py-1 rounded-lg">Hito A-C</span></div>
-                <h3 className="text-[9px] font-black text-slate-400 uppercase tracking-widest">Promedio Ingreso Efectivo</h3>
-                <p className="text-4xl font-black text-slate-800 mt-1">{redMetrics.avgIngreso} <span className="text-xs font-bold text-slate-300 uppercase tracking-widest">Días</span></p>
+                <div className="flex justify-between items-start mb-3"><div className="p-2 bg-blue-50 rounded-xl text-blue-600"><BarChart3 size={20}/></div><span className="text-[10px] font-black text-slate-400 uppercase tracking-[0.2em] bg-slate-50 px-2 py-1 rounded-lg">Hito A-C</span></div>
+                <h3 className="text-xs font-black text-slate-400 uppercase tracking-widest">Promedio Ingreso Efectivo</h3>
+                <p className="text-4xl font-black text-slate-800 mt-2">{redMetrics.avgIngreso} <span className="text-sm font-bold text-slate-300 uppercase tracking-widest">Días</span></p>
               </div>
 
               <div className="bg-white p-6 rounded-2xl shadow-sm border border-slate-100 border-l-[8px] border-l-red-500 relative overflow-hidden">
-                <div className="flex justify-between items-start mb-3 relative z-10"><div className="p-2 bg-red-50 rounded-xl text-red-600"><AlertTriangle size={18}/></div><div className="px-2 py-1 bg-red-100 text-red-700 text-[8px] font-black rounded-lg uppercase tracking-[0.2em] shadow-sm">Brecha</div></div>
-                <h3 className="text-[9px] font-black text-slate-400 uppercase tracking-widest relative z-10">Casos sobre la meta ({targetDays} d)</h3>
-                <p className="text-4xl font-black text-slate-800 mt-1 relative z-10">{redMetrics.fueraDePlazo} <span className="text-xs font-bold text-slate-300 uppercase tracking-widest">Casos</span></p>
+                <div className="flex justify-between items-start mb-3 relative z-10"><div className="p-2 bg-red-50 rounded-xl text-red-600"><AlertTriangle size={20}/></div><div className="px-2 py-1 bg-red-100 text-red-700 text-[10px] font-black rounded-lg uppercase tracking-[0.2em] shadow-sm">Brecha</div></div>
+                <h3 className="text-xs font-black text-slate-400 uppercase tracking-widest relative z-10">Casos sobre la meta ({targetDays} d)</h3>
+                <p className="text-4xl font-black text-slate-800 mt-2 relative z-10">{redMetrics.fueraDePlazo} <span className="text-sm font-bold text-slate-300 uppercase tracking-widest">Casos</span></p>
                 {redMetrics.fueraDePlazo > 0 && <div className="absolute top-0 right-0 w-24 h-24 bg-red-50 rounded-full -mr-8 -mt-8 blur-xl"></div>}
               </div>
             </div>
@@ -581,18 +587,18 @@ export default function App() {
               <div className="bg-gradient-to-br from-indigo-900 to-[#0a2540] rounded-2xl p-8 text-white shadow-xl relative overflow-hidden">
                  <div className="relative z-10 flex flex-col md:flex-row items-center justify-between gap-6">
                    <div className="max-w-2xl">
-                     <h3 className="text-lg font-black mb-2 flex items-center gap-2"><TrendingUp size={20} className="text-blue-400"/> Análisis Estratégico de Brechas (IA)</h3>
-                     <p className="text-xs text-blue-100 opacity-90 font-medium leading-relaxed">Basado en tu meta, {redMetrics.fueraDePlazo} pacientes sufren demoras críticas. Genera un informe para presentar a las direcciones de la red.</p>
+                     <h3 className="text-xl font-black mb-2 flex items-center gap-2"><TrendingUp size={24} className="text-blue-400"/> Análisis Estratégico de Brechas (IA)</h3>
+                     <p className="text-sm text-blue-100 opacity-90 font-medium leading-relaxed">Basado en tu meta, {redMetrics.fueraDePlazo} pacientes sufren demoras críticas. Genera un informe para presentar a las direcciones de la red.</p>
                    </div>
-                   <button onClick={() => handleGenerateReport('stats')} disabled={isGeneratingReport} className="bg-white text-indigo-900 px-6 py-3 rounded-xl text-[10px] font-black uppercase tracking-widest hover:bg-blue-50 transition-all flex items-center gap-2 shadow-lg shrink-0 disabled:opacity-50">
-                     {isGeneratingReport ? <Loader2 size={16} className="animate-spin"/> : <FileText size={16}/>} Procesar Reporte
+                   <button onClick={() => handleGenerateReport('stats')} disabled={isGeneratingReport} className="bg-white text-indigo-900 px-6 py-4 rounded-xl text-xs font-black uppercase tracking-widest hover:bg-blue-50 transition-all flex items-center gap-2 shadow-lg shrink-0 disabled:opacity-50">
+                     {isGeneratingReport ? <Loader2 size={18} className="animate-spin"/> : <FileText size={18}/>} Procesar Reporte
                    </button>
                  </div>
                  <div className="absolute top-0 right-0 w-48 h-48 bg-blue-500/10 rounded-full -mr-16 -mt-16 blur-2xl"></div>
                  {reportContent && (
                    <div className="mt-6 bg-[#081b30] p-6 rounded-xl border border-white/10 animate-in slide-in-from-top-4 relative z-10">
-                      <div className="flex justify-between items-center mb-4 pb-3 border-b border-white/10"><span className="text-[9px] font-black uppercase tracking-[0.2em] text-blue-300">Borrador Directivo Generado:</span><button onClick={()=>copyToClipboard(reportContent)} className="text-white bg-white/10 hover:bg-white/20 p-2 rounded-lg transition-colors"><Copy size={14}/></button></div>
-                      <p className="text-xs font-medium text-slate-300 whitespace-pre-wrap leading-relaxed">{reportContent}</p>
+                      <div className="flex justify-between items-center mb-4 pb-3 border-b border-white/10"><span className="text-[10px] font-black uppercase tracking-[0.2em] text-blue-300">Borrador Directivo Generado:</span><button onClick={()=>copyToClipboard(reportContent)} className="text-white bg-white/10 hover:bg-white/20 p-2 rounded-lg transition-colors"><Copy size={16}/></button></div>
+                      <p className="text-sm font-medium text-slate-300 whitespace-pre-wrap leading-relaxed">{reportContent}</p>
                    </div>
                  )}
               </div>
@@ -600,19 +606,19 @@ export default function App() {
           </div>
         )}
 
-        {/* PESTAÑA 3: CASOS DE RED (ACTUALIZADO TAMAÑO DE FUENTES) */}
+        {/* PESTAÑA 3: CASOS DE RED (AUMENTADOS TAMAÑOS DE FUENTES Y APLICADO WHITESPACE-NOWRAP) */}
         {activeTab === 'cases' && (
           <div className="space-y-6 animate-in fade-in mt-12 md:mt-0">
             <div className="flex flex-col md:flex-row justify-between items-start md:items-end gap-4">
-              <div><h2 className="text-2xl font-black text-slate-800 tracking-tight">Casos en Red</h2><p className="text-xs text-slate-500 font-medium mt-1">Gestión individual de traslados intersectoriales</p></div>
-              <button onClick={() => { setEditingCaseId(null); setCaseForm(defaultCaseState); setIsCaseModalOpen(true); }} className="bg-blue-600 text-white px-6 py-3 rounded-xl text-[10px] font-black uppercase tracking-widest hover:bg-blue-700 transition-all shadow-md flex items-center gap-2"><Plus size={16}/> Nuevo Seguimiento</button>
+              <div><h2 className="text-2xl font-black text-slate-800 tracking-tight">Casos en Red</h2><p className="text-sm text-slate-500 font-medium mt-1">Gestión individual de traslados intersectoriales</p></div>
+              <button onClick={() => { setEditingCaseId(null); setCaseForm(defaultCaseState); setIsCaseModalOpen(true); }} className="bg-blue-600 text-white px-6 py-3 rounded-xl text-xs font-black uppercase tracking-widest hover:bg-blue-700 transition-all shadow-md flex items-center gap-2"><Plus size={18}/> Nuevo Seguimiento</button>
             </div>
             
             <div className="bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden">
               <div className="overflow-x-auto">
-                <table className="w-full text-left border-collapse min-w-[800px]">
+                <table className="w-full text-left border-collapse min-w-[1000px]">
                   <thead className="bg-slate-50 border-b border-slate-100">
-                    <tr className="text-[10px] font-black text-slate-400 uppercase tracking-[0.2em]">
+                    <tr className="text-xs font-bold text-slate-500 uppercase tracking-wider">
                       <th className="p-4">Paciente</th>
                       <th className="p-4">Ruta de Traslado</th>
                       <th className="p-4 text-center">Hitos Clínicos (A-B-C)</th>
@@ -627,19 +633,19 @@ export default function App() {
                       return (
                         <tr key={c.id} className={`hover:bg-slate-50/80 transition-colors ${isOver ? 'bg-red-50/20' : ''}`}>
                           <td className="p-4">
-                            <div className="font-black text-slate-800 text-sm uppercase">{c.nombre}</div>
-                            <div className="text-[11px] font-bold text-slate-500 mt-1">{c.paciente}</div>
+                            <div className="font-bold text-slate-800 text-sm uppercase">{c.nombre}</div>
+                            <div className="text-xs font-medium text-slate-500 mt-1 whitespace-nowrap">{c.paciente}</div>
                           </td>
                           <td className="p-4">
-                            <div className="text-[10px] font-black text-blue-600 bg-blue-50 px-2.5 py-1.5 rounded-lg w-fit flex items-center gap-1.5 uppercase tracking-widest border border-blue-100">
-                              {c.origen} <Timer size={12}/> {c.destino}
+                            <div className="text-xs font-bold text-blue-700 bg-blue-50 px-3 py-1.5 rounded-lg w-fit flex items-center gap-2 uppercase tracking-wide border border-blue-100 whitespace-nowrap">
+                              {c.origen} <Timer size={14}/> {c.destino}
                             </div>
                           </td>
                           <td className="p-4">
                             <div className="flex justify-center gap-6">
-                               <div className="text-center"><span className="text-[9px] font-black text-slate-400 block mb-0.5 uppercase tracking-wider">EGRESO</span><span className="text-xs font-black text-slate-700">{c.fechaEgreso || '---'}</span></div>
-                               <div className="text-center border-l border-slate-100 pl-6"><span className="text-[9px] font-black text-indigo-400 block mb-0.5 uppercase tracking-wider">RECEP</span><span className="text-xs font-black text-indigo-700">{c.fechaRecepcionRed || '---'}</span></div>
-                               <div className="text-center border-l border-slate-100 pl-6"><span className="text-[9px] font-black text-green-500 block mb-0.5 uppercase tracking-wider">INGRESO</span><span className={`text-xs font-black ${isOver ? 'text-red-600' : 'text-green-600'}`}>{c.fechaIngresoEfectivo || '---'}</span></div>
+                               <div className="text-center"><span className="text-[10px] font-bold text-slate-400 block mb-1 uppercase tracking-wider">Egreso</span><span className="text-sm font-bold text-slate-700 whitespace-nowrap">{c.fechaEgreso || '---'}</span></div>
+                               <div className="text-center border-l border-slate-100 pl-6"><span className="text-[10px] font-bold text-indigo-400 block mb-1 uppercase tracking-wider">Recep</span><span className="text-sm font-bold text-indigo-700 whitespace-nowrap">{c.fechaRecepcionRed || '---'}</span></div>
+                               <div className="text-center border-l border-slate-100 pl-6"><span className="text-[10px] font-bold text-green-500 block mb-1 uppercase tracking-wider">Ingreso</span><span className={`text-sm font-bold whitespace-nowrap ${isOver ? 'text-red-600' : 'text-green-600'}`}>{c.fechaIngresoEfectivo || '---'}</span></div>
                             </div>
                           </td>
                           <td className="p-4"><div className="flex justify-center"><StatusBadge status={c.estado}/></div></td>
@@ -647,7 +653,7 @@ export default function App() {
                         </tr>
                       );
                     })}
-                    {visibleCases.length === 0 && (<tr><td colSpan="5" className="p-12 text-center"><p className="text-slate-300 font-black text-xs uppercase tracking-widest">No hay registros de seguimiento en la red</p></td></tr>)}
+                    {visibleCases.length === 0 && (<tr><td colSpan="5" className="p-12 text-center"><p className="text-slate-400 font-bold text-sm uppercase tracking-widest">No hay registros de seguimiento en la red</p></td></tr>)}
                   </tbody>
                 </table>
               </div>
@@ -659,23 +665,23 @@ export default function App() {
         {activeTab === 'docs' && (
           <div className="space-y-6 animate-in fade-in mt-12 md:mt-0">
             <div className="flex flex-col md:flex-row justify-between items-start md:items-end gap-4">
-              <div><h2 className="text-2xl font-black text-slate-800 tracking-tight">Normativas y Protocolos</h2><p className="text-xs text-slate-500 font-medium mt-1">Desarrollo documental de la red</p></div>
-              <button onClick={() => { setEditingDocId(null); setDocForm({ nombre: '', ambito: ambitosProtocolo[0], fase: 'Levantamiento', avance: 10, notas: '', bitacora: [], archivos: [] }); setActiveDocModalTab('datos'); setIsDocModalOpen(true); }} className="bg-blue-600 text-white px-6 py-3 rounded-xl text-[10px] font-black uppercase tracking-widest hover:bg-blue-700 shadow-md flex items-center gap-2"><Plus size={16}/> Nuevo Protocolo</button>
+              <div><h2 className="text-2xl font-black text-slate-800 tracking-tight">Normativas y Protocolos</h2><p className="text-sm text-slate-500 font-medium mt-1">Desarrollo documental de la red</p></div>
+              <button onClick={() => { setEditingDocId(null); setDocForm({ nombre: '', ambito: ambitosProtocolo[0], fase: 'Levantamiento', avance: 10, notas: '', bitacora: [], archivos: [] }); setActiveDocModalTab('datos'); setIsDocModalOpen(true); }} className="bg-blue-600 text-white px-6 py-3 rounded-xl text-xs font-black uppercase tracking-widest hover:bg-blue-700 shadow-md flex items-center gap-2"><Plus size={18}/> Nuevo Protocolo</button>
             </div>
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
               {docs.map((d) => (
                 <div key={d.id} className="bg-white p-6 rounded-2xl shadow-sm border border-slate-200 hover:border-blue-200 transition-colors flex flex-col justify-between">
                   <div>
-                    <div className="flex justify-between items-start mb-3"><span className="text-[9px] font-black text-blue-600 bg-blue-50 px-2 py-1 rounded-lg uppercase tracking-widest">{d.id}</span><button onClick={() => { setEditingDocId(d.id); setDocForm(d); setActiveDocModalTab('datos'); setIsDocModalOpen(true); }} className="text-slate-300 hover:text-blue-600 p-1.5 bg-slate-50 rounded-lg"><Edit2 size={14} /></button></div>
-                    <h3 className="text-lg font-black text-slate-800 mb-1 leading-tight">{d.nombre}</h3><p className="text-[10px] font-bold text-slate-400 mb-4 uppercase tracking-widest flex items-center gap-1.5"><Activity size={12}/> {d.ambito} • {d.fase}</p>
+                    <div className="flex justify-between items-start mb-4"><span className="text-[10px] font-black text-blue-600 bg-blue-50 px-3 py-1.5 rounded-lg uppercase tracking-widest">{d.id}</span><button onClick={() => { setEditingDocId(d.id); setDocForm(d); setActiveDocModalTab('datos'); setIsDocModalOpen(true); }} className="text-slate-400 hover:text-blue-600 p-2 bg-slate-50 rounded-lg"><Edit2 size={16} /></button></div>
+                    <h3 className="text-xl font-black text-slate-800 mb-2 leading-tight">{d.nombre}</h3><p className="text-xs font-bold text-slate-400 mb-6 uppercase tracking-widest flex items-center gap-2"><Activity size={14}/> {d.ambito} • {d.fase}</p>
                   </div>
                   <div>
-                    <div className="flex justify-between text-[9px] font-black uppercase tracking-widest mb-1.5 text-slate-400"><span>Avance Técnico</span><span>{d.avance}%</span></div>
-                    <div className="w-full bg-slate-100 rounded-full h-2.5 overflow-hidden"><div className="bg-blue-500 h-2.5 rounded-full transition-all" style={{ width: `${d.avance}%` }}></div></div>
+                    <div className="flex justify-between text-xs font-bold uppercase tracking-widest mb-2 text-slate-400"><span>Avance Técnico</span><span>{d.avance}%</span></div>
+                    <div className="w-full bg-slate-100 rounded-full h-3 overflow-hidden"><div className="bg-blue-500 h-3 rounded-full transition-all" style={{ width: `${d.avance}%` }}></div></div>
                   </div>
                 </div>
               ))}
-              {docs.length === 0 && <div className="col-span-2 text-center py-16 text-slate-300 font-black uppercase tracking-widest text-xs">Sin protocolos registrados.</div>}
+              {docs.length === 0 && <div className="col-span-2 text-center py-20 text-slate-300 font-black uppercase tracking-widest text-sm">Sin protocolos registrados.</div>}
             </div>
           </div>
         )}
@@ -690,28 +696,28 @@ export default function App() {
           return (
             <div className="space-y-6 animate-in fade-in mt-12 md:mt-0">
               <div className="flex flex-col md:flex-row justify-between items-start md:items-end gap-4">
-                <div><h2 className="text-2xl font-black text-slate-800 tracking-tight">{tipoLabel === 'Auditoría' ? 'Auditorías Normativas' : 'Consultorías Clínicas'}</h2><p className="text-xs text-slate-500 font-medium mt-1">Evaluación en dispositivos de la red</p></div>
-                <div className="flex flex-wrap gap-3">
-                  <select value={currentFilter} onChange={e => setFilter(e.target.value)} className="px-3 py-2.5 border-2 border-slate-200 rounded-xl text-[10px] font-bold bg-white outline-none focus:border-blue-500 uppercase tracking-widest text-slate-600"><option value="Todos">Toda la Red</option>{centros.map(c => <option key={c} value={c}>{c}</option>)}</select>
-                  {currentUser?.rol === 'Admin' && (<button onClick={() => { setTemplateForm({nombre: '', criterios: [''], rangos: [], tipo: 'Ambos'}); setIsTemplateModalOpen(true); }} className="bg-white border-2 border-slate-200 text-slate-600 hover:bg-slate-50 px-5 py-2.5 rounded-xl text-[10px] font-black uppercase tracking-widest flex items-center gap-2"><Settings size={14} /> Pautas</button>)}
-                  <button onClick={() => { setAuditForm({ centro: centros[0] || '', templateId: auditTemplates.find(t => t.tipo === 'Ambos' || t.tipo === tipoLabel)?.id || '', answers: {}, tipo: tipoLabel }); setIsAuditModalOpen(true); }} className="bg-blue-600 hover:bg-blue-700 text-white px-6 py-2.5 rounded-xl text-[10px] font-black uppercase tracking-widest flex items-center gap-2 shadow-md"><ClipboardCheck size={16} /> Evaluar</button>
+                <div><h2 className="text-2xl font-black text-slate-800 tracking-tight">{tipoLabel === 'Auditoría' ? 'Auditorías Normativas' : 'Consultorías Clínicas'}</h2><p className="text-sm text-slate-500 font-medium mt-1">Evaluación en dispositivos de la red</p></div>
+                <div className="flex flex-wrap gap-4">
+                  <select value={currentFilter} onChange={e => setFilter(e.target.value)} className="px-4 py-3 border-2 border-slate-200 rounded-xl text-xs font-bold bg-white outline-none focus:border-blue-500 uppercase tracking-widest text-slate-600"><option value="Todos">Toda la Red</option>{centros.map(c => <option key={c} value={c}>{c}</option>)}</select>
+                  {currentUser?.rol === 'Admin' && (<button onClick={() => { setTemplateForm({nombre: '', criterios: [''], rangos: [], tipo: 'Ambos'}); setIsTemplateModalOpen(true); }} className="bg-white border-2 border-slate-200 text-slate-600 hover:bg-slate-50 px-6 py-3 rounded-xl text-xs font-black uppercase tracking-widest flex items-center gap-2"><Settings size={16} /> Pautas</button>)}
+                  <button onClick={() => { setAuditForm({ centro: centros[0] || '', templateId: auditTemplates.find(t => t.tipo === 'Ambos' || t.tipo === tipoLabel)?.id || '', answers: {}, tipo: tipoLabel }); setIsAuditModalOpen(true); }} className="bg-blue-600 hover:bg-blue-700 text-white px-8 py-3 rounded-xl text-xs font-black uppercase tracking-widest flex items-center gap-2 shadow-md"><ClipboardCheck size={18} /> Evaluar</button>
                 </div>
               </div>
-              {filteredAudits.length === 0 ? (<div className="text-center py-16 bg-white rounded-2xl border border-slate-100 shadow-sm"><ClipboardCheck size={40} className="mx-auto text-slate-200 mb-3"/><p className="text-slate-400 font-black uppercase tracking-widest text-[10px]">No hay evaluaciones en este filtro.</p></div>) : (
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              {filteredAudits.length === 0 ? (<div className="text-center py-20 bg-white rounded-2xl border border-slate-100 shadow-sm"><ClipboardCheck size={48} className="mx-auto text-slate-200 mb-4"/><p className="text-slate-400 font-black uppercase tracking-widest text-sm">No hay evaluaciones en este filtro.</p></div>) : (
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                   {filteredAudits.map(a => {
                     const template = auditTemplates.find(t => t.id === a.templateId);
                     return (
-                    <div key={a.id} className="bg-white p-6 rounded-2xl shadow-sm border border-slate-100 flex items-center justify-between hover:border-blue-200 transition-colors">
+                    <div key={a.id} className="bg-white p-8 rounded-2xl shadow-sm border border-slate-100 flex items-center justify-between hover:border-blue-200 transition-colors">
                        <div>
-                         <h3 className="font-black text-slate-800 uppercase text-xs mb-1">{a.centro}</h3>
-                         <p className="text-[9px] text-blue-600 font-black uppercase tracking-widest mb-2 bg-blue-50 px-2 py-0.5 rounded w-fit">{template ? template.nombre : 'Pauta Eliminada'}</p>
-                         <p className="text-[9px] text-slate-400 font-bold uppercase tracking-widest flex items-center gap-1"><Calendar size={10}/> {a.fecha} • Eval: {a.evaluador}</p>
+                         <h3 className="font-black text-slate-800 uppercase text-sm mb-2">{a.centro}</h3>
+                         <p className="text-[10px] text-blue-600 font-black uppercase tracking-widest mb-3 bg-blue-50 px-3 py-1 rounded w-fit">{template ? template.nombre : 'Pauta Eliminada'}</p>
+                         <p className="text-[10px] text-slate-400 font-bold uppercase tracking-widest flex items-center gap-1.5"><Calendar size={12}/> {a.fecha} • Eval: {a.evaluador}</p>
                        </div>
                        <div className="text-right">
-                          <div className="text-3xl font-black text-slate-800">{a.cumplimiento}%</div>
-                          <span className="text-[8px] uppercase text-slate-400 font-black block mb-1.5 tracking-[0.2em]">{a.puntaje}</span>
-                          <span className={`text-[8px] uppercase tracking-widest px-2 py-1 rounded-lg font-black ${a.estado === 'Óptimo' || a.cumplimiento >= 75 ? 'bg-emerald-100 text-emerald-700' : 'bg-red-100 text-red-700'}`}>{a.estado}</span>
+                          <div className="text-4xl font-black text-slate-800 mb-1">{a.cumplimiento}%</div>
+                          <span className="text-[10px] uppercase text-slate-400 font-black block mb-2 tracking-[0.2em]">{a.puntaje}</span>
+                          <span className={`text-[10px] uppercase tracking-widest px-3 py-1.5 rounded-lg font-black ${a.estado === 'Óptimo' || a.cumplimiento >= 75 ? 'bg-emerald-100 text-emerald-700' : 'bg-red-100 text-red-700'}`}>{a.estado}</span>
                        </div>
                     </div>
                     );
@@ -726,25 +732,25 @@ export default function App() {
         {activeTab === 'dir' && (
           <div className="space-y-6 animate-in fade-in mt-12 md:mt-0">
             <div className="flex flex-col md:flex-row justify-between items-start md:items-end gap-4">
-              <div><h2 className="text-2xl font-black text-slate-800 tracking-tight">Directorio Intersectorial</h2><p className="text-xs text-slate-500 font-medium mt-1">Contactos operativos de la red</p></div>
-              <div className="flex gap-3 items-center w-full md:w-auto">
-                <div className="relative flex-1 md:w-64"><div className="absolute inset-y-0 left-0 pl-3 flex items-center"><Search size={14} className="text-slate-400"/></div><input type="text" value={dirSearch} onChange={e => setDirSearch(e.target.value)} className="w-full pl-8 pr-3 py-2.5 border-2 border-slate-200 rounded-xl text-xs font-bold outline-none focus:border-blue-500 bg-white" placeholder="Buscar contacto..."/></div>
-                <button onClick={() => { setEditingDirId(null); setDirForm({ nombre: '', cargo: '', institucion: '', telefono: '', correo: '' }); setIsDirModalOpen(true); }} className="bg-blue-600 hover:bg-blue-700 text-white px-5 py-2.5 rounded-xl text-[10px] font-black uppercase tracking-widest flex items-center gap-2 shadow-md"><Plus size={16} /> Nuevo</button>
+              <div><h2 className="text-2xl font-black text-slate-800 tracking-tight">Directorio Intersectorial</h2><p className="text-sm text-slate-500 font-medium mt-1">Contactos operativos de la red</p></div>
+              <div className="flex gap-4 items-center w-full md:w-auto">
+                <div className="relative flex-1 md:w-64"><div className="absolute inset-y-0 left-0 pl-4 flex items-center"><Search size={18} className="text-slate-400"/></div><input type="text" value={dirSearch} onChange={e => setDirSearch(e.target.value)} className="w-full pl-10 pr-4 py-3 border-2 border-slate-200 rounded-xl text-sm font-bold outline-none focus:border-blue-500 bg-white" placeholder="Buscar contacto..."/></div>
+                <button onClick={() => { setEditingDirId(null); setDirForm({ nombre: '', cargo: '', institucion: '', telefono: '', correo: '' }); setIsDirModalOpen(true); }} className="bg-blue-600 hover:bg-blue-700 text-white px-6 py-3 rounded-xl text-xs font-black uppercase tracking-widest flex items-center gap-2 shadow-md"><Plus size={18} /> Nuevo</button>
               </div>
             </div>
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
               {directory.filter(d => d.nombre.toLowerCase().includes(dirSearch.toLowerCase()) || d.institucion.toLowerCase().includes(dirSearch.toLowerCase())).map(d => (
-                <div key={d.id} className="bg-white p-6 rounded-2xl shadow-sm border border-slate-100 relative group hover:border-blue-200 transition-colors">
-                   <div className="absolute top-3 right-3 opacity-0 group-hover:opacity-100 transition-opacity flex gap-1.5">
-                     <button onClick={() => { setEditingDirId(d.id); setDirForm(d); setIsDirModalOpen(true); }} className="p-1.5 bg-slate-50 hover:bg-blue-50 text-slate-400 hover:text-blue-600 rounded-lg"><Edit2 size={14}/></button>
-                     <button onClick={() => deleteFromCloud('directory', d.id)} className="p-1.5 bg-slate-50 hover:bg-red-50 text-slate-400 hover:text-red-600 rounded-lg"><Trash2 size={14}/></button>
+                <div key={d.id} className="bg-white p-8 rounded-2xl shadow-sm border border-slate-100 relative group hover:border-blue-200 transition-colors">
+                   <div className="absolute top-4 right-4 opacity-0 group-hover:opacity-100 transition-opacity flex gap-2">
+                     <button onClick={() => { setEditingDirId(d.id); setDirForm(d); setIsDirModalOpen(true); }} className="p-2 bg-slate-50 hover:bg-blue-50 text-slate-500 hover:text-blue-600 rounded-lg"><Edit2 size={16}/></button>
+                     <button onClick={() => deleteFromCloud('directory', d.id)} className="p-2 bg-slate-50 hover:bg-red-50 text-slate-500 hover:text-red-600 rounded-lg"><Trash2 size={16}/></button>
                    </div>
-                   <h3 className="font-black text-slate-800 text-base flex items-center gap-2.5 mb-1"><div className="p-1.5 bg-blue-50 text-blue-600 rounded-lg"><User size={16}/></div> {d.nombre}</h3>
-                   <p className="text-[10px] text-indigo-600 font-black uppercase tracking-widest mb-3 ml-9">{d.cargo} • {d.institucion}</p>
-                   <div className="space-y-0.5 ml-9"><p className="text-[10px] font-bold text-slate-500">{d.telefono}</p><p className="text-[10px] font-bold text-slate-500">{d.correo}</p></div>
+                   <h3 className="font-black text-slate-800 text-lg flex items-center gap-3 mb-2"><div className="p-2 bg-blue-50 text-blue-600 rounded-lg"><User size={20}/></div> {d.nombre}</h3>
+                   <p className="text-[10px] text-indigo-600 font-black uppercase tracking-widest mb-4 ml-12">{d.cargo} • {d.institucion}</p>
+                   <div className="space-y-1 ml-12"><p className="text-xs font-bold text-slate-500">{d.telefono}</p><p className="text-xs font-bold text-slate-500">{d.correo}</p></div>
                 </div>
               ))}
-              {directory.length === 0 && <div className="col-span-3 text-center py-16 text-slate-300 font-black uppercase tracking-widest text-xs">Directorio vacío.</div>}
+              {directory.length === 0 && <div className="col-span-3 text-center py-20 text-slate-300 font-black uppercase tracking-widest text-sm">Directorio vacío.</div>}
             </div>
           </div>
         )}
@@ -753,24 +759,24 @@ export default function App() {
         {activeTab === 'users' && currentUser.rol === 'Admin' && (
           <div className="space-y-6 animate-in fade-in mt-12 md:mt-0">
             <div className="flex flex-col md:flex-row justify-between items-start md:items-end gap-4">
-              <div><h2 className="text-2xl font-black text-slate-800 tracking-tight">Gestión de Usuarios</h2><p className="text-xs text-slate-500 font-medium mt-1">Control de accesos y privilegios</p></div>
-              <button onClick={() => { setEditingUserId(null); setUserForm({ rut: '', nombre: '', iniciales: '', cargo: '', password: '', rol: 'Usuario', centrosAsignados: [] }); setIsUserModalOpen(true); }} className="bg-blue-600 hover:bg-blue-700 text-white px-6 py-3 rounded-xl text-[10px] font-black uppercase tracking-widest flex items-center gap-2 shadow-md"><UserPlus size={16} /> Crear Credencial</button>
+              <div><h2 className="text-2xl font-black text-slate-800 tracking-tight">Gestión de Usuarios</h2><p className="text-sm text-slate-500 font-medium mt-1">Control de accesos y privilegios</p></div>
+              <button onClick={() => { setEditingUserId(null); setUserForm({ rut: '', nombre: '', iniciales: '', cargo: '', password: '', rol: 'Usuario', centrosAsignados: [] }); setIsUserModalOpen(true); }} className="bg-blue-600 hover:bg-blue-700 text-white px-8 py-3 rounded-xl text-xs font-black uppercase tracking-widest flex items-center gap-2 shadow-md"><UserPlus size={18} /> Crear Credencial</button>
             </div>
             <div className="bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden">
               <div className="overflow-x-auto">
-                <table className="w-full text-left border-collapse min-w-[700px]">
-                  <thead className="bg-slate-50 border-b border-slate-100"><tr className="text-[9px] font-black text-slate-400 uppercase tracking-widest"><th className="p-4">Profesional</th><th className="p-4">Rol</th><th className="p-4">Visibilidad</th><th className="p-4 text-right">Ajustes</th></tr></thead>
+                <table className="w-full text-left border-collapse min-w-[800px]">
+                  <thead className="bg-slate-50 border-b border-slate-100"><tr className="text-[10px] font-black text-slate-500 uppercase tracking-wider"><th className="p-6">Profesional</th><th className="p-6">Rol</th><th className="p-6">Visibilidad</th><th className="p-6 text-right">Ajustes</th></tr></thead>
                   <tbody className="divide-y divide-slate-50">
                     {users.map(u => (
                       <tr key={u.id} className="hover:bg-slate-50/80 transition-colors">
-                        <td className="p-4"><div className="flex items-center gap-3"><div className="w-10 h-10 rounded-xl bg-blue-50 text-blue-600 font-black flex items-center justify-center text-sm border border-blue-100">{u.iniciales}</div><div><p className="font-black text-slate-800 uppercase text-xs">{u.nombre}</p><p className="text-[9px] font-bold text-slate-400 uppercase tracking-widest mt-0.5">{u.rut} • {u.cargo}</p></div></div></td>
-                        <td className="p-4"><span className={`px-2.5 py-1 rounded-lg text-[9px] font-black uppercase tracking-[0.2em] flex items-center gap-1.5 w-fit border shadow-sm ${u.rol === 'Admin' ? 'bg-indigo-50 text-indigo-700 border-indigo-100' : 'bg-white text-slate-600 border-slate-200'}`}>{u.rol === 'Admin' && <Shield size={10}/>} {u.rol}</span></td>
-                        <td className="p-4 text-[9px] font-black tracking-widest uppercase">
+                        <td className="p-6"><div className="flex items-center gap-4"><div className="w-12 h-12 rounded-xl bg-blue-50 text-blue-600 font-black flex items-center justify-center text-lg border border-blue-100">{u.iniciales}</div><div><p className="font-black text-slate-800 uppercase text-sm">{u.nombre}</p><p className="text-[10px] font-bold text-slate-500 uppercase tracking-widest mt-1">{u.rut} • {u.cargo}</p></div></div></td>
+                        <td className="p-6"><span className={`px-3 py-1.5 rounded-lg text-[10px] font-black uppercase tracking-[0.2em] flex items-center gap-2 w-fit border shadow-sm ${u.rol === 'Admin' ? 'bg-indigo-50 text-indigo-700 border-indigo-100' : 'bg-white text-slate-600 border-slate-200'}`}>{u.rol === 'Admin' && <Shield size={12}/>} {u.rol}</span></td>
+                        <td className="p-6 text-[10px] font-black tracking-widest uppercase">
                           {u.rol === 'Admin' ? <span className="text-indigo-500">Acceso Total</span> : 
-                           u.centrosAsignados?.length > 0 ? <div className="flex flex-wrap gap-1.5">{u.centrosAsignados.map(c => <span key={c} className="bg-slate-100 text-slate-500 px-2 py-1 rounded-md border border-slate-200">{c}</span>)}</div> : 
-                           <span className="text-red-500 bg-red-50 px-2 py-1 rounded-md">Bloqueado</span>}
+                           u.centrosAsignados?.length > 0 ? <div className="flex flex-wrap gap-2">{u.centrosAsignados.map(c => <span key={c} className="bg-slate-100 text-slate-600 px-3 py-1.5 rounded border border-slate-200">{c}</span>)}</div> : 
+                           <span className="text-red-500 bg-red-50 px-3 py-1.5 rounded">Bloqueado</span>}
                         </td>
-                        <td className="p-4 text-right"><button onClick={() => { setEditingUserId(u.id); setUserForm(u); setIsUserModalOpen(true); }} className="p-2 text-slate-400 hover:text-blue-600 bg-white border border-slate-100 shadow-sm rounded-lg transition-all mr-1.5"><Edit2 size={14}/></button>{u.rol !== 'Admin' && <button onClick={() => deleteFromCloud('users', u.id)} className="p-2 text-slate-400 hover:text-red-600 bg-white border border-slate-100 shadow-sm rounded-lg transition-all"><Trash2 size={14}/></button>}</td>
+                        <td className="p-6 text-right"><button onClick={() => { setEditingUserId(u.id); setUserForm(u); setIsUserModalOpen(true); }} className="p-2.5 text-slate-400 hover:text-blue-600 bg-white border border-slate-100 shadow-sm rounded-lg transition-all mr-2"><Edit2 size={16}/></button>{u.rol !== 'Admin' && <button onClick={() => deleteFromCloud('users', u.id)} className="p-2.5 text-slate-400 hover:text-red-600 bg-white border border-slate-100 shadow-sm rounded-lg transition-all"><Trash2 size={16}/></button>}</td>
                       </tr>
                     ))}
                   </tbody>
@@ -783,19 +789,19 @@ export default function App() {
         {/* PESTAÑA 9: CONFIGURACIÓN */}
         {activeTab === 'config' && currentUser.rol === 'Admin' && (
           <div className="space-y-6 animate-in fade-in mt-12 md:mt-0">
-            <div><h2 className="text-2xl font-black text-slate-800 tracking-tight">Configuración del Sistema</h2><p className="text-xs text-slate-500 font-medium mt-1">Ajustes estructurales de la red Reloncaví</p></div>
+            <div><h2 className="text-2xl font-black text-slate-800 tracking-tight">Configuración del Sistema</h2><p className="text-sm text-slate-500 font-medium mt-1">Ajustes estructurales de la red Reloncaví</p></div>
             <div className="bg-white p-8 rounded-2xl shadow-sm border border-slate-200 max-w-3xl">
-               <h3 className="font-black text-slate-800 text-base flex items-center gap-2 mb-2"><Activity size={18} className="text-blue-600"/> Catálogo de Dispositivos Clínicos</h3>
-               <p className="text-[10px] text-slate-500 font-medium mb-6 leading-relaxed">Agrega o elimina los centros de salud mental de la red.</p>
-               <div className="flex gap-3 mb-6">
-                 <input type="text" value={newCentroName} onChange={e=>setNewCentroName(e.target.value)} placeholder="Ej: CESFAM Carmela Carvajal..." className="border-2 border-slate-100 p-3 rounded-xl flex-1 text-xs font-bold outline-none focus:border-blue-500 transition-colors"/>
-                 <button onClick={async ()=>{if(newCentroName.trim()) { await saveToCloud('settings', 'centros', { list: [...centros, newCentroName.trim()].sort() }); setNewCentroName(''); }}} className="bg-slate-900 text-white px-6 py-3 rounded-xl text-[9px] font-black uppercase tracking-[0.2em] flex items-center gap-2 hover:bg-black shadow-md transition-all"><Plus size={14}/> Añadir</button>
+               <h3 className="font-black text-slate-800 text-lg flex items-center gap-3 mb-3"><Activity size={20} className="text-blue-600"/> Catálogo de Dispositivos Clínicos</h3>
+               <p className="text-xs text-slate-500 font-medium mb-6 leading-relaxed">Agrega o elimina los centros de salud mental de la red.</p>
+               <div className="flex gap-4 mb-8">
+                 <input type="text" value={newCentroName} onChange={e=>setNewCentroName(e.target.value)} placeholder="Ej: CESFAM Carmela Carvajal..." className="border-2 border-slate-100 p-4 rounded-xl flex-1 text-sm font-bold outline-none focus:border-blue-500 transition-colors"/>
+                 <button onClick={async ()=>{if(newCentroName.trim()) { await saveToCloud('settings', 'centros', { list: [...centros, newCentroName.trim()].sort() }); setNewCentroName(''); }}} className="bg-slate-900 text-white px-8 py-4 rounded-xl text-[10px] font-black uppercase tracking-[0.2em] flex items-center gap-2 hover:bg-black shadow-md transition-all"><Plus size={16}/> Añadir</button>
                </div>
-               <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                  {centros.map(c => (
-                   <div key={c} className="flex justify-between items-center bg-slate-50 p-4 rounded-xl border-2 border-slate-100 hover:border-blue-200 transition-colors group">
-                     <span className="text-[10px] font-black text-slate-700 uppercase tracking-widest">{c}</span>
-                     <button onClick={async ()=>{ if(window.confirm(`¿Eliminar ${c}?`)) await saveToCloud('settings', 'centros', { list: centros.filter(x=>x!==c) }); }} className="text-slate-300 hover:text-red-600 p-1.5 rounded-lg bg-white shadow-sm opacity-0 group-hover:opacity-100 transition-all"><Trash2 size={14}/></button>
+                   <div key={c} className="flex justify-between items-center bg-slate-50 p-5 rounded-xl border-2 border-slate-100 hover:border-blue-200 transition-colors group">
+                     <span className="text-[11px] font-black text-slate-700 uppercase tracking-widest">{c}</span>
+                     <button onClick={async ()=>{ if(window.confirm(`¿Eliminar ${c}?`)) await saveToCloud('settings', 'centros', { list: centros.filter(x=>x!==c) }); }} className="text-slate-400 hover:text-red-600 p-2 rounded-lg bg-white shadow-sm opacity-0 group-hover:opacity-100 transition-all"><Trash2 size={16}/></button>
                    </div>
                  ))}
                </div>
@@ -804,84 +810,82 @@ export default function App() {
         )}
       </main>
 
-      {/* ================= MODALES DE LA APLICACIÓN (COMPACTADOS Y CON TEXTAREAS) ================= */}
+      {/* ================= MODALES DE LA APLICACIÓN ================= */}
       
-      {/* 1. MODAL CASOS (CON RED DE APOYO RESTAURADA) */}
+      {/* 1. MODAL CASOS (CON RED DE APOYO RESTAURADA Y REUNIONES) */}
       {isCaseModalOpen && (
         <div className="fixed inset-0 bg-[#0a2540]/90 backdrop-blur-sm flex items-center justify-center p-4 z-50 fade-in">
           <div className="bg-white rounded-3xl shadow-2xl w-full max-w-4xl max-h-[90vh] flex flex-col overflow-hidden border border-slate-200">
             <div className="bg-blue-600 p-6 text-white flex justify-between items-center shrink-0 relative overflow-hidden">
               <div className="absolute top-0 right-0 w-32 h-32 bg-white/10 rounded-full -mr-10 -mt-10 blur-xl"></div>
-              <div className="flex items-center gap-4 relative z-10"><div className="p-3 bg-white/20 rounded-xl backdrop-blur-sm border border-white/20"><FileIcon size={24}/></div><div><h3 className="font-black text-xl uppercase tracking-widest drop-shadow-md">{editingCaseId ? `${caseForm.nombre}` : 'Nuevo Seguimiento'}</h3><p className="text-[9px] font-black text-blue-200 uppercase tracking-[0.4em] mt-0.5">{editingCaseId || 'ASIGNANDO ID...'}</p></div></div>
+              <div className="flex items-center gap-4 relative z-10"><div className="p-3 bg-white/20 rounded-xl backdrop-blur-sm border border-white/20"><FileIcon size={24}/></div><div><h3 className="font-black text-xl uppercase tracking-widest drop-shadow-md">{editingCaseId ? `${caseForm.nombre}` : 'Nuevo Seguimiento'}</h3><p className="text-[10px] font-black text-blue-200 uppercase tracking-[0.4em] mt-1">{editingCaseId || 'ASIGNANDO ID...'}</p></div></div>
               <button onClick={() => setIsCaseModalOpen(false)} className="text-white/60 hover:text-white font-bold text-3xl transition-colors relative z-10">&times;</button>
             </div>
             <div className="flex bg-slate-50 border-b border-slate-200 shrink-0 px-6 overflow-x-auto">
-              <button onClick={() => setActiveModalTab('datos')} className={`px-6 py-4 text-[9px] font-black uppercase tracking-[0.2em] border-b-4 transition-all whitespace-nowrap ${activeModalTab === 'datos' ? 'border-blue-600 text-blue-600 bg-white shadow-inner' : 'border-transparent text-slate-400 hover:text-slate-600'}`}>1. Hitos y Red de Apoyo</button>
-              <button onClick={() => setActiveModalTab('bitacora')} className={`px-6 py-4 text-[9px] font-black uppercase tracking-[0.2em] border-b-4 transition-all whitespace-nowrap ${activeModalTab === 'bitacora' ? 'border-blue-600 text-blue-600 bg-white shadow-inner' : 'border-transparent text-slate-400 hover:text-slate-600'}`}>2. Bitácora Clínica</button>
+              <button onClick={() => setActiveModalTab('datos')} className={`px-6 py-4 text-[10px] font-black uppercase tracking-[0.2em] border-b-4 transition-all whitespace-nowrap ${activeModalTab === 'datos' ? 'border-blue-600 text-blue-600 bg-white shadow-inner' : 'border-transparent text-slate-400 hover:text-slate-600'}`}>1. Hitos y Red de Apoyo</button>
+              <button onClick={() => setActiveModalTab('bitacora')} className={`px-6 py-4 text-[10px] font-black uppercase tracking-[0.2em] border-b-4 transition-all whitespace-nowrap ${activeModalTab === 'bitacora' ? 'border-blue-600 text-blue-600 bg-white shadow-inner' : 'border-transparent text-slate-400 hover:text-slate-600'}`}>2. Bitácora Clínica</button>
             </div>
             
             <div className="p-6 md:p-8 overflow-y-auto flex-1 bg-white">
               {activeModalTab === 'datos' && (
                 <div className="space-y-8 animate-in slide-in-from-left-4">
                   <div className="bg-blue-50/50 p-6 rounded-2xl border-2 border-blue-100 shadow-inner">
-                    <h4 className="text-[10px] font-black text-blue-900 uppercase tracking-[0.3em] mb-4 flex items-center gap-2"><Clock size={16}/> Tiempos de la Continuidad</h4>
+                    <h4 className="text-xs font-black text-blue-900 uppercase tracking-widest mb-4 flex items-center gap-2"><Clock size={18}/> Tiempos de la Continuidad</h4>
                     <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
                       <div className="bg-white p-4 rounded-xl shadow-sm border-2 border-slate-100 hover:border-slate-300 transition-colors">
-                        <label className="block text-[9px] font-black text-slate-400 mb-2 uppercase tracking-widest">A. EGRESO UHCIP</label>
-                        <input type="date" value={caseForm.fechaEgreso} onChange={e=>setCaseForm({...caseForm, fechaEgreso: e.target.value})} className="w-full font-black text-slate-700 outline-none text-xs bg-transparent border-none p-0 focus:ring-0 cursor-pointer" />
+                        <label className="block text-[10px] font-black text-slate-400 mb-2 uppercase tracking-widest">A. EGRESO UHCIP</label>
+                        <input type="date" value={caseForm.fechaEgreso} onChange={e=>setCaseForm({...caseForm, fechaEgreso: e.target.value})} className="w-full font-bold text-slate-700 outline-none text-sm bg-transparent border-none p-0 focus:ring-0 cursor-pointer" />
                       </div>
                       <div className="bg-white p-4 rounded-xl shadow-sm border-2 border-indigo-50 hover:border-indigo-200 transition-colors">
-                        <label className="block text-[9px] font-black text-indigo-400 mb-2 uppercase tracking-widest">B. RECEPCIÓN EN RED</label>
-                        <input type="date" value={caseForm.fechaRecepcionRed} onChange={e=>setCaseForm({...caseForm, fechaRecepcionRed: e.target.value})} className="w-full font-black text-indigo-700 outline-none text-xs bg-transparent border-none p-0 focus:ring-0 cursor-pointer" />
+                        <label className="block text-[10px] font-black text-indigo-400 mb-2 uppercase tracking-widest">B. RECEPCIÓN EN RED</label>
+                        <input type="date" value={caseForm.fechaRecepcionRed} onChange={e=>setCaseForm({...caseForm, fechaRecepcionRed: e.target.value})} className="w-full font-bold text-indigo-700 outline-none text-sm bg-transparent border-none p-0 focus:ring-0 cursor-pointer" />
                       </div>
                       <div className="bg-white p-4 rounded-xl shadow-sm border-2 border-green-50 hover:border-green-200 transition-colors">
-                        <label className="block text-[9px] font-black text-green-400 mb-2 uppercase tracking-widest">C. INGRESO EFECTIVO</label>
-                        <input type="date" value={caseForm.fechaIngresoEfectivo} onChange={e=>setCaseForm({...caseForm, fechaIngresoEfectivo: e.target.value})} className="w-full font-black text-green-700 outline-none text-xs bg-transparent border-none p-0 focus:ring-0 cursor-pointer" />
+                        <label className="block text-[10px] font-black text-green-500 mb-2 uppercase tracking-widest">C. INGRESO EFECTIVO</label>
+                        <input type="date" value={caseForm.fechaIngresoEfectivo} onChange={e=>setCaseForm({...caseForm, fechaIngresoEfectivo: e.target.value})} className="w-full font-bold text-green-700 outline-none text-sm bg-transparent border-none p-0 focus:ring-0 cursor-pointer" />
                       </div>
                     </div>
                   </div>
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
                     <div className="space-y-4">
-                      <h4 className="text-[10px] font-black text-slate-400 uppercase tracking-widest border-b-2 border-slate-100 pb-2">Identificación Paciente</h4>
+                      <h4 className="text-xs font-black text-slate-400 uppercase tracking-widest border-b-2 border-slate-100 pb-2">Identificación Paciente</h4>
                       <div className="grid grid-cols-2 gap-4">
-                        <div><label className="text-[9px] font-black text-slate-400 uppercase tracking-widest">Nombre</label><input type="text" value={caseForm.nombre} onChange={e=>setCaseForm({...caseForm, nombre: e.target.value})} className="w-full border-b-2 border-slate-100 py-2 outline-none focus:border-blue-500 font-black text-xs text-slate-700 transition-colors" placeholder="Ej: Juan Pérez" /></div>
-                        <div><label className="text-[9px] font-black text-slate-400 uppercase tracking-widest">RUT</label><input type="text" value={caseForm.rut} onChange={e=>setCaseForm({...caseForm, rut: e.target.value})} className="w-full border-b-2 border-slate-100 py-2 outline-none focus:border-blue-500 font-black text-xs text-slate-700 transition-colors" placeholder="Ej: 11.111.111-1" /></div>
+                        <div><label className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Nombre</label><input type="text" value={caseForm.nombre} onChange={e=>setCaseForm({...caseForm, nombre: e.target.value})} className="w-full border-b-2 border-slate-100 py-2 outline-none focus:border-blue-500 font-bold text-sm text-slate-800 transition-colors" placeholder="Ej: Juan Pérez" /></div>
+                        <div><label className="text-[10px] font-black text-slate-400 uppercase tracking-widest">RUT</label><input type="text" value={caseForm.rut} onChange={e=>setCaseForm({...caseForm, rut: e.target.value})} className="w-full border-b-2 border-slate-100 py-2 outline-none focus:border-blue-500 font-bold text-sm text-slate-800 transition-colors" placeholder="Ej: 11.111.111-1" /></div>
                       </div>
-                      <div className="mt-2"><label className="text-[9px] font-black text-slate-400 uppercase tracking-widest">Estado Clínico Operativo</label><select value={caseForm.estado} onChange={e=>setCaseForm({...caseForm, estado: e.target.value})} className="w-full border-b-2 border-slate-100 py-2 outline-none focus:border-blue-500 font-black text-xs text-slate-700 bg-transparent transition-colors cursor-pointer mt-1"><option>Pendiente</option><option>Concretado</option><option>Alerta</option></select></div>
+                      <div className="mt-2"><label className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Estado Clínico Operativo</label><select value={caseForm.estado} onChange={e=>setCaseForm({...caseForm, estado: e.target.value})} className="w-full border-b-2 border-slate-100 py-2 outline-none focus:border-blue-500 font-bold text-sm text-slate-800 bg-transparent transition-colors cursor-pointer mt-1"><option>Pendiente</option><option>Concretado</option><option>Alerta</option></select></div>
                     </div>
                     <div className="space-y-4">
-                      <h4 className="text-[10px] font-black text-slate-400 uppercase tracking-widest border-b-2 border-slate-100 pb-2">Ruta Institucional</h4>
-                      <div><label className="text-[9px] font-black text-slate-400 uppercase tracking-widest">Origen del Traslado</label><select value={caseForm.origen} onChange={e=>setCaseForm({...caseForm, origen: e.target.value})} className="w-full border-b-2 border-slate-100 py-2 outline-none focus:border-blue-500 font-black text-xs text-slate-700 bg-transparent transition-colors cursor-pointer mt-1"><option value="">Seleccione...</option>{centros.map(c => <option key={c} value={c}>{c}</option>)}</select></div>
-                      <div className="mt-2"><label className="text-[9px] font-black text-slate-400 uppercase tracking-widest">Dispositivo Receptor (Destino)</label><select value={caseForm.destino} onChange={e=>setCaseForm({...caseForm, destino: e.target.value})} className="w-full border-b-2 border-slate-100 py-2 outline-none focus:border-blue-500 font-black text-xs text-slate-700 bg-transparent transition-colors cursor-pointer mt-1"><option value="">Seleccione...</option>{centros.map(c => <option key={c} value={c}>{c}</option>)}</select></div>
+                      <h4 className="text-xs font-black text-slate-400 uppercase tracking-widest border-b-2 border-slate-100 pb-2">Ruta Institucional</h4>
+                      <div><label className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Origen del Traslado</label><select value={caseForm.origen} onChange={e=>setCaseForm({...caseForm, origen: e.target.value})} className="w-full border-b-2 border-slate-100 py-2 outline-none focus:border-blue-500 font-bold text-sm text-slate-800 bg-transparent transition-colors cursor-pointer mt-1"><option value="">Seleccione...</option>{centros.map(c => <option key={c} value={c}>{c}</option>)}</select></div>
+                      <div className="mt-2"><label className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Dispositivo Receptor (Destino)</label><select value={caseForm.destino} onChange={e=>setCaseForm({...caseForm, destino: e.target.value})} className="w-full border-b-2 border-slate-100 py-2 outline-none focus:border-blue-500 font-bold text-sm text-slate-800 bg-transparent transition-colors cursor-pointer mt-1"><option value="">Seleccione...</option>{centros.map(c => <option key={c} value={c}>{c}</option>)}</select></div>
                     </div>
                   </div>
 
-                  {/* NUEVO: SECCIÓN RED DE APOYO Y REFERENTES RESTAURADA */}
+                  {/* RED DE APOYO Y REFERENTES */}
                   <div className="space-y-4 border-t-2 border-slate-100 pt-6">
-                    <h4 className="text-[10px] font-black text-slate-400 uppercase tracking-widest border-b-2 border-slate-100 pb-2">Red de Apoyo y Referentes</h4>
+                    <h4 className="text-xs font-black text-slate-400 uppercase tracking-widest border-b-2 border-slate-100 pb-2">Red de Apoyo y Referentes</h4>
                     
-                    {/* Tutor Legal */}
                     <div className="bg-slate-50 p-5 rounded-xl border border-slate-200 shadow-sm">
-                       <h5 className="text-[10px] font-black text-slate-600 uppercase tracking-widest mb-3 flex items-center gap-2"><User size={14}/> Tutor Legal / Familiar Responsable</h5>
-                       <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                          <div><label className="text-[9px] font-black text-slate-400 uppercase tracking-widest">Nombre</label><input type="text" value={caseForm.tutor?.nombre || ''} onChange={e=>setCaseForm({...caseForm, tutor: {...caseForm.tutor, nombre: e.target.value}})} className="w-full border-b-2 border-slate-200 py-1.5 outline-none focus:border-blue-500 font-bold text-xs text-slate-700 bg-transparent transition-colors" placeholder="Ej: María Cáceres"/></div>
-                          <div><label className="text-[9px] font-black text-slate-400 uppercase tracking-widest">Relación / Parentesco</label><input type="text" value={caseForm.tutor?.relacion || ''} onChange={e=>setCaseForm({...caseForm, tutor: {...caseForm.tutor, relacion: e.target.value}})} className="w-full border-b-2 border-slate-200 py-1.5 outline-none focus:border-blue-500 font-bold text-xs text-slate-700 bg-transparent transition-colors" placeholder="Ej: Madre"/></div>
-                          <div><label className="text-[9px] font-black text-slate-400 uppercase tracking-widest">Teléfono de Contacto</label><input type="text" value={caseForm.tutor?.telefono || ''} onChange={e=>setCaseForm({...caseForm, tutor: {...caseForm.tutor, telefono: e.target.value}})} className="w-full border-b-2 border-slate-200 py-1.5 outline-none focus:border-blue-500 font-bold text-xs text-slate-700 bg-transparent transition-colors" placeholder="+56 9..."/></div>
+                       <h5 className="text-[11px] font-black text-slate-600 uppercase tracking-widest mb-4 flex items-center gap-2"><User size={16}/> Tutor Legal / Familiar Responsable</h5>
+                       <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+                          <div><label className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Nombre</label><input type="text" value={caseForm.tutor?.nombre || ''} onChange={e=>setCaseForm({...caseForm, tutor: {...caseForm.tutor, nombre: e.target.value}})} className="w-full border-b-2 border-slate-200 py-2 outline-none focus:border-blue-500 font-bold text-sm text-slate-700 bg-transparent transition-colors" placeholder="Ej: María Cáceres"/></div>
+                          <div><label className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Relación / Parentesco</label><input type="text" value={caseForm.tutor?.relacion || ''} onChange={e=>setCaseForm({...caseForm, tutor: {...caseForm.tutor, relacion: e.target.value}})} className="w-full border-b-2 border-slate-200 py-2 outline-none focus:border-blue-500 font-bold text-sm text-slate-700 bg-transparent transition-colors" placeholder="Ej: Madre"/></div>
+                          <div><label className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Teléfono de Contacto</label><input type="text" value={caseForm.tutor?.telefono || ''} onChange={e=>setCaseForm({...caseForm, tutor: {...caseForm.tutor, telefono: e.target.value}})} className="w-full border-b-2 border-slate-200 py-2 outline-none focus:border-blue-500 font-bold text-sm text-slate-700 bg-transparent transition-colors" placeholder="+56 9..."/></div>
                        </div>
                     </div>
 
-                    {/* Referentes Institucionales */}
                     <div className="bg-indigo-50/50 p-5 rounded-xl border border-indigo-100 shadow-sm">
-                       <h5 className="text-[10px] font-black text-indigo-800 uppercase tracking-widest mb-3 flex items-center gap-2"><BookOpen size={14}/> Referentes Institucionales y Clínicos</h5>
+                       <h5 className="text-[11px] font-black text-indigo-800 uppercase tracking-widest mb-4 flex items-center gap-2"><BookOpen size={16}/> Referentes Institucionales y Clínicos</h5>
                        {caseForm.referentes?.map((ref, idx) => (
-                          <div key={idx} className="flex flex-col md:flex-row gap-3 mb-4 items-end bg-white p-3 rounded-lg border border-indigo-50 shadow-sm">
-                             <div className="flex-1 w-full"><label className="text-[9px] font-black text-slate-400 uppercase tracking-widest">Nombre y Cargo</label><input type="text" value={ref.nombre} onChange={e=>{const newRefs=[...caseForm.referentes]; newRefs[idx].nombre=e.target.value; setCaseForm({...caseForm, referentes: newRefs});}} className="w-full border-b-2 border-indigo-100 py-1.5 outline-none focus:border-indigo-500 font-bold text-xs text-slate-700 bg-transparent transition-colors" placeholder="Ej: Ps. Andrea Silva"/></div>
-                             <div className="flex-1 w-full"><label className="text-[9px] font-black text-slate-400 uppercase tracking-widest">Dispositivo</label><input type="text" value={ref.dispositivo} onChange={e=>{const newRefs=[...caseForm.referentes]; newRefs[idx].dispositivo=e.target.value; setCaseForm({...caseForm, referentes: newRefs});}} className="w-full border-b-2 border-indigo-100 py-1.5 outline-none focus:border-indigo-500 font-bold text-xs text-slate-700 bg-transparent transition-colors" placeholder="Ej: COSAM Puerto Montt"/></div>
-                             <div className="flex-1 w-full"><label className="text-[9px] font-black text-slate-400 uppercase tracking-widest">Contacto</label><input type="text" value={ref.contacto} onChange={e=>{const newRefs=[...caseForm.referentes]; newRefs[idx].contacto=e.target.value; setCaseForm({...caseForm, referentes: newRefs});}} className="w-full border-b-2 border-indigo-100 py-1.5 outline-none focus:border-indigo-500 font-bold text-xs text-slate-700 bg-transparent transition-colors" placeholder="Teléfono o correo..."/></div>
-                             <button onClick={()=>{const newRefs=[...caseForm.referentes]; newRefs.splice(idx,1); setCaseForm({...caseForm, referentes: newRefs});}} className="p-2 text-slate-400 hover:text-red-500 bg-slate-50 rounded-lg shadow-sm border border-slate-100 transition-colors mb-1"><Trash2 size={14}/></button>
+                          <div key={idx} className="flex flex-col md:flex-row gap-4 mb-4 items-end bg-white p-4 rounded-xl border border-indigo-50 shadow-sm">
+                             <div className="flex-1 w-full"><label className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Nombre y Cargo</label><input type="text" value={ref.nombre} onChange={e=>{const newRefs=[...caseForm.referentes]; newRefs[idx].nombre=e.target.value; setCaseForm({...caseForm, referentes: newRefs});}} className="w-full border-b-2 border-indigo-100 py-2 outline-none focus:border-indigo-500 font-bold text-sm text-slate-700 bg-transparent transition-colors" placeholder="Ej: Ps. Andrea Silva"/></div>
+                             <div className="flex-1 w-full"><label className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Dispositivo</label><input type="text" value={ref.dispositivo} onChange={e=>{const newRefs=[...caseForm.referentes]; newRefs[idx].dispositivo=e.target.value; setCaseForm({...caseForm, referentes: newRefs});}} className="w-full border-b-2 border-indigo-100 py-2 outline-none focus:border-indigo-500 font-bold text-sm text-slate-700 bg-transparent transition-colors" placeholder="Ej: COSAM Puerto Montt"/></div>
+                             <div className="flex-1 w-full"><label className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Contacto</label><input type="text" value={ref.contacto} onChange={e=>{const newRefs=[...caseForm.referentes]; newRefs[idx].contacto=e.target.value; setCaseForm({...caseForm, referentes: newRefs});}} className="w-full border-b-2 border-indigo-100 py-2 outline-none focus:border-indigo-500 font-bold text-sm text-slate-700 bg-transparent transition-colors" placeholder="Teléfono o correo..."/></div>
+                             <button onClick={()=>{const newRefs=[...caseForm.referentes]; newRefs.splice(idx,1); setCaseForm({...caseForm, referentes: newRefs});}} className="p-3 text-slate-400 hover:text-red-500 bg-slate-50 rounded-lg shadow-sm border border-slate-100 transition-colors mb-1"><Trash2 size={16}/></button>
                           </div>
                        ))}
-                       <button onClick={()=>setCaseForm({...caseForm, referentes: [...(caseForm.referentes||[]), {nombre:'', dispositivo:'', contacto:''}]})} className="text-[9px] font-black text-indigo-600 uppercase tracking-widest flex items-center gap-1 mt-2 hover:text-indigo-800 transition-colors bg-indigo-100 px-3 py-1.5 rounded-lg w-fit"><Plus size={12}/> Añadir Referente de Red</button>
+                       <button onClick={()=>setCaseForm({...caseForm, referentes: [...(caseForm.referentes||[]), {nombre:'', dispositivo:'', contacto:''}]})} className="text-[10px] font-black text-indigo-600 uppercase tracking-widest flex items-center gap-1.5 mt-2 hover:text-indigo-800 transition-colors bg-indigo-100 px-4 py-2 rounded-lg w-fit"><Plus size={14}/> Añadir Referente de Red</button>
                     </div>
                   </div>
 
@@ -890,54 +894,62 @@ export default function App() {
               {activeModalTab === 'bitacora' && (
                 <div className="space-y-8 animate-in slide-in-from-right-4 h-full flex flex-col">
                   <div className="bg-slate-50 p-6 rounded-2xl border-2 border-slate-200 shrink-0 shadow-inner">
-                    <h4 className="text-[10px] font-black text-slate-600 uppercase tracking-widest mb-4">Nuevo Hito de Intervención / Gestión</h4>
+                    <h4 className="text-[11px] font-black text-slate-600 uppercase tracking-widest mb-4">Nuevo Hito de Intervención / Gestión</h4>
                     <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-4">
-                      <div className="flex flex-col gap-1.5"><label className="text-[8px] font-black text-slate-400 uppercase tracking-widest">Tipo</label><select value={newBitacoraEntry.tipo} onChange={e=>setNewBitacoraEntry({...newBitacoraEntry, tipo: e.target.value})} className="border-2 border-white p-3 rounded-xl text-xs font-black uppercase tracking-widest shadow-sm outline-none focus:border-blue-300 cursor-pointer"><option value="Nota">📝 Nota Adm.</option><option value="Intervención">🗣️ Intervención</option><option value="Tarea">🎯 Tarea Enlace</option></select></div>
-                      <div className="flex flex-col gap-1.5"><label className="text-[8px] font-black text-slate-400 uppercase tracking-widest">Responsable</label><input type="text" value={newBitacoraEntry.responsable} onChange={e=>setNewBitacoraEntry({...newBitacoraEntry, responsable: e.target.value})} className="border-2 border-white p-3 rounded-xl text-xs font-black shadow-sm outline-none focus:border-blue-300" placeholder="Ej: Ps. Silva" /></div>
+                      {/* SELECTOR CON REUNIONES RESTAURADO */}
+                      <div className="flex flex-col gap-2"><label className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Tipo</label>
+                        <select value={newBitacoraEntry.tipo} onChange={e=>setNewBitacoraEntry({...newBitacoraEntry, tipo: e.target.value})} className="border-2 border-white p-3 rounded-xl text-sm font-bold shadow-sm outline-none focus:border-blue-300 cursor-pointer">
+                          <option value="Nota Adm.">📝 Nota Adm.</option>
+                          <option value="Intervención">🗣️ Intervención</option>
+                          <option value="Reunión">🤝 Reunión de Red</option>
+                          <option value="Tarea">🎯 Tarea Enlace</option>
+                        </select>
+                      </div>
                       
-                      {/* TEXTAREA PARA MULTILINEAS */}
-                      <div className="flex flex-col gap-1.5 md:col-span-2">
-                        <label className="text-[8px] font-black text-slate-400 uppercase tracking-widest">Descripción / Acuerdos</label>
-                        <textarea rows="2" value={newBitacoraEntry.descripcion} onChange={e=>setNewBitacoraEntry({...newBitacoraEntry, descripcion: e.target.value})} className="border-2 border-white p-3 rounded-xl text-xs font-medium shadow-sm outline-none focus:border-blue-300 resize-y" placeholder="Detalle de la acción... (Presiona Enter para nuevo párrafo)" />
+                      <div className="flex flex-col gap-2"><label className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Responsable</label><input type="text" value={newBitacoraEntry.responsable} onChange={e=>setNewBitacoraEntry({...newBitacoraEntry, responsable: e.target.value})} className="border-2 border-white p-3 rounded-xl text-sm font-bold shadow-sm outline-none focus:border-blue-300" placeholder="Ej: Ps. Silva" /></div>
+                      
+                      <div className="flex flex-col gap-2 md:col-span-2">
+                        <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Descripción / Acuerdos</label>
+                        <textarea rows="2" value={newBitacoraEntry.descripcion} onChange={e=>setNewBitacoraEntry({...newBitacoraEntry, descripcion: e.target.value})} className="border-2 border-white p-3 rounded-xl text-sm font-medium shadow-sm outline-none focus:border-blue-300 resize-y" placeholder="Detalle de la acción, reunión o tarea... (Presiona Enter para nuevo párrafo)" />
                       </div>
                       
                       {newBitacoraEntry.tipo === 'Tarea' && (
-                         <div className="flex flex-col gap-1.5 md:col-span-4 mt-1">
-                           <label className="text-[8px] font-black text-amber-500 uppercase tracking-widest">Fecha Límite para Tarea</label>
-                           <input type="date" value={newBitacoraEntry.fechaCumplimiento} onChange={e=>setNewBitacoraEntry({...newBitacoraEntry, fechaCumplimiento: e.target.value})} className="border-2 border-amber-200 p-3 rounded-xl text-xs font-black shadow-sm outline-none focus:border-amber-400 text-amber-800 bg-amber-50/50" />
+                         <div className="flex flex-col gap-2 md:col-span-4 mt-2">
+                           <label className="text-[10px] font-black text-amber-500 uppercase tracking-widest">Fecha Límite para Tarea</label>
+                           <input type="date" value={newBitacoraEntry.fechaCumplimiento} onChange={e=>setNewBitacoraEntry({...newBitacoraEntry, fechaCumplimiento: e.target.value})} className="border-2 border-amber-200 p-3 rounded-xl text-sm font-bold shadow-sm outline-none focus:border-amber-400 text-amber-800 bg-amber-50/50" />
                          </div>
                       )}
                     </div>
-                    <div className="flex justify-end"><button onClick={handleAddBitacora} disabled={!newBitacoraEntry.descripcion} className="bg-blue-600 text-white px-8 py-3 rounded-xl text-[9px] font-black uppercase tracking-[0.2em] hover:bg-blue-700 disabled:opacity-50 shadow-md transition-all flex items-center gap-2"><Plus size={14}/> Registrar Acción</button></div>
+                    <div className="flex justify-end"><button onClick={handleAddBitacora} disabled={!newBitacoraEntry.descripcion} className="bg-blue-600 text-white px-8 py-3.5 rounded-xl text-[10px] font-black uppercase tracking-widest hover:bg-blue-700 disabled:opacity-50 shadow-md transition-all flex items-center gap-2"><Plus size={16}/> Registrar Acción</button></div>
                   </div>
+                  
                   <div className="flex-1 space-y-4">
-                    <h4 className="text-[10px] font-black text-slate-400 uppercase tracking-widest border-b-2 border-slate-100 pb-3 pt-1">Evolución Cronológica</h4>
+                    <h4 className="text-[11px] font-black text-slate-400 uppercase tracking-widest border-b-2 border-slate-100 pb-3 pt-2">Evolución Cronológica</h4>
                     {caseForm.bitacora.map(entry => (
-                      <div key={entry.id} className="p-5 bg-white border-2 border-slate-100 rounded-2xl shadow-sm flex gap-4 items-start group hover:border-blue-200 transition-all">
-                        <div className="p-3 bg-slate-50 rounded-xl text-slate-400 group-hover:bg-blue-50 group-hover:text-blue-500 transition-colors shrink-0">{entry.tipo === 'Intervención' ? <Users size={16}/> : entry.tipo === 'Tarea' ? <CheckSquare size={16} className="text-amber-500"/> : <MessageSquare size={16}/>}</div>
+                      <div key={entry.id} className="p-6 bg-white border-2 border-slate-100 rounded-2xl shadow-sm flex gap-5 items-start group hover:border-blue-200 transition-all">
+                        <div className="p-3 bg-slate-50 rounded-xl text-slate-400 group-hover:bg-blue-50 group-hover:text-blue-500 transition-colors shrink-0">
+                          {entry.tipo === 'Intervención' ? <Activity size={18}/> : entry.tipo === 'Reunión' ? <Users size={18}/> : entry.tipo === 'Tarea' ? <CheckSquare size={18} className="text-amber-500"/> : <MessageSquare size={18}/>}
+                        </div>
                         <div className="flex-1 min-w-0">
-                          <div className="flex justify-between items-center mb-1.5"><span className="text-[9px] font-black uppercase text-blue-600 bg-blue-50 px-2 py-1 rounded tracking-widest">{entry.tipo}</span><span className="text-[9px] font-black text-slate-300 uppercase flex items-center gap-1"><Calendar size={10}/> {entry.fecha}</span></div>
-                          <p className="text-xs font-medium text-slate-700 leading-relaxed mb-2 whitespace-pre-wrap">{entry.descripcion}</p>
-                          <div className="flex gap-2 items-center">
-                            <p className="text-[9px] font-black text-slate-400 uppercase tracking-widest italic bg-slate-50 px-2 py-1 rounded w-fit">Resp: {entry.responsable || 'No indicado'}</p>
-                            {entry.tipo === 'Tarea' && entry.fechaCumplimiento && <p className="text-[9px] font-black text-amber-600 uppercase tracking-widest bg-amber-50 px-2 py-1 rounded w-fit border border-amber-100 flex items-center gap-1"><Timer size={10}/> Vence: {entry.fechaCumplimiento}</p>}
+                          <div className="flex justify-between items-center mb-2"><span className="text-[10px] font-black uppercase text-blue-600 bg-blue-50 px-2.5 py-1 rounded-lg tracking-widest">{entry.tipo}</span><span className="text-[10px] font-black text-slate-400 uppercase flex items-center gap-1.5"><Calendar size={12}/> {entry.fecha}</span></div>
+                          <p className="text-sm font-medium text-slate-700 leading-relaxed mb-3 whitespace-pre-wrap">{entry.descripcion}</p>
+                          <div className="flex gap-3 items-center">
+                            <p className="text-[10px] font-black text-slate-500 uppercase tracking-widest italic bg-slate-50 px-3 py-1.5 rounded-lg w-fit border border-slate-100">Resp: {entry.responsable || 'No indicado'}</p>
+                            {entry.tipo === 'Tarea' && entry.fechaCumplimiento && <p className="text-[10px] font-black text-amber-600 uppercase tracking-widest bg-amber-50 px-3 py-1.5 rounded-lg w-fit border border-amber-100 flex items-center gap-1.5"><Timer size={12}/> Vence: {entry.fechaCumplimiento}</p>}
                           </div>
                         </div>
-                        <button onClick={() => setCaseForm({ ...caseForm, bitacora: caseForm.bitacora.filter(b => b.id !== entry.id) })} className="opacity-0 group-hover:opacity-100 p-2 text-slate-300 hover:text-red-500 transition-all bg-slate-50 rounded-lg hover:bg-red-50"><Trash2 size={16}/></button>
+                        <button onClick={() => setCaseForm({ ...caseForm, bitacora: caseForm.bitacora.filter(b => b.id !== entry.id) })} className="opacity-0 group-hover:opacity-100 p-2.5 text-slate-400 hover:text-red-500 transition-all bg-slate-50 rounded-lg hover:bg-red-50"><Trash2 size={18}/></button>
                       </div>
                     ))}
-                    {caseForm.bitacora.length === 0 && (<div className="text-center py-16 border-2 border-dashed border-slate-100 rounded-2xl"><Activity size={24} className="text-slate-200 mx-auto mb-3"/><p className="text-slate-300 font-black text-[10px] uppercase tracking-widest italic">Sin registros en bitácora</p></div>)}
+                    {caseForm.bitacora.length === 0 && (<div className="text-center py-16 border-2 border-dashed border-slate-100 rounded-2xl"><Activity size={28} className="text-slate-200 mx-auto mb-3"/><p className="text-slate-400 font-bold text-xs uppercase tracking-widest italic">Sin registros en bitácora</p></div>)}
                   </div>
                 </div>
               )}
             </div>
             
-            <div className="bg-slate-50 p-6 border-t border-slate-200 flex flex-col md:flex-row justify-between items-center gap-6 shrink-0">
-              <p className="text-[9px] text-slate-400 font-black uppercase tracking-[0.2em] flex items-center gap-2 bg-white px-4 py-2 rounded-xl shadow-sm border border-slate-100"><Shield size={12} className="text-blue-500"/> Ley 20.584</p>
-              <div className="flex gap-3">
-                <button onClick={() => setIsCaseModalOpen(false)} className="px-8 py-3 text-slate-400 font-black text-[10px] uppercase tracking-widest hover:text-slate-600 transition-all">Cancelar</button>
-                <button onClick={handleSaveCase} className="px-10 py-3 bg-slate-900 text-white font-black text-[10px] uppercase tracking-[0.2em] rounded-xl shadow-lg hover:bg-black transition-all flex items-center gap-2"><CheckCircle size={16}/> Guardar</button>
-              </div>
+            <div className="bg-slate-50 p-6 border-t border-slate-200 flex justify-end gap-4 shrink-0">
+              <button onClick={() => setIsCaseModalOpen(false)} className="px-8 py-3.5 text-slate-500 font-bold text-xs uppercase tracking-widest hover:text-slate-700 transition-all">Cancelar</button>
+              <button onClick={handleSaveCase} className="px-10 py-3.5 bg-slate-900 text-white font-black text-xs uppercase tracking-widest rounded-xl shadow-lg hover:bg-black transition-all flex items-center gap-2"><CheckCircle size={18}/> Guardar</button>
             </div>
           </div>
         </div>
@@ -954,35 +966,34 @@ export default function App() {
             </div>
             
             <div className="flex bg-slate-50 border-b border-slate-200 shrink-0 px-6">
-              <button onClick={() => setActiveDocModalTab('datos')} className={`px-6 py-4 text-[9px] font-black uppercase tracking-[0.2em] border-b-4 transition-all ${activeDocModalTab === 'datos' ? 'border-blue-600 text-blue-600 bg-white shadow-inner' : 'border-transparent text-slate-400 hover:text-slate-600'}`}>1. Datos y Observaciones</button>
-              <button onClick={() => setActiveDocModalTab('bitacora')} className={`px-6 py-4 text-[9px] font-black uppercase tracking-[0.2em] border-b-4 transition-all ${activeDocModalTab === 'bitacora' ? 'border-blue-600 text-blue-600 bg-white shadow-inner' : 'border-transparent text-slate-400 hover:text-slate-600'}`}>2. Tareas de Redacción</button>
-              <button onClick={() => setActiveDocModalTab('archivos')} className={`px-6 py-4 text-[9px] font-black uppercase tracking-[0.2em] border-b-4 transition-all ${activeDocModalTab === 'archivos' ? 'border-blue-600 text-blue-600 bg-white shadow-inner' : 'border-transparent text-slate-400 hover:text-slate-600'}`}>3. Archivos Anexos</button>
+              <button onClick={() => setActiveDocModalTab('datos')} className={`px-6 py-4 text-[10px] font-black uppercase tracking-[0.2em] border-b-4 transition-all ${activeDocModalTab === 'datos' ? 'border-blue-600 text-blue-600 bg-white shadow-inner' : 'border-transparent text-slate-400 hover:text-slate-600'}`}>1. Datos y Observaciones</button>
+              <button onClick={() => setActiveDocModalTab('bitacora')} className={`px-6 py-4 text-[10px] font-black uppercase tracking-[0.2em] border-b-4 transition-all ${activeDocModalTab === 'bitacora' ? 'border-blue-600 text-blue-600 bg-white shadow-inner' : 'border-transparent text-slate-400 hover:text-slate-600'}`}>2. Tareas de Redacción</button>
+              <button onClick={() => setActiveDocModalTab('archivos')} className={`px-6 py-4 text-[10px] font-black uppercase tracking-[0.2em] border-b-4 transition-all ${activeDocModalTab === 'archivos' ? 'border-blue-600 text-blue-600 bg-white shadow-inner' : 'border-transparent text-slate-400 hover:text-slate-600'}`}>3. Archivos Anexos</button>
             </div>
 
             <div className="p-6 md:p-8 overflow-y-auto flex-1 bg-white">
               {activeDocModalTab === 'datos' && (
                 <div className="space-y-6 animate-in slide-in-from-left-4">
-                  <div><label className="block text-[9px] font-black text-slate-400 uppercase tracking-widest mb-2">Nombre del Documento Normativo</label><input type="text" value={docForm.nombre} onChange={e=>setDocForm({...docForm, nombre: e.target.value})} className="w-full border-2 border-slate-100 p-3 rounded-xl text-sm font-black text-slate-700 outline-none focus:border-blue-500 bg-slate-50 focus:bg-white transition-colors" placeholder="Ej: Vía Clínica Agitación Psicomotora..." /></div>
+                  <div><label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-2">Nombre del Documento Normativo</label><input type="text" value={docForm.nombre} onChange={e=>setDocForm({...docForm, nombre: e.target.value})} className="w-full border-2 border-slate-100 p-4 rounded-xl text-sm font-bold text-slate-800 outline-none focus:border-blue-500 bg-slate-50 focus:bg-white transition-colors" placeholder="Ej: Vía Clínica Agitación Psicomotora..." /></div>
                   
                   <div className="grid grid-cols-2 gap-6">
-                    <div><label className="block text-[9px] font-black text-slate-400 uppercase tracking-widest mb-2">Ámbito de Aplicación</label><select value={docForm.ambito} onChange={e=>setDocForm({...docForm, ambito: e.target.value})} className="w-full border-2 border-slate-100 p-3 rounded-xl text-xs font-bold text-slate-700 outline-none focus:border-blue-500 bg-slate-50 focus:bg-white transition-colors cursor-pointer"><option>Red Integral</option><option>Hospitalario</option><option>COSAM</option></select></div>
-                    <div><label className="block text-[9px] font-black text-slate-400 uppercase tracking-widest mb-2">Fase Actual</label><select value={docForm.fase} onChange={e=>setDocForm({...docForm, fase: e.target.value})} className="w-full border-2 border-slate-100 p-3 rounded-xl text-xs font-bold text-slate-700 outline-none focus:border-blue-500 bg-slate-50 focus:bg-white transition-colors cursor-pointer"><option>Levantamiento</option><option>Redacción</option><option>Validación Técnica</option><option>Revisión Jurídica</option><option>Resolución Exenta</option><option>Difusión</option></select></div>
+                    <div><label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-2">Ámbito de Aplicación</label><select value={docForm.ambito} onChange={e=>setDocForm({...docForm, ambito: e.target.value})} className="w-full border-2 border-slate-100 p-4 rounded-xl text-sm font-bold text-slate-700 outline-none focus:border-blue-500 bg-slate-50 focus:bg-white transition-colors cursor-pointer"><option>Red Integral</option><option>Hospitalario</option><option>COSAM</option></select></div>
+                    <div><label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-2">Fase Actual</label><select value={docForm.fase} onChange={e=>setDocForm({...docForm, fase: e.target.value})} className="w-full border-2 border-slate-100 p-4 rounded-xl text-sm font-bold text-slate-700 outline-none focus:border-blue-500 bg-slate-50 focus:bg-white transition-colors cursor-pointer"><option>Levantamiento</option><option>Redacción</option><option>Validación Técnica</option><option>Revisión Jurídica</option><option>Resolución Exenta</option><option>Difusión</option></select></div>
                   </div>
 
-                  {/* NUEVO: CAJA DE TEXTO GIGANTE PARA NOTAS GENERALES DEL PROTOCOLO */}
                   <div className="mt-4">
-                    <label className="block text-[9px] font-black text-slate-400 uppercase tracking-widest mb-2"><MessageSquare size={12} className="inline mr-1"/> Notas y Observaciones Generales</label>
+                    <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-2"><MessageSquare size={14} className="inline mr-1.5"/> Notas y Observaciones Generales</label>
                     <textarea 
                       value={docForm.notas || ''} 
                       onChange={e=>setDocForm({...docForm, notas: e.target.value})} 
-                      className="w-full border-2 border-slate-100 p-4 rounded-xl text-xs font-medium text-slate-700 outline-none focus:border-blue-500 bg-slate-50 focus:bg-white transition-colors resize-y min-h-[140px] shadow-inner" 
+                      className="w-full border-2 border-slate-100 p-4 rounded-xl text-sm font-medium text-slate-700 outline-none focus:border-blue-500 bg-slate-50 focus:bg-white transition-colors resize-y min-h-[140px]" 
                       placeholder="Escribe aquí los apuntes, contexto o pensamientos sobre el proceso de creación de este protocolo. Puedes presionar Enter para crear párrafos..." 
                     />
                   </div>
 
                   <div className="bg-blue-50/50 p-6 rounded-2xl border-2 border-blue-100 mt-2">
-                    <label className="flex justify-between items-end mb-3"><span className="block text-[9px] font-black text-blue-900 uppercase tracking-widest">Avance Estimado del Documento</span><span className="text-2xl font-black text-blue-600">{docForm.avance}%</span></label>
-                    <input type="range" min="0" max="100" step="5" value={docForm.avance} onChange={e=>setDocForm({...docForm, avance: e.target.value})} className="w-full accent-blue-600 h-2 bg-blue-200 rounded-lg appearance-none cursor-pointer" />
+                    <label className="flex justify-between items-end mb-3"><span className="block text-[10px] font-black text-blue-900 uppercase tracking-widest">Avance Estimado del Documento</span><span className="text-2xl font-black text-blue-600">{docForm.avance}%</span></label>
+                    <input type="range" min="0" max="100" step="5" value={docForm.avance} onChange={e=>setDocForm({...docForm, avance: e.target.value})} className="w-full accent-blue-600 h-2.5 bg-blue-200 rounded-lg appearance-none cursor-pointer" />
                   </div>
                 </div>
               )}
@@ -990,36 +1001,34 @@ export default function App() {
               {activeDocModalTab === 'bitacora' && (
                 <div className="space-y-6 animate-in slide-in-from-right-4 h-full flex flex-col">
                   <div className="bg-slate-50 p-6 rounded-2xl border-2 border-slate-200 shrink-0 shadow-inner">
-                    <h4 className="text-[10px] font-black text-slate-600 uppercase tracking-widest mb-4">Asignar Tarea de Desarrollo</h4>
+                    <h4 className="text-[11px] font-black text-slate-600 uppercase tracking-widest mb-4">Asignar Tarea de Desarrollo</h4>
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
-                      <div className="flex flex-col gap-1.5"><label className="text-[8px] font-black text-slate-400 uppercase tracking-widest">Responsable</label><input type="text" value={newDocBitacoraEntry.responsable} onChange={e=>setNewDocBitacoraEntry({...newDocBitacoraEntry, responsable: e.target.value})} className="border-2 border-white p-3 rounded-xl text-xs font-black shadow-sm outline-none focus:border-blue-300" placeholder="Ej: Abogado SS" /></div>
-                      <div className="flex flex-col gap-1.5"><label className="text-[8px] font-black text-amber-500 uppercase tracking-widest">Fecha Límite</label><input type="date" value={newDocBitacoraEntry.fechaCumplimiento} onChange={e=>setNewDocBitacoraEntry({...newDocBitacoraEntry, fechaCumplimiento: e.target.value})} className="border-2 border-amber-200 p-3 rounded-xl text-xs font-black shadow-sm outline-none focus:border-amber-400 text-amber-800 bg-amber-50/50" /></div>
-                      
-                      {/* TEXTAREA REEMPLAZANDO INPUT PARA MEJOR ESCRITURA */}
+                      <div className="flex flex-col gap-1.5"><label className="text-[9px] font-black text-slate-400 uppercase tracking-widest">Responsable</label><input type="text" value={newDocBitacoraEntry.responsable} onChange={e=>setNewDocBitacoraEntry({...newDocBitacoraEntry, responsable: e.target.value})} className="border-2 border-white p-3.5 rounded-xl text-sm font-bold shadow-sm outline-none focus:border-blue-300" placeholder="Ej: Abogado SS" /></div>
+                      <div className="flex flex-col gap-1.5"><label className="text-[9px] font-black text-amber-500 uppercase tracking-widest">Fecha Límite</label><input type="date" value={newDocBitacoraEntry.fechaCumplimiento} onChange={e=>setNewDocBitacoraEntry({...newDocBitacoraEntry, fechaCumplimiento: e.target.value})} className="border-2 border-amber-200 p-3.5 rounded-xl text-sm font-bold shadow-sm outline-none focus:border-amber-400 text-amber-800 bg-amber-50/50" /></div>
                       <div className="flex flex-col gap-1.5 md:col-span-2">
-                         <label className="text-[8px] font-black text-slate-400 uppercase tracking-widest">Descripción de la Tarea</label>
-                         <textarea rows="2" value={newDocBitacoraEntry.descripcion} onChange={e=>setNewDocBitacoraEntry({...newDocBitacoraEntry, descripcion: e.target.value})} className="border-2 border-white p-3 rounded-xl text-xs font-medium shadow-sm outline-none focus:border-blue-300 resize-y" placeholder="Detalle de la revisión o tarea..." />
+                         <label className="text-[9px] font-black text-slate-400 uppercase tracking-widest">Descripción de la Tarea</label>
+                         <textarea rows="2" value={newDocBitacoraEntry.descripcion} onChange={e=>setNewDocBitacoraEntry({...newDocBitacoraEntry, descripcion: e.target.value})} className="border-2 border-white p-3.5 rounded-xl text-sm font-medium shadow-sm outline-none focus:border-blue-300 resize-y" placeholder="Detalle de la revisión o tarea..." />
                       </div>
                     </div>
-                    <div className="flex justify-end"><button onClick={handleAddDocBitacora} disabled={!newDocBitacoraEntry.descripcion} className="bg-blue-600 text-white px-8 py-3 rounded-xl text-[9px] font-black uppercase tracking-[0.2em] hover:bg-blue-700 disabled:opacity-50 shadow-md transition-all flex items-center gap-2"><Plus size={14}/> Asignar Tarea</button></div>
+                    <div className="flex justify-end"><button onClick={handleAddDocBitacora} disabled={!newDocBitacoraEntry.descripcion} className="bg-blue-600 text-white px-8 py-3.5 rounded-xl text-[10px] font-black uppercase tracking-[0.2em] hover:bg-blue-700 disabled:opacity-50 shadow-md transition-all flex items-center gap-2"><Plus size={16}/> Asignar Tarea</button></div>
                   </div>
                   <div className="flex-1 space-y-4">
-                     <h4 className="text-[10px] font-black text-slate-400 uppercase tracking-widest border-b-2 border-slate-100 pb-3 pt-1">Historial y Tareas del Protocolo</h4>
+                     <h4 className="text-[11px] font-black text-slate-400 uppercase tracking-widest border-b-2 border-slate-100 pb-3 pt-2">Historial y Tareas del Protocolo</h4>
                      {(docForm.bitacora || []).map(entry => (
-                       <div key={entry.id} className="p-5 bg-white border-2 border-slate-100 rounded-2xl shadow-sm flex gap-4 items-start group hover:border-blue-200 transition-all">
-                         <div className="p-3 bg-slate-50 rounded-xl text-slate-400 shrink-0">{entry.tipo === 'Tarea' ? <CheckSquare size={16} className={entry.completada ? "text-emerald-500" : "text-amber-500"}/> : <MessageSquare size={16}/>}</div>
+                       <div key={entry.id} className="p-5 bg-white border-2 border-slate-100 rounded-2xl shadow-sm flex gap-5 items-start group hover:border-blue-200 transition-all">
+                         <div className="p-3 bg-slate-50 rounded-xl text-slate-400 shrink-0">{entry.tipo === 'Tarea' ? <CheckSquare size={18} className={entry.completada ? "text-emerald-500" : "text-amber-500"}/> : <MessageSquare size={18}/>}</div>
                          <div className="flex-1 min-w-0">
-                           <div className="flex justify-between items-center mb-1.5"><span className="text-[9px] font-black uppercase text-blue-600 bg-blue-50 px-2 py-1 rounded tracking-widest">{entry.tipo}</span><span className="text-[9px] font-black text-slate-300 uppercase flex items-center gap-1"><Calendar size={10}/> Asignada: {entry.fecha}</span></div>
-                           <p className={`text-xs font-medium leading-relaxed mb-2 whitespace-pre-wrap ${entry.completada ? 'text-slate-400 line-through' : 'text-slate-700'}`}>{entry.descripcion}</p>
-                           <div className="flex gap-2 items-center">
-                             <p className="text-[9px] font-black text-slate-400 uppercase tracking-widest italic bg-slate-50 px-2 py-1 rounded w-fit">Resp: {entry.responsable || 'Equipo'}</p>
-                             {entry.fechaCumplimiento && <p className="text-[9px] font-black text-amber-600 uppercase tracking-widest bg-amber-50 px-2 py-1 rounded w-fit border border-amber-100 flex items-center gap-1"><Timer size={10}/> Vence: {entry.fechaCumplimiento}</p>}
+                           <div className="flex justify-between items-center mb-2"><span className="text-[10px] font-black uppercase text-blue-600 bg-blue-50 px-2.5 py-1 rounded-lg tracking-widest">{entry.tipo}</span><span className="text-[10px] font-bold text-slate-400 uppercase flex items-center gap-1.5"><Calendar size={12}/> Asignada: {entry.fecha}</span></div>
+                           <p className={`text-sm font-medium leading-relaxed mb-3 whitespace-pre-wrap ${entry.completada ? 'text-slate-400 line-through' : 'text-slate-700'}`}>{entry.descripcion}</p>
+                           <div className="flex gap-3 items-center">
+                             <p className="text-[10px] font-black text-slate-500 uppercase tracking-widest italic bg-slate-50 px-3 py-1.5 rounded-lg w-fit border border-slate-100">Resp: {entry.responsable || 'Equipo'}</p>
+                             {entry.fechaCumplimiento && <p className="text-[10px] font-black text-amber-600 uppercase tracking-widest bg-amber-50 px-3 py-1.5 rounded-lg w-fit border border-amber-100 flex items-center gap-1.5"><Timer size={12}/> Vence: {entry.fechaCumplimiento}</p>}
                            </div>
                          </div>
-                         <button onClick={() => setDocForm(prev => ({ ...prev, bitacora: prev.bitacora.filter(b => b.id !== entry.id) }))} className="opacity-0 group-hover:opacity-100 p-2 text-slate-300 hover:text-red-500 transition-all bg-slate-50 rounded-lg hover:bg-red-50"><Trash2 size={16}/></button>
+                         <button onClick={() => setDocForm(prev => ({ ...prev, bitacora: prev.bitacora.filter(b => b.id !== entry.id) }))} className="opacity-0 group-hover:opacity-100 p-2.5 text-slate-400 hover:text-red-500 transition-all bg-slate-50 rounded-lg hover:bg-red-50"><Trash2 size={18}/></button>
                        </div>
                      ))}
-                     {(!docForm.bitacora || docForm.bitacora.length === 0) && (<div className="text-center py-16 border-2 border-dashed border-slate-100 rounded-2xl"><ListTodo size={24} className="text-slate-200 mx-auto mb-3"/><p className="text-slate-300 font-black text-[10px] uppercase tracking-widest italic">Protocolo sin tareas</p></div>)}
+                     {(!docForm.bitacora || docForm.bitacora.length === 0) && (<div className="text-center py-16 border-2 border-dashed border-slate-100 rounded-2xl"><ListTodo size={28} className="text-slate-200 mx-auto mb-3"/><p className="text-slate-400 font-bold text-xs uppercase tracking-widest italic">Protocolo sin tareas</p></div>)}
                   </div>
                 </div>
               )}
@@ -1027,36 +1036,36 @@ export default function App() {
               {activeDocModalTab === 'archivos' && (
                 <div className="space-y-6 animate-in slide-in-from-right-4">
                   <div className="bg-indigo-50/50 p-8 rounded-2xl border-2 border-indigo-100 flex flex-col text-center">
-                    <h4 className="text-xs font-black text-indigo-900 uppercase tracking-widest mb-2 flex items-center justify-center gap-2"><UploadCloud size={16}/> Subir Borrador o Anexo</h4>
-                    <p className="text-[10px] text-indigo-700/80 mb-4 font-medium leading-relaxed">Adjunta documentos Word o PDF de respaldo para este protocolo.</p>
-                    <label className="flex flex-col items-center justify-center w-full h-28 border-2 border-indigo-300 border-dashed rounded-xl cursor-pointer bg-white hover:bg-indigo-50 transition-colors shadow-sm">
-                      <div className="flex flex-col items-center justify-center pt-3 pb-4">
+                    <h4 className="text-sm font-black text-indigo-900 uppercase tracking-widest mb-2 flex items-center justify-center gap-2"><UploadCloud size={18}/> Subir Borrador o Anexo</h4>
+                    <p className="text-xs text-indigo-700/80 mb-4 font-medium leading-relaxed">Adjunta documentos Word o PDF de respaldo para este protocolo.</p>
+                    <label className="flex flex-col items-center justify-center w-full h-32 border-2 border-indigo-300 border-dashed rounded-xl cursor-pointer bg-white hover:bg-indigo-50 transition-colors shadow-sm">
+                      <div className="flex flex-col items-center justify-center pt-4 pb-5">
                         <Paperclip className="w-8 h-8 text-indigo-400 mb-2" />
-                        <p className="text-xs text-indigo-900 font-black uppercase tracking-widest">Seleccionar Archivo</p>
+                        <p className="text-[10px] text-indigo-900 font-black uppercase tracking-widest">Seleccionar Archivo</p>
                       </div>
                       <input type="file" className="hidden" onChange={handleFileUpload} />
                     </label>
                   </div>
-                  <div className="space-y-3">
-                     <h4 className="text-[10px] font-black text-slate-400 uppercase tracking-widest border-b-2 border-slate-100 pb-2">Archivos Vinculados</h4>
-                     <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                  <div className="space-y-4">
+                     <h4 className="text-[11px] font-black text-slate-400 uppercase tracking-widest border-b-2 border-slate-100 pb-3">Archivos Vinculados</h4>
+                     <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                        {(docForm.archivos || []).map(file => (
                          <div key={file.id} className="flex items-center justify-between p-4 bg-white border-2 border-slate-100 rounded-xl shadow-sm group hover:border-blue-200 transition-all">
                            <div className="flex items-center gap-3 min-w-0">
-                             <div className="p-2 bg-blue-50 text-blue-600 rounded-lg"><FileIcon size={16}/></div>
-                             <div className="min-w-0"><p className="text-xs font-black text-slate-700 truncate">{file.nombre}</p><p className="text-[8px] font-bold text-slate-400 uppercase tracking-widest mt-0.5">{file.size} • Subido el {file.fecha}</p></div>
+                             <div className="p-2.5 bg-blue-50 text-blue-600 rounded-lg"><FileIcon size={18}/></div>
+                             <div className="min-w-0"><p className="text-sm font-bold text-slate-700 truncate">{file.nombre}</p><p className="text-[9px] font-bold text-slate-400 uppercase tracking-widest mt-1">{file.size} • Subido el {file.fecha}</p></div>
                            </div>
-                           <button onClick={() => setDocForm(prev => ({ ...prev, archivos: prev.archivos.filter(f => f.id !== file.id) }))} className="p-2 text-slate-300 hover:text-red-500 opacity-0 group-hover:opacity-100 transition-all bg-slate-50 hover:bg-red-50 rounded-lg"><Trash2 size={14}/></button>
+                           <button onClick={() => setDocForm(prev => ({ ...prev, archivos: prev.archivos.filter(f => f.id !== file.id) }))} className="p-2 text-slate-400 hover:text-red-500 opacity-0 group-hover:opacity-100 transition-all bg-slate-50 hover:bg-red-50 rounded-lg"><Trash2 size={16}/></button>
                          </div>
                        ))}
                      </div>
-                     {(!docForm.archivos || docForm.archivos.length === 0) && <p className="text-center py-8 text-slate-300 font-black text-[10px] uppercase tracking-widest italic">No hay archivos adjuntos.</p>}
+                     {(!docForm.archivos || docForm.archivos.length === 0) && <p className="text-center py-10 text-slate-400 font-bold text-xs uppercase tracking-widest italic">No hay archivos adjuntos.</p>}
                   </div>
                 </div>
               )}
             </div>
             
-            <div className="bg-slate-50 p-6 border-t border-slate-200 flex justify-end gap-3 shrink-0"><button onClick={() => setIsDocModalOpen(false)} className="px-8 py-3 text-slate-400 font-black text-[10px] uppercase tracking-widest hover:text-slate-600 transition-all">Cancelar</button><button onClick={handleSaveDoc} className="px-10 py-3 bg-blue-600 text-white font-black text-[10px] uppercase tracking-[0.2em] rounded-xl shadow-md hover:bg-blue-700 transition-all hover:-translate-y-1 flex items-center gap-2"><CheckCircle size={16}/> Guardar Protocolo</button></div>
+            <div className="bg-slate-50 p-6 border-t border-slate-200 flex justify-end gap-4 shrink-0"><button onClick={() => setIsDocModalOpen(false)} className="px-8 py-3 text-slate-500 font-bold text-xs uppercase tracking-widest hover:text-slate-700 transition-all">Cancelar</button><button onClick={handleSaveDoc} className="px-10 py-3 bg-blue-600 text-white font-black text-[10px] uppercase tracking-[0.2em] rounded-xl shadow-md hover:bg-blue-700 transition-all hover:-translate-y-1 flex items-center gap-2"><CheckCircle size={16}/> Guardar Protocolo</button></div>
           </div>
         </div>
       )}
@@ -1075,55 +1084,55 @@ export default function App() {
               <div className="grid grid-cols-1 lg:grid-cols-5 gap-8">
                 <div className="lg:col-span-2 space-y-6">
                   <div className="bg-indigo-50/50 p-6 rounded-2xl border-2 border-indigo-100 flex flex-col text-center">
-                    <h4 className="text-[10px] font-black text-indigo-900 uppercase tracking-[0.2em] mb-2 flex items-center justify-center gap-2"><Wand2 size={14}/> Extracción con IA</h4>
-                    <p className="text-[9px] text-indigo-700/80 mb-4 font-medium leading-relaxed">Sube el PDF de la norma. La IA extraerá los criterios automáticamente.</p>
+                    <h4 className="text-[11px] font-black text-indigo-900 uppercase tracking-[0.2em] mb-2 flex items-center justify-center gap-2"><Wand2 size={16}/> Extracción con IA</h4>
+                    <p className="text-[10px] text-indigo-700/80 mb-4 font-medium leading-relaxed">Sube el PDF de la norma. La IA extraerá los criterios automáticamente.</p>
                     <label className="flex flex-col items-center justify-center w-full h-24 border-2 border-indigo-300 border-dashed rounded-xl cursor-pointer bg-white hover:bg-indigo-50 transition-colors shadow-sm">
                       <div className="flex flex-col items-center justify-center pt-3 pb-4">
                         <UploadCloud className="w-6 h-6 text-indigo-400 mb-1.5" />
-                        <p className="text-[9px] text-indigo-900 font-black uppercase tracking-widest">Cargar Pauta PDF</p>
+                        <p className="text-[10px] text-indigo-900 font-black uppercase tracking-widest">Cargar Pauta PDF</p>
                       </div>
-                      <input type="file" className="hidden" accept=".pdf,.doc,.docx" onChange={handlePdfUploadForAI} />
+                      <input type="file" className="hidden" accept=".pdf" onChange={handlePdfUploadForAI} />
                     </label>
-                    {isDigitizing && (<div className="mt-3 flex items-center justify-center gap-1.5 text-[9px] text-indigo-600 font-black uppercase tracking-widest"><Loader2 size={12} className="animate-spin"/> Analizando...</div>)}
+                    {isDigitizing && (<div className="mt-3 flex items-center justify-center gap-2 text-[10px] text-indigo-600 font-black uppercase tracking-widest"><Loader2 size={14} className="animate-spin"/> Procesando archivo...</div>)}
                   </div>
                   
                   <div className="space-y-4">
-                    <div><label className="block text-[9px] font-black text-slate-400 uppercase tracking-widest mb-1.5">Nombre del Instrumento</label><input type="text" value={templateForm.nombre} onChange={e=>setTemplateForm({...templateForm, nombre: e.target.value})} className="w-full border-2 border-slate-100 p-3 rounded-xl text-xs font-bold outline-none focus:border-slate-800 transition-colors" placeholder="Ej: Pauta Riesgo..."/></div>
-                    <div><label className="block text-[9px] font-black text-slate-400 uppercase tracking-widest mb-1.5">Tipo de Actividad</label><select value={templateForm.tipo} onChange={e=>setTemplateForm({...templateForm, tipo: e.target.value})} className="w-full border-2 border-slate-100 p-3 rounded-xl text-xs font-bold outline-none focus:border-slate-800 bg-slate-50 transition-colors cursor-pointer"><option value="Ambos">Híbrida (Audit/Consult)</option><option value="Auditoría">Solo Auditorías</option><option value="Consultoría">Solo Consultorías</option></select></div>
+                    <div><label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1.5">Nombre del Instrumento</label><input type="text" value={templateForm.nombre} onChange={e=>setTemplateForm({...templateForm, nombre: e.target.value})} className="w-full border-2 border-slate-100 p-3 rounded-xl text-sm font-bold outline-none focus:border-slate-800 transition-colors" placeholder="Ej: Pauta Riesgo..."/></div>
+                    <div><label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1.5">Tipo de Actividad</label><select value={templateForm.tipo} onChange={e=>setTemplateForm({...templateForm, tipo: e.target.value})} className="w-full border-2 border-slate-100 p-3 rounded-xl text-sm font-bold outline-none focus:border-slate-800 bg-slate-50 transition-colors cursor-pointer"><option value="Ambos">Híbrida (Audit/Consult)</option><option value="Auditoría">Solo Auditorías</option><option value="Consultoría">Solo Consultorías</option></select></div>
                   </div>
                   
                   <div className="bg-slate-50 p-5 rounded-2xl border-2 border-slate-200">
-                    <label className="block text-[9px] font-black text-slate-600 uppercase tracking-widest mb-2">Rangos de Resultado (Opcional)</label>
-                    <p className="text-[9px] text-slate-400 mb-3 font-bold leading-relaxed">Ej: 0 a 2 pts = Riesgo Alto.</p>
+                    <label className="block text-[10px] font-black text-slate-600 uppercase tracking-widest mb-2">Rangos de Resultado (Opcional)</label>
+                    <p className="text-[10px] text-slate-400 mb-3 font-medium leading-relaxed">Ej: 0 a 2 pts = Riesgo Alto.</p>
                     {templateForm.rangos.map((r, i) => (
-                       <div key={i} className="flex gap-1.5 mb-2 items-center">
-                          <input type="number" placeholder="Min" value={r.min} onChange={(e) => {const newR=[...templateForm.rangos]; newR[i].min=e.target.value; setTemplateForm({...templateForm, rangos: newR})}} className="w-12 border-2 border-white rounded-lg p-2 text-[10px] font-black text-center shadow-sm outline-none focus:border-slate-400" />
-                          <span className="text-[9px] font-black text-slate-300">-</span>
-                          <input type="number" placeholder="Max" value={r.max} onChange={(e) => {const newR=[...templateForm.rangos]; newR[i].max=e.target.value; setTemplateForm({...templateForm, rangos: newR})}} className="w-12 border-2 border-white rounded-lg p-2 text-[10px] font-black text-center shadow-sm outline-none focus:border-slate-400" />
-                          <input type="text" placeholder="Ej: Parcial" value={r.resultado} onChange={(e) => {const newR=[...templateForm.rangos]; newR[i].resultado=e.target.value; setTemplateForm({...templateForm, rangos: newR})}} className="flex-1 border-2 border-white rounded-lg p-2 text-[10px] font-bold shadow-sm outline-none focus:border-slate-400" />
-                          <button onClick={()=>{const newR=[...templateForm.rangos]; newR.splice(i,1); setTemplateForm({...templateForm, rangos: newR});}} className="p-2 bg-red-50 text-red-500 rounded-lg hover:bg-red-100 transition-colors"><Trash2 size={12}/></button>
+                       <div key={i} className="flex gap-2 mb-2 items-center">
+                          <input type="number" placeholder="Min" value={r.min} onChange={(e) => {const newR=[...templateForm.rangos]; newR[i].min=e.target.value; setTemplateForm({...templateForm, rangos: newR})}} className="w-14 border-2 border-white rounded-lg p-2.5 text-xs font-black text-center shadow-sm outline-none focus:border-slate-400" />
+                          <span className="text-[10px] font-black text-slate-300">-</span>
+                          <input type="number" placeholder="Max" value={r.max} onChange={(e) => {const newR=[...templateForm.rangos]; newR[i].max=e.target.value; setTemplateForm({...templateForm, rangos: newR})}} className="w-14 border-2 border-white rounded-lg p-2.5 text-xs font-black text-center shadow-sm outline-none focus:border-slate-400" />
+                          <input type="text" placeholder="Ej: Parcial" value={r.resultado} onChange={(e) => {const newR=[...templateForm.rangos]; newR[i].resultado=e.target.value; setTemplateForm({...templateForm, rangos: newR})}} className="flex-1 border-2 border-white rounded-lg p-2.5 text-xs font-bold shadow-sm outline-none focus:border-slate-400" />
+                          <button onClick={()=>{const newR=[...templateForm.rangos]; newR.splice(i,1); setTemplateForm({...templateForm, rangos: newR});}} className="p-2.5 bg-red-50 text-red-500 rounded-lg hover:bg-red-100 transition-colors"><Trash2 size={14}/></button>
                        </div>
                     ))}
-                    <button onClick={()=>setTemplateForm({...templateForm, rangos: [...templateForm.rangos, {min:'', max:'', resultado:''}]})} className="text-[9px] text-indigo-600 font-black uppercase tracking-widest flex items-center gap-1.5 mt-3 hover:text-indigo-800 transition-colors"><Plus size={12}/> Añadir Rango</button>
+                    <button onClick={()=>setTemplateForm({...templateForm, rangos: [...templateForm.rangos, {min:'', max:'', resultado:''}]})} className="text-[10px] text-indigo-600 font-black uppercase tracking-widest flex items-center gap-1.5 mt-4 hover:text-indigo-800 transition-colors"><Plus size={14}/> Añadir Rango</button>
                   </div>
                 </div>
 
                 <div className="lg:col-span-3 flex flex-col">
                   <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-3">Criterios a Evaluar (Checklist SÍ / NO)</label>
-                  <div className="flex-1 overflow-y-auto pr-2 space-y-2.5">
+                  <div className="flex-1 overflow-y-auto pr-2 space-y-3">
                     {templateForm.criterios.map((c, i) => (
                       <div key={i} className="flex gap-3 items-start">
-                        <div className="p-2.5 bg-slate-100 text-slate-400 rounded-lg text-[10px] font-black shrink-0">{i+1}</div>
-                        <textarea rows="2" value={c} onChange={e=>{const newC=[...templateForm.criterios]; newC[i]=e.target.value; setTemplateForm({...templateForm, criterios: newC});}} className="flex-1 border-2 border-slate-100 p-2.5 rounded-xl text-xs font-medium outline-none focus:border-slate-800 transition-colors resize-y" placeholder="Redacta el punto a evaluar..."/>
-                        <button onClick={()=>{const newC=[...templateForm.criterios]; newC.splice(i,1); setTemplateForm({...templateForm, criterios: newC});}} className="p-3 bg-red-50 text-red-500 rounded-xl hover:bg-red-100 transition-colors"><Trash2 size={14}/></button>
+                        <div className="p-3 bg-slate-100 text-slate-400 rounded-xl text-xs font-black shrink-0">{i+1}</div>
+                        <textarea rows="2" value={c} onChange={e=>{const newC=[...templateForm.criterios]; newC[i]=e.target.value; setTemplateForm({...templateForm, criterios: newC});}} className="flex-1 border-2 border-slate-100 p-3 rounded-xl text-sm font-medium outline-none focus:border-slate-800 transition-colors resize-y" placeholder="Redacta el punto a evaluar..."/>
+                        <button onClick={()=>{const newC=[...templateForm.criterios]; newC.splice(i,1); setTemplateForm({...templateForm, criterios: newC});}} className="p-3 bg-red-50 text-red-500 rounded-xl hover:bg-red-100 transition-colors"><Trash2 size={16}/></button>
                       </div>
                     ))}
                   </div>
-                  <button onClick={()=>setTemplateForm({...templateForm, criterios: [...templateForm.criterios, '']})} className="text-[9px] bg-slate-100 text-slate-600 px-5 py-3 rounded-xl font-black uppercase tracking-widest flex items-center justify-center gap-1.5 mt-4 hover:bg-slate-200 transition-colors"><Plus size={14}/> Agregar Fila Manualmente</button>
+                  <button onClick={()=>setTemplateForm({...templateForm, criterios: [...templateForm.criterios, '']})} className="text-[10px] bg-slate-100 text-slate-600 px-5 py-3.5 rounded-xl font-black uppercase tracking-widest flex items-center justify-center gap-2 mt-4 hover:bg-slate-200 transition-colors"><Plus size={16}/> Agregar Fila Manualmente</button>
                 </div>
               </div>
             </div>
-            <div className="bg-slate-50 p-6 border-t border-slate-200 flex justify-end gap-3 shrink-0"><button onClick={() => setIsTemplateModalOpen(false)} className="px-8 py-3 text-slate-400 font-black text-[10px] uppercase tracking-widest hover:text-slate-600 transition-colors">Cancelar</button><button onClick={handleSaveTemplate} className="px-10 py-3 bg-slate-900 text-white font-black text-[10px] uppercase tracking-[0.2em] rounded-xl shadow-lg hover:bg-black transition-all flex items-center gap-2"><CheckCircle size={16}/> Guardar Pauta Oficial</button></div>
+            <div className="bg-slate-50 p-6 border-t border-slate-200 flex justify-end gap-4 shrink-0"><button onClick={() => setIsTemplateModalOpen(false)} className="px-8 py-3 text-slate-500 font-bold text-xs uppercase tracking-widest hover:text-slate-700 transition-colors">Cancelar</button><button onClick={handleSaveTemplate} className="px-10 py-3 bg-slate-900 text-white font-black text-[10px] uppercase tracking-[0.2em] rounded-xl shadow-lg hover:bg-black transition-all flex items-center gap-2"><CheckCircle size={16}/> Guardar Pauta Oficial</button></div>
           </div>
         </div>
       )}
@@ -1141,42 +1150,42 @@ export default function App() {
              <div className="p-6 md:p-8 overflow-y-auto space-y-6 flex-1 bg-white">
                 <div className="grid grid-cols-2 gap-6">
                   <div className="bg-slate-50 p-4 rounded-2xl border border-slate-100">
-                    <label className="block text-[9px] font-black text-slate-400 uppercase tracking-widest mb-2">Tipo de Actividad</label>
+                    <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-2">Tipo de Actividad</label>
                     <select disabled value={auditForm.tipo} className="w-full p-0 border-none bg-transparent text-slate-800 font-black text-sm outline-none appearance-none"><option>{auditForm.tipo}</option></select>
                   </div>
                   <div>
-                    <label className="block text-[9px] font-black text-slate-400 uppercase tracking-widest mb-2">Dispositivo a Evaluar</label>
-                    <select value={auditForm.centro} onChange={e=>setAuditForm({...auditForm, centro: e.target.value})} className="w-full p-3 border-2 border-slate-100 rounded-xl bg-white font-black text-xs outline-none focus:border-blue-500 cursor-pointer transition-colors shadow-sm"><option value="">Seleccione...</option>{centros.map(c=><option key={c}>{c}</option>)}</select>
+                    <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-2">Dispositivo a Evaluar</label>
+                    <select value={auditForm.centro} onChange={e=>setAuditForm({...auditForm, centro: e.target.value})} className="w-full p-3 border-2 border-slate-100 rounded-xl bg-white font-bold text-sm outline-none focus:border-blue-500 cursor-pointer transition-colors shadow-sm"><option value="">Seleccione...</option>{centros.map(c=><option key={c}>{c}</option>)}</select>
                   </div>
                 </div>
                 <div>
-                  <label className="block text-[9px] font-black text-slate-400 uppercase tracking-widest mb-2">Instrumento / Pauta</label>
-                  <select value={auditForm.templateId} onChange={e=>setAuditForm({...auditForm, templateId: e.target.value, answers: {}})} className="w-full p-3 border-2 border-blue-100 rounded-xl bg-blue-50/30 text-blue-900 font-black text-xs outline-none focus:border-blue-500 cursor-pointer transition-colors shadow-sm"><option value="">Seleccione una pauta del catálogo...</option>{auditTemplates.filter(t => t.tipo === 'Ambos' || t.tipo === auditForm.tipo).map(t => <option key={t.id} value={t.id}>{t.nombre}</option>)}</select>
+                  <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-2">Instrumento / Pauta</label>
+                  <select value={auditForm.templateId} onChange={e=>setAuditForm({...auditForm, templateId: e.target.value, answers: {}})} className="w-full p-4 border-2 border-blue-100 rounded-xl bg-blue-50/30 text-blue-900 font-bold text-sm outline-none focus:border-blue-500 cursor-pointer transition-colors shadow-sm"><option value="">Seleccione una pauta del catálogo...</option>{auditTemplates.filter(t => t.tipo === 'Ambos' || t.tipo === auditForm.tipo).map(t => <option key={t.id} value={t.id}>{t.nombre}</option>)}</select>
                 </div>
                 
                 {/* CHECKLIST COMPACTO */}
                 <div className="space-y-4 border-t-2 border-slate-100 pt-6">
-                   <div className="flex justify-between items-center bg-slate-800 text-white p-4 rounded-2xl shadow-md">
-                     <span className="text-xs font-black uppercase tracking-widest flex items-center gap-2"><CheckSquare size={16}/> Checklist SÍ/NO</span>
-                     <span className="bg-blue-500 text-white px-3 py-1.5 rounded-lg text-[10px] font-black tracking-widest uppercase shadow-inner">Puntaje: {Object.values(auditForm.answers).filter(a => a === 'si').length} / {auditTemplates.find(t => t.id === auditForm.templateId)?.criterios.length || 0}</span>
+                   <div className="flex justify-between items-center bg-slate-800 text-white p-5 rounded-2xl shadow-md">
+                     <span className="text-xs font-black uppercase tracking-widest flex items-center gap-2"><CheckSquare size={18}/> Checklist SÍ/NO</span>
+                     <span className="bg-blue-500 text-white px-4 py-2 rounded-xl text-[10px] font-black tracking-widest uppercase shadow-inner">Puntaje: {Object.values(auditForm.answers).filter(a => a === 'si').length} / {auditTemplates.find(t => t.id === auditForm.templateId)?.criterios.length || 0}</span>
                    </div>
                    
                    <div className="space-y-3">
                      {auditTemplates.find(t => t.id === auditForm.templateId)?.criterios.map((criterio, idx) => (
-                       <div key={idx} className="flex flex-col md:flex-row md:items-center justify-between gap-4 p-4 bg-white rounded-2xl border-2 border-slate-100 hover:border-blue-200 transition-colors shadow-sm">
-                         <span className="text-slate-700 font-bold text-xs flex-1 leading-relaxed">{criterio}</span>
+                       <div key={idx} className="flex flex-col md:flex-row md:items-center justify-between gap-4 p-5 bg-white rounded-2xl border-2 border-slate-100 hover:border-blue-200 transition-colors shadow-sm">
+                         <span className="text-slate-700 font-bold text-sm flex-1 leading-relaxed">{criterio}</span>
                          <div className="flex gap-2 shrink-0">
-                           <label className={`flex items-center justify-center w-14 py-2 rounded-xl cursor-pointer transition-all font-black text-[10px] uppercase tracking-widest border-2 ${auditForm.answers[idx] === 'si' ? 'bg-emerald-50 text-emerald-600 border-emerald-300 shadow-sm' : 'bg-slate-50 text-slate-400 border-transparent hover:bg-slate-100'}`}><input type="radio" name={`crit-${idx}`} value="si" checked={auditForm.answers[idx] === 'si'} onChange={() => setAuditForm({...auditForm, answers: {...auditForm.answers, [idx]: 'si'}})} className="hidden" />SÍ</label>
-                           <label className={`flex items-center justify-center w-14 py-2 rounded-xl cursor-pointer transition-all font-black text-[10px] uppercase tracking-widest border-2 ${auditForm.answers[idx] === 'no' ? 'bg-red-50 text-red-600 border-red-300 shadow-sm' : 'bg-slate-50 text-slate-400 border-transparent hover:bg-slate-100'}`}><input type="radio" name={`crit-${idx}`} value="no" checked={auditForm.answers[idx] === 'no'} onChange={() => setAuditForm({...auditForm, answers: {...auditForm.answers, [idx]: 'no'}})} className="hidden" />NO</label>
+                           <label className={`flex items-center justify-center w-16 py-2.5 rounded-xl cursor-pointer transition-all font-black text-[10px] uppercase tracking-widest border-2 ${auditForm.answers[idx] === 'si' ? 'bg-emerald-50 text-emerald-600 border-emerald-300 shadow-sm' : 'bg-slate-50 text-slate-400 border-transparent hover:bg-slate-100'}`}><input type="radio" name={`crit-${idx}`} value="si" checked={auditForm.answers[idx] === 'si'} onChange={() => setAuditForm({...auditForm, answers: {...auditForm.answers, [idx]: 'si'}})} className="hidden" />SÍ</label>
+                           <label className={`flex items-center justify-center w-16 py-2.5 rounded-xl cursor-pointer transition-all font-black text-[10px] uppercase tracking-widest border-2 ${auditForm.answers[idx] === 'no' ? 'bg-red-50 text-red-600 border-red-300 shadow-sm' : 'bg-slate-50 text-slate-400 border-transparent hover:bg-slate-100'}`}><input type="radio" name={`crit-${idx}`} value="no" checked={auditForm.answers[idx] === 'no'} onChange={() => setAuditForm({...auditForm, answers: {...auditForm.answers, [idx]: 'no'}})} className="hidden" />NO</label>
                          </div>
                        </div>
                      ))}
-                     {(!auditForm.templateId) && <div className="text-center py-10 text-slate-300 font-black uppercase tracking-widest text-[10px] italic">Selecciona una pauta arriba para cargar el checklist.</div>}
+                     {(!auditForm.templateId) && <div className="text-center py-12 text-slate-400 font-bold uppercase tracking-widest text-xs italic">Selecciona una pauta arriba para cargar el checklist.</div>}
                    </div>
                 </div>
              </div>
              
-             <div className="bg-slate-50 p-6 border-t border-slate-200 flex justify-end gap-3 shrink-0"><button onClick={() => setIsAuditModalOpen(false)} className="px-8 py-3 text-slate-400 font-black text-[10px] uppercase tracking-widest hover:text-slate-600 transition-colors">Cancelar</button><button onClick={handleSaveAudit} disabled={!auditForm.templateId || !auditForm.centro} className="px-10 py-3 bg-blue-600 text-white font-black text-[10px] uppercase tracking-[0.2em] rounded-xl shadow-md hover:bg-blue-700 transition-all disabled:opacity-50">Cerrar Evaluación</button></div>
+             <div className="bg-slate-50 p-6 border-t border-slate-200 flex justify-end gap-3 shrink-0"><button onClick={() => setIsAuditModalOpen(false)} className="px-8 py-3 text-slate-500 font-bold text-xs uppercase tracking-widest hover:text-slate-700 transition-colors">Cancelar</button><button onClick={handleSaveAudit} disabled={!auditForm.templateId || !auditForm.centro} className="px-10 py-3 bg-blue-600 text-white font-black text-[10px] uppercase tracking-[0.2em] rounded-xl shadow-md hover:bg-blue-700 transition-all disabled:opacity-50">Cerrar Evaluación</button></div>
           </div>
         </div>
       )}
@@ -1190,13 +1199,13 @@ export default function App() {
                <button onClick={() => setIsDirModalOpen(false)} className="text-white/60 hover:text-white font-bold text-3xl">&times;</button>
             </div>
             <div className="p-6 space-y-4 overflow-y-auto flex-1">
-              <div><label className="block text-[9px] font-black text-slate-400 uppercase tracking-widest mb-1.5">Nombre Completo</label><input type="text" value={dirForm.nombre} onChange={e=>setDirForm({...dirForm, nombre: e.target.value})} className="w-full border-2 border-slate-100 p-3 rounded-xl text-xs font-bold outline-none focus:border-blue-500" placeholder="Ej: Ps. Carlos Pinto" /></div>
-              <div><label className="block text-[9px] font-black text-slate-400 uppercase tracking-widest mb-1.5">Institución / Centro</label><input type="text" value={dirForm.institucion} onChange={e=>setDirForm({...dirForm, institucion: e.target.value})} className="w-full border-2 border-slate-100 p-3 rounded-xl text-xs font-bold outline-none focus:border-blue-500" placeholder="Ej: COSAM Puerto Montt" /></div>
-              <div><label className="block text-[9px] font-black text-slate-400 uppercase tracking-widest mb-1.5">Cargo</label><input type="text" value={dirForm.cargo} onChange={e=>setDirForm({...dirForm, cargo: e.target.value})} className="w-full border-2 border-slate-100 p-3 rounded-xl text-xs font-bold outline-none focus:border-blue-500" placeholder="Ej: Psicólogo Clínico" /></div>
-              <div><label className="block text-[9px] font-black text-slate-400 uppercase tracking-widest mb-1.5">Teléfono</label><input type="text" value={dirForm.telefono} onChange={e=>setDirForm({...dirForm, telefono: e.target.value})} className="w-full border-2 border-slate-100 p-3 rounded-xl text-xs font-bold outline-none focus:border-blue-500" placeholder="+56 9..." /></div>
-              <div><label className="block text-[9px] font-black text-slate-400 uppercase tracking-widest mb-1.5">Correo Electrónico</label><input type="email" value={dirForm.correo} onChange={e=>setDirForm({...dirForm, correo: e.target.value})} className="w-full border-2 border-slate-100 p-3 rounded-xl text-xs font-bold outline-none focus:border-blue-500" placeholder="correo@red.cl" /></div>
+              <div><label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1.5">Nombre Completo</label><input type="text" value={dirForm.nombre} onChange={e=>setDirForm({...dirForm, nombre: e.target.value})} className="w-full border-2 border-slate-100 p-3 rounded-xl text-sm font-bold outline-none focus:border-blue-500" placeholder="Ej: Ps. Carlos Pinto" /></div>
+              <div><label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1.5">Institución / Centro</label><input type="text" value={dirForm.institucion} onChange={e=>setDirForm({...dirForm, institucion: e.target.value})} className="w-full border-2 border-slate-100 p-3 rounded-xl text-sm font-bold outline-none focus:border-blue-500" placeholder="Ej: COSAM Puerto Montt" /></div>
+              <div><label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1.5">Cargo</label><input type="text" value={dirForm.cargo} onChange={e=>setDirForm({...dirForm, cargo: e.target.value})} className="w-full border-2 border-slate-100 p-3 rounded-xl text-sm font-bold outline-none focus:border-blue-500" placeholder="Ej: Psicólogo Clínico" /></div>
+              <div><label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1.5">Teléfono</label><input type="text" value={dirForm.telefono} onChange={e=>setDirForm({...dirForm, telefono: e.target.value})} className="w-full border-2 border-slate-100 p-3 rounded-xl text-sm font-bold outline-none focus:border-blue-500" placeholder="+56 9..." /></div>
+              <div><label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1.5">Correo Electrónico</label><input type="email" value={dirForm.correo} onChange={e=>setDirForm({...dirForm, correo: e.target.value})} className="w-full border-2 border-slate-100 p-3 rounded-xl text-sm font-bold outline-none focus:border-blue-500" placeholder="correo@red.cl" /></div>
             </div>
-            <div className="bg-slate-50 p-6 border-t border-slate-200 flex justify-end gap-3 shrink-0"><button onClick={() => setIsDirModalOpen(false)} className="px-6 py-3 text-slate-400 font-bold text-[10px] uppercase tracking-widest hover:text-slate-600">Cancelar</button><button onClick={handleSaveDir} className="px-8 py-3 bg-blue-600 text-white font-black text-[10px] uppercase tracking-widest rounded-xl shadow-md hover:bg-blue-700">Guardar</button></div>
+            <div className="bg-slate-50 p-6 border-t border-slate-200 flex justify-end gap-3 shrink-0"><button onClick={() => setIsDirModalOpen(false)} className="px-6 py-3 text-slate-500 font-bold text-xs uppercase tracking-widest hover:text-slate-700">Cancelar</button><button onClick={handleSaveDir} className="px-8 py-3 bg-blue-600 text-white font-black text-[10px] uppercase tracking-widest rounded-xl shadow-md hover:bg-blue-700">Guardar</button></div>
           </div>
         </div>
       )}
@@ -1211,27 +1220,27 @@ export default function App() {
             </div>
             <div className="p-6 md:p-8 overflow-y-auto space-y-4 flex-1">
               <div className="grid grid-cols-2 gap-4">
-                <div><label className="block text-[9px] font-black text-slate-400 uppercase tracking-widest mb-1.5">RUT Acceso *</label><input type="text" value={userForm.rut} onChange={e=>setUserForm({...userForm, rut: e.target.value})} className="w-full border-2 border-slate-100 p-3 rounded-xl text-xs font-bold outline-none focus:border-indigo-500" placeholder="11.111.111-1"/></div>
-                <div><label className="block text-[9px] font-black text-slate-400 uppercase tracking-widest mb-1.5">Contraseña *</label><input type="text" value={userForm.password} onChange={e=>setUserForm({...userForm, password: e.target.value})} className="w-full border-2 border-slate-100 p-3 rounded-xl text-xs font-bold outline-none focus:border-indigo-500" placeholder="••••••"/></div>
+                <div><label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1.5">RUT Acceso *</label><input type="text" value={userForm.rut} onChange={e=>setUserForm({...userForm, rut: e.target.value})} className="w-full border-2 border-slate-100 p-3 rounded-xl text-sm font-bold outline-none focus:border-indigo-500" placeholder="11.111.111-1"/></div>
+                <div><label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1.5">Contraseña *</label><input type="text" value={userForm.password} onChange={e=>setUserForm({...userForm, password: e.target.value})} className="w-full border-2 border-slate-100 p-3 rounded-xl text-sm font-bold outline-none focus:border-indigo-500" placeholder="••••••"/></div>
               </div>
               <div className="grid grid-cols-4 gap-4">
-                <div className="col-span-3"><label className="block text-[9px] font-black text-slate-400 uppercase tracking-widest mb-1.5">Nombre Completo *</label><input type="text" value={userForm.nombre} onChange={e=>setUserForm({...userForm, nombre: e.target.value})} className="w-full border-2 border-slate-100 p-3 rounded-xl text-xs font-bold outline-none focus:border-indigo-500" placeholder="Dra. Andrea Silva"/></div>
-                <div className="col-span-1"><label className="block text-[9px] font-black text-slate-400 uppercase tracking-widest mb-1.5">Iniciales</label><input type="text" value={userForm.iniciales} onChange={e=>setUserForm({...userForm, iniciales: e.target.value.toUpperCase()})} className="w-full border-2 border-slate-100 p-3 rounded-xl text-xs font-bold text-center outline-none focus:border-indigo-500" placeholder="AS" maxLength={3}/></div>
+                <div className="col-span-3"><label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1.5">Nombre Completo *</label><input type="text" value={userForm.nombre} onChange={e=>setUserForm({...userForm, nombre: e.target.value})} className="w-full border-2 border-slate-100 p-3 rounded-xl text-sm font-bold outline-none focus:border-indigo-500" placeholder="Dra. Andrea Silva"/></div>
+                <div className="col-span-1"><label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1.5">Iniciales</label><input type="text" value={userForm.iniciales} onChange={e=>setUserForm({...userForm, iniciales: e.target.value.toUpperCase()})} className="w-full border-2 border-slate-100 p-3 rounded-xl text-sm font-bold text-center outline-none focus:border-indigo-500" placeholder="AS" maxLength={3}/></div>
               </div>
-              <div><label className="block text-[9px] font-black text-slate-400 uppercase tracking-widest mb-1.5">Cargo Institucional</label><input type="text" value={userForm.cargo} onChange={e=>setUserForm({...userForm, cargo: e.target.value})} className="w-full border-2 border-slate-100 p-3 rounded-xl text-xs font-bold outline-none focus:border-indigo-500" placeholder="Ej: Directora COSAM"/></div>
+              <div><label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1.5">Cargo Institucional</label><input type="text" value={userForm.cargo} onChange={e=>setUserForm({...userForm, cargo: e.target.value})} className="w-full border-2 border-slate-100 p-3 rounded-xl text-sm font-bold outline-none focus:border-indigo-500" placeholder="Ej: Directora COSAM"/></div>
               <div className="border-t-2 border-slate-100 pt-4 mt-2">
                 <label className="block text-[10px] font-black text-slate-800 mb-2 uppercase tracking-widest">Nivel de Privilegios</label>
-                <select value={userForm.rol} onChange={e=>setUserForm({...userForm, rol: e.target.value})} className="w-full border-2 border-slate-100 p-3 rounded-xl text-xs font-black outline-none focus:border-indigo-500 mb-3 bg-slate-50 text-slate-600 cursor-pointer">
+                <select value={userForm.rol} onChange={e=>setUserForm({...userForm, rol: e.target.value})} className="w-full border-2 border-slate-100 p-3 rounded-xl text-sm font-black outline-none focus:border-indigo-500 mb-3 bg-slate-50 text-slate-600 cursor-pointer">
                   <option value="Usuario">Usuario Clínico Estándar (Limitado)</option>
                   <option value="Admin">Administrador UHCIP (Acceso Total)</option>
                 </select>
                 {userForm.rol === 'Usuario' && (
                   <div className="bg-indigo-50 p-4 rounded-2xl border-2 border-indigo-100">
-                    <p className="text-[9px] text-indigo-800 font-black uppercase tracking-widest mb-3">Dispositivos Permitidos:</p>
+                    <p className="text-[10px] text-indigo-800 font-black uppercase tracking-widest mb-3">Dispositivos Permitidos:</p>
                     <div className="space-y-1.5 max-h-[120px] overflow-y-auto pr-2">
                       {centros.map(c => (
-                        <label key={c} className="flex items-center gap-3 text-xs font-bold text-slate-700 cursor-pointer p-2 hover:bg-indigo-100 rounded-lg transition-colors">
-                          <input type="checkbox" checked={userForm.centrosAsignados.includes(c)} onChange={() => { const isAsignado = userForm.centrosAsignados.includes(c); setUserForm({ ...userForm, centrosAsignados: isAsignado ? userForm.centrosAsignados.filter(x => x !== c) : [...userForm.centrosAsignados, c] }); }} className="w-4 h-4 accent-indigo-600" /> {c}
+                        <label key={c} className="flex items-center gap-3 text-sm font-bold text-slate-700 cursor-pointer p-2 hover:bg-indigo-100 rounded-lg transition-colors">
+                          <input type="checkbox" checked={userForm.centrosAsignados.includes(c)} onChange={() => { const isAsignado = userForm.centrosAsignados.includes(c); setUserForm({ ...userForm, centrosAsignados: isAsignado ? userForm.centrosAsignados.filter(x => x !== c) : [...userForm.centrosAsignados, c] }); }} className="w-5 h-5 accent-indigo-600" /> {c}
                         </label>
                       ))}
                     </div>
@@ -1240,7 +1249,7 @@ export default function App() {
               </div>
             </div>
             <div className="bg-slate-50 p-6 border-t border-slate-200 flex justify-end gap-3 shrink-0">
-              <button onClick={() => setIsUserModalOpen(false)} className="px-6 py-3 text-slate-400 font-black text-[10px] uppercase tracking-widest hover:text-slate-600">Cancelar</button>
+              <button onClick={() => setIsUserModalOpen(false)} className="px-6 py-3 text-slate-500 font-bold text-xs uppercase tracking-widest hover:text-slate-700">Cancelar</button>
               <button onClick={handleSaveUser} className="px-8 py-3 bg-indigo-600 text-white font-black text-[10px] uppercase tracking-[0.2em] rounded-xl shadow-md hover:bg-indigo-700">Guardar Credencial</button>
             </div>
           </div>
@@ -1253,11 +1262,11 @@ export default function App() {
           <div className="bg-white rounded-3xl shadow-2xl w-full max-w-sm max-h-[90vh] flex flex-col border border-slate-200 overflow-hidden">
             <div className="bg-blue-600 p-6 text-white flex justify-between items-center shrink-0"><h3 className="font-black text-lg uppercase tracking-widest flex items-center gap-2"><Key size={20}/> Seguridad</h3><button onClick={() => setIsProfileModalOpen(false)} className="text-white/60 hover:text-white font-bold text-3xl">&times;</button></div>
             <div className="p-6 space-y-4 overflow-y-auto flex-1">
-              <div><label className="block text-[9px] font-black text-slate-400 uppercase tracking-widest mb-1.5">Contraseña Actual</label><input type="password" value={passwordForm.current} onChange={e=>setPasswordForm({...passwordForm, current: e.target.value})} className="w-full border-2 border-slate-100 p-3 rounded-xl text-xs font-bold outline-none focus:border-blue-500" placeholder="••••••"/></div>
-              <div className="border-t-2 border-slate-100 pt-4 mt-2"><label className="block text-[9px] font-black text-slate-400 uppercase tracking-widest mb-1.5">Nueva Contraseña</label><input type="password" value={passwordForm.new} onChange={e=>setPasswordForm({...passwordForm, new: e.target.value})} className="w-full border-2 border-slate-100 p-3 rounded-xl text-xs font-bold outline-none focus:border-blue-500" placeholder="••••••"/></div>
-              <div><label className="block text-[9px] font-black text-slate-400 uppercase tracking-widest mb-1.5">Repetir Nueva Contraseña</label><input type="password" value={passwordForm.confirm} onChange={e=>setPasswordForm({...passwordForm, confirm: e.target.value})} className="w-full border-2 border-slate-100 p-3 rounded-xl text-xs font-bold outline-none focus:border-blue-500" placeholder="••••••"/></div>
+              <div><label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1.5">Contraseña Actual</label><input type="password" value={passwordForm.current} onChange={e=>setPasswordForm({...passwordForm, current: e.target.value})} className="w-full border-2 border-slate-100 p-3 rounded-xl text-sm font-bold outline-none focus:border-blue-500" placeholder="••••••"/></div>
+              <div className="border-t-2 border-slate-100 pt-4 mt-2"><label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1.5">Nueva Contraseña</label><input type="password" value={passwordForm.new} onChange={e=>setPasswordForm({...passwordForm, new: e.target.value})} className="w-full border-2 border-slate-100 p-3 rounded-xl text-sm font-bold outline-none focus:border-blue-500" placeholder="••••••"/></div>
+              <div><label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1.5">Repetir Nueva Contraseña</label><input type="password" value={passwordForm.confirm} onChange={e=>setPasswordForm({...passwordForm, confirm: e.target.value})} className="w-full border-2 border-slate-100 p-3 rounded-xl text-sm font-bold outline-none focus:border-blue-500" placeholder="••••••"/></div>
             </div>
-            <div className="bg-slate-50 p-6 border-t border-slate-200 flex justify-end gap-3 shrink-0"><button onClick={() => setIsProfileModalOpen(false)} className="px-6 py-3 text-slate-400 font-black text-[10px] uppercase tracking-widest hover:text-slate-600 transition-colors">Cancelar</button><button onClick={handleUpdatePassword} className="px-8 py-3 bg-blue-600 text-white font-black text-[10px] uppercase tracking-[0.2em] rounded-xl shadow-md hover:bg-blue-700 transition-colors">Actualizar</button></div>
+            <div className="bg-slate-50 p-6 border-t border-slate-200 flex justify-end gap-3 shrink-0"><button onClick={() => setIsProfileModalOpen(false)} className="px-6 py-3 text-slate-500 font-bold text-xs uppercase tracking-widest hover:text-slate-700 transition-colors">Cancelar</button><button onClick={handleUpdatePassword} className="px-8 py-3 bg-blue-600 text-white font-black text-[10px] uppercase tracking-[0.2em] rounded-xl shadow-md hover:bg-blue-700 transition-colors">Actualizar</button></div>
           </div>
         </div>
       )}
@@ -1277,8 +1286,8 @@ export default function App() {
 }
 
 const StatusBadge = ({ status }) => {
-  if(status === 'Alerta') return <span className="px-3 py-1.5 bg-red-100 text-red-700 rounded-lg text-[8px] font-black uppercase tracking-[0.2em] flex items-center gap-1.5 animate-pulse shadow-sm border border-red-200 w-fit"><AlertTriangle size={10} /> Alerta</span>;
-  if(status === 'Pendiente') return <span className="px-3 py-1.5 bg-amber-100 text-amber-700 rounded-lg text-[8px] font-black uppercase tracking-[0.2em] flex items-center gap-1.5 shadow-sm border border-amber-200 w-fit"><Clock size={10} /> En Tránsito</span>;
-  if(status === 'Concretado') return <span className="px-3 py-1.5 bg-emerald-100 text-emerald-700 rounded-lg text-[8px] font-black uppercase tracking-[0.2em] flex items-center gap-1.5 shadow-sm border border-emerald-200 w-fit"><CheckCircle size={10} /> Cerrado</span>;
-  return <span className="px-3 py-1.5 bg-slate-100 text-slate-600 rounded-lg text-[8px] font-black uppercase tracking-[0.2em] border border-slate-200 w-fit">{status}</span>;
+  if(status === 'Alerta') return <span className="px-3 py-1.5 bg-red-100 text-red-700 rounded-lg text-[9px] font-black uppercase tracking-[0.2em] flex items-center gap-1.5 animate-pulse shadow-sm border border-red-200 w-fit"><AlertTriangle size={12} /> Alerta</span>;
+  if(status === 'Pendiente') return <span className="px-3 py-1.5 bg-amber-100 text-amber-700 rounded-lg text-[9px] font-black uppercase tracking-[0.2em] flex items-center gap-1.5 shadow-sm border border-amber-200 w-fit"><Clock size={12} /> En Tránsito</span>;
+  if(status === 'Concretado') return <span className="px-3 py-1.5 bg-emerald-100 text-emerald-700 rounded-lg text-[9px] font-black uppercase tracking-[0.2em] flex items-center gap-1.5 shadow-sm border border-emerald-200 w-fit"><CheckCircle size={12} /> Cerrado</span>;
+  return <span className="px-3 py-1.5 bg-slate-100 text-slate-600 rounded-lg text-[9px] font-black uppercase tracking-[0.2em] border border-slate-200 w-fit">{status}</span>;
 };
