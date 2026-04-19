@@ -125,10 +125,8 @@ export default function App() {
   const [isTemplateModalOpen, setIsTemplateModalOpen] = useState(false);
   const [editingTemplateId, setEditingTemplateId] = useState(null);
   
-  // Nuevo formato de auditoría dinámica
   const [auditForm, setAuditForm] = useState({ centro: '', templateId: '', headerAnswers: {}, answers: {}, tipo: 'Auditoría', observaciones: '', fecha: new Date().toISOString().split('T')[0] });
   
-  // Nuevo formato de pauta dinámica
   const [templateForm, setTemplateForm] = useState({ 
     nombre: '', 
     encabezados: [{ id: 'enc_1', label: 'Centro Evaluado', type: 'text' }, { id: 'enc_2', label: 'Fecha', type: 'date' }], 
@@ -138,7 +136,6 @@ export default function App() {
   });
   
   const [printingAudit, setPrintingAudit] = useState(null);
-  
   const [rawTextForAI, setRawTextForAI] = useState('');
   const [centroFilterAuditorias, setCentroFilterAuditorias] = useState('Todos');
   const [centroFilterConsultorias, setCentroFilterConsultorias] = useState('Todos');
@@ -201,15 +198,15 @@ export default function App() {
   const saveToCloud = async (coll, id, data) => { if (firebaseUser) await setDoc(doc(db, 'artifacts', appId, 'public', 'data', coll, id.toString()), data); };
   const deleteFromCloud = async (coll, id) => { if (firebaseUser) await deleteDoc(doc(db, 'artifacts', appId, 'public', 'data', coll, id.toString())); };
 
-  // --- DERIVADOS Y FILTROS ---
+  // --- DERIVADOS Y FILTROS SEGURIZADOS ---
   const visibleCases = useMemo(() => {
-    if (currentUser?.rol === 'Admin') return cases;
-    return cases.filter(c => currentUser?.centrosAsignados?.includes(c.origen) || currentUser?.centrosAsignados?.includes(c.destino));
+    if (currentUser?.rol === 'Admin') return cases || [];
+    return (cases || []).filter(c => (currentUser?.centrosAsignados || []).includes(c.origen) || (currentUser?.centrosAsignados || []).includes(c.destino));
   }, [cases, currentUser]);
 
   const visibleAudits = useMemo(() => {
-    if (currentUser?.rol === 'Admin') return audits;
-    return audits.filter(a => currentUser?.centrosAsignados?.includes(a.centro));
+    if (currentUser?.rol === 'Admin') return audits || [];
+    return (audits || []).filter(a => (currentUser?.centrosAsignados || []).includes(a.centro));
   }, [audits, currentUser]);
 
   const alertCases = visibleCases.filter(c => c.estado === 'Alerta');
@@ -217,7 +214,7 @@ export default function App() {
   const allPendingTasks = useMemo(() => {
     return [
       ...visibleCases.flatMap(c => (c.bitacora || []).filter(b => b.tipo === 'Tarea' && !b.completada).map(b => ({ ...b, parentId: c.id, parentName: c.nombre || c.paciente, source: 'Caso' }))),
-      ...docs.flatMap(d => (d.bitacora || []).filter(b => b.tipo === 'Tarea' && !b.completada).map(b => ({ ...b, parentId: d.id, parentName: d.nombre, source: 'Protocolo' })))
+      ...(docs || []).flatMap(d => (d.bitacora || []).filter(b => b.tipo === 'Tarea' && !b.completada).map(b => ({ ...b, parentId: d.id, parentName: d.nombre, source: 'Protocolo' })))
     ].sort((a, b) => (a.fechaCumplimiento || '9999-99-99').localeCompare(b.fechaCumplimiento || '9999-99-99'));
   }, [visibleCases, docs]);
 
@@ -235,7 +232,7 @@ export default function App() {
 
   const redMetrics = useMemo(() => {
     let sumEnlace = 0, countEnlace = 0, sumIngreso = 0, countIngreso = 0, alertCount = 0;
-    const currentTarget = appConfig.targetDays || 7;
+    const currentTarget = appConfig?.targetDays || 7;
     visibleCases.forEach(c => {
       const enlaceDays = diffInDays(c.fechaEgreso, c.fechaRecepcionRed);
       const ingresoDays = diffInDays(c.fechaEgreso, c.fechaIngresoEfectivo);
@@ -248,7 +245,7 @@ export default function App() {
   // --- HANDLERS GENERALES ---
   const handleLogin = (e) => {
     e.preventDefault();
-    const user = users.find(u => u.rut === loginData.rut && u.password === loginData.password);
+    const user = (users || []).find(u => u.rut === loginData.rut && u.password === loginData.password);
     if (user) { setCurrentUser(user); setLoginError(''); } else { setLoginError('RUT o Contraseña incorrectos.'); }
   };
 
@@ -258,7 +255,7 @@ export default function App() {
   };
 
   const handleExportCSV = () => {
-    const currentTarget = appConfig.targetDays || 7;
+    const currentTarget = appConfig?.targetDays || 7;
     const headers = ['ID_Seguimiento', 'RUT', 'Paciente', 'Origen', 'Destino', 'Estado', 'Fecha_Egreso', 'Fecha_Recepcion', 'Fecha_Ingreso_Efectivo', 'Plazo_Meta'];
     const rows = visibleCases.map(c => [c.id, c.paciente, c.nombre, c.origen, c.destino, c.estado, c.fechaEgreso||'', c.fechaRecepcionRed||'', c.fechaIngresoEfectivo||'', currentTarget]);
     const csvContent = [headers.join(','), ...rows.map(r => r.join(','))].join('\n');
@@ -274,15 +271,12 @@ export default function App() {
     if (!appConfig.apiKey) throw new Error("Falta configurar la Clave API de IA en Configuración.");
     setIsDigitizing(true);
     
-    // Prompt altamente estructurado para obligar a la IA a devolver un JSON dinámico
-    const fullPrompt = `${prompt}\n\nERES UN ANALISTA EXPERTO. Analiza este documento y genera su versión digital interactiva.\nREGLA ESTRICTA: Devuelve ÚNICAMENTE un objeto JSON válido con este formato exacto:\n{ \n  "nombre": "TÍTULO COMPLETO DEL DOCUMENTO", \n  "encabezados": [ {"id": "enc_1", "label": "Nombre del campo (Ej: Servicio de Salud, Equipo Consultor, Fecha)", "type": "text o date"} ], \n  "criterios": [ {"id": "crit_1", "pregunta": "Texto del criterio a evaluar", "opciones": "Estructura las opciones de respuesta y sus valores numéricos. Ej: SÍ=1, NO=0. O si es escala: Siempre=3, A veces=2, Nunca=1"} ] \n}\n\nINSTRUCCIONES CLAVES:\n1. EXTRAE EL TÍTULO COMPLETO.\n2. EXTRAE LOS ENCABEZADOS: Todo lo que se pregunte antes de la tabla de evaluación (Servicio, Nombres, Fechas).\n3. ADAPTA LAS OPCIONES: Lee atentamente cómo se evalúa la pauta. Si no es de SÍ/NO, crea las opciones correspondientes con su puntaje (Ej: 1=1, 2=2, 3=3, 4=4, 5=5).`;
+    const fullPrompt = `${prompt}\n\nERES UN ANALISTA EXPERTO. Analiza este documento y genera su versión digital interactiva.\nREGLA ESTRICTA: Devuelve ÚNICAMENTE un objeto JSON válido con este formato exacto:\n{ \n  "nombre": "TÍTULO COMPLETO DEL DOCUMENTO", \n  "encabezados": [ {"id": "enc_1", "label": "Nombre del campo (Ej: Servicio de Salud, Equipo Consultor, Fecha)", "type": "text o date"} ], \n  "criterios": [ {"id": "crit_1", "pregunta": "Texto del criterio a evaluar", "opciones": "Estructura las opciones de respuesta y sus valores numéricos. Ej: SÍ=1, NO=0. O si es escala: Siempre=3, A veces=2, Nunca=1"} ] \n}\n\nINSTRUCCIONES CLAVES:\n1. EXTRAE EL TÍTULO COMPLETO.\n2. EXTRAE LOS ENCABEZADOS: Todo lo que se pregunte antes de la tabla de evaluación (Servicio, Nombres, Fechas).\n3. ADAPTA LAS OPCIONES: Lee atentamente cómo se evalúa la pauta. Si no es de SÍ/NO, crea las opciones correspondientes con su puntaje numérico (Ej: 1=1, 2=2, 3=3, 4=4, 5=5).`;
 
     try {
       const result = await generateTextWithRetry(appConfig.apiKey, fullPrompt, "", inlineData);
-      
-      // Limpieza de formato markdown si la IA lo envía
       const jsonMatch = result.match(/\{[\s\S]*\}/);
-      if (!jsonMatch) throw new Error("No se pudo detectar el formato JSON.");
+      if (!jsonMatch) throw new Error("No se pudo detectar el formato JSON en la respuesta.");
       
       const parsedData = JSON.parse(jsonMatch[0]);
       if (!parsedData.criterios || parsedData.criterios.length === 0) throw new Error("No se encontraron criterios.");
@@ -293,7 +287,7 @@ export default function App() {
         encabezados: parsedData.encabezados || [],
         criterios: parsedData.criterios || []
       });
-      alert(`¡Pauta digitalizada exitosamente!\nTítulo: ${parsedData.nombre}\nEncabezados: ${parsedData.encabezados?.length || 0}\nCriterios: ${parsedData.criterios.length}\nRevisa los campos para ajustar detalles finales en el modo de Edición Libre.`);
+      alert(`¡Pauta digitalizada exitosamente!\nTítulo: ${parsedData.nombre}\nEncabezados extraídos: ${parsedData.encabezados?.length || 0}\nCriterios extraídos: ${parsedData.criterios.length}\nPor favor, revisa los campos en el Diseñador para ajustar cualquier detalle final.`);
     } catch (err) { 
       console.error(err);
       alert("La IA no pudo procesar el documento en el formato solicitado. Intenta copiando el texto directamente o revisa tu Llave API."); 
@@ -311,7 +305,6 @@ export default function App() {
   const handlePdfUploadForAI = (e) => {
     const file = e.target.files[0];
     if (!file) return;
-    
     const reader = new FileReader();
     reader.onloadend = () => {
       const base64Data = reader.result.split(',')[1];
@@ -326,7 +319,7 @@ export default function App() {
     setIsGeneratingReport(true); 
     setReportContent('');
     let prompt = "";
-    const currentTarget = appConfig.targetDays || 7;
+    const currentTarget = appConfig?.targetDays || 7;
     if (type === 'stats') {
       const delayCases = visibleCases.filter(c => diffInDays(c.fechaEgreso, c.fechaIngresoEfectivo) > currentTarget);
       if (delayCases.length === 0) { setIsGeneratingReport(false); return alert("No hay casos fuera de plazo para reportar."); }
@@ -416,7 +409,6 @@ export default function App() {
   };
 
   const handleSaveTemplate = async () => {
-    // Manejar casos donde la data viene sucia (strings viejos) o vacía
     const validCriterios = templateForm.criterios.filter(c => {
        const text = typeof c === 'string' ? c : c.pregunta;
        return text && text.trim() !== '';
@@ -463,7 +455,6 @@ export default function App() {
     let maxScore = 0;
     let actualScore = 0;
 
-    // Calculo dinámico basado en las opciones guardadas (soporta SÍ/NO viejos y Escalas nuevas)
     selectedTemplate.criterios.forEach((c, idx) => {
       const isOldFormat = typeof c === 'string';
       const opcionesStr = isOldFormat ? 'SÍ=1, NO=0' : (c.opciones || 'SÍ=1, NO=0');
@@ -473,9 +464,9 @@ export default function App() {
       
       const answer = auditForm.answers[c.id || idx];
       if (answer && typeof answer === 'object') {
-        actualScore += answer.value; // Formato nuevo dinámico
+        actualScore += answer.value; 
       } else if (answer === 'si') {
-        actualScore += 1; // Soporte legado para pautas viejas
+        actualScore += 1;
       }
     });
 
@@ -529,9 +520,8 @@ export default function App() {
 
 
   // ================= VISTAS ESPECIALES (IMPRESIÓN FULL SCREEN) =================
-  // Si printingAudit está activo, se oculta TODA la app principal y se renderiza SOLO este div.
-  // Esto soluciona los problemas de "pantalla en blanco" o cortes al imprimir.
-  
+  // Cuando se solicita imprimir, se bloquea el renderizado de toda la app y solo se muestra la pauta pura.
+  // Se aplican estilos @media print de Tailwind extremadamente compactos.
   if (printingAudit) {
     const template = auditTemplates.find(t => t.id === printingAudit.templateId);
     if (!template) return <div className="p-10 text-red-500">Error: La pauta base original no existe.</div>;
@@ -540,37 +530,37 @@ export default function App() {
     const criterios = isOldFormat ? template.criterios.map((c,i) => ({id: i, pregunta: c, opciones: 'SÍ=1, NO=0'})) : template.criterios;
 
     return (
-      <div className="bg-white text-black min-h-screen w-full font-sans">
+      <div className="bg-white text-black min-h-screen w-full font-sans absolute inset-0 z-[100] print:relative print:z-0">
         <div className="max-w-4xl mx-auto p-12 print:p-0 print:m-0 print:w-full print:max-w-full">
            
-           <div className="flex justify-end gap-3 mb-8 print:hidden">
+           <div className="flex justify-end gap-3 mb-6 print:hidden">
              <button onClick={() => window.print()} className="bg-blue-600 text-white px-5 py-2.5 rounded-xl font-black text-xs uppercase tracking-widest flex items-center gap-2 shadow-lg"><Printer size={16}/> Confirmar Impresión</button>
              <button onClick={() => setPrintingAudit(null)} className="bg-slate-200 text-slate-700 px-5 py-2.5 rounded-xl font-black text-xs uppercase tracking-widest">Volver</button>
            </div>
 
-           <div className="border-b-2 border-slate-800 pb-5 mb-8">
-             <h1 className="text-2xl font-black text-center uppercase tracking-widest">{template.nombre}</h1>
-             <p className="text-center text-xs font-bold text-slate-500 uppercase tracking-widest mt-2">Aplicada en terreno - SGCC-SM Reloncaví</p>
+           <div className="border-b-2 border-slate-800 pb-4 mb-6 print:mb-3 print:pb-2">
+             <h1 className="text-xl print:text-lg font-black text-center uppercase tracking-widest">{template.nombre}</h1>
+             <p className="text-center text-[10px] font-bold text-slate-500 uppercase tracking-widest mt-1">Aplicada en terreno - SGCC-SM Reloncaví</p>
            </div>
            
-           <div className="grid grid-cols-2 gap-6 mb-10 text-sm border-2 border-slate-200 p-6 rounded-2xl">
-             <div className="flex flex-col"><span className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">Dispositivo Evaluado</span><span className="font-bold text-slate-800 text-base">{printingAudit.centro}</span></div>
-             <div className="flex flex-col"><span className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">Fecha Evaluación</span><span className="font-bold text-slate-800 text-base">{printingAudit.fecha}</span></div>
+           <div className="grid grid-cols-2 gap-4 mb-6 text-sm border-2 border-slate-200 p-5 rounded-2xl print:border-none print:p-0 print:gap-2 print:mb-4">
+             <div className="flex flex-col"><span className="text-[10px] print:text-[8px] font-black text-slate-400 uppercase tracking-widest mb-1 print:mb-0">Dispositivo Evaluado</span><span className="font-bold text-slate-800 text-sm print:text-xs">{printingAudit.centro}</span></div>
+             <div className="flex flex-col"><span className="text-[10px] print:text-[8px] font-black text-slate-400 uppercase tracking-widest mb-1 print:mb-0">Fecha Evaluación</span><span className="font-bold text-slate-800 text-sm print:text-xs">{printingAudit.fecha}</span></div>
              {(template.encabezados || []).map(h => (
                 <div key={h.id} className="flex flex-col">
-                  <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">{h.label}</span>
-                  <span className="font-bold text-slate-800 text-base">{printingAudit.headerAnswers?.[h.id] || '---'}</span>
+                  <span className="text-[10px] print:text-[8px] font-black text-slate-400 uppercase tracking-widest mb-1 print:mb-0">{h.label}</span>
+                  <span className="font-bold text-slate-800 text-sm print:text-xs">{printingAudit.headerAnswers?.[h.id] || '---'}</span>
                 </div>
              ))}
            </div>
 
-           <table className="w-full text-left border-collapse border-2 border-slate-200 mb-10">
+           <table className="w-full text-left border-collapse border-2 border-slate-200 mb-8 print:mb-4 print:border-slate-800">
              <thead>
-               <tr className="bg-slate-100 border-b-2 border-slate-200">
-                 <th className="p-4 text-[10px] font-black uppercase tracking-widest w-12 text-center border-r-2 border-slate-200">Nº</th>
-                 <th className="p-4 text-[10px] font-black uppercase tracking-widest border-r-2 border-slate-200">Criterio Evaluado</th>
-                 <th className="p-4 text-[10px] font-black uppercase tracking-widest text-center w-40 border-r-2 border-slate-200">Respuesta</th>
-                 <th className="p-4 text-[10px] font-black uppercase tracking-widest text-center w-20">Pts</th>
+               <tr className="bg-slate-100 border-b-2 border-slate-200 print:bg-white print:border-slate-800">
+                 <th className="p-3 print:p-1.5 text-[10px] print:text-[8px] font-black uppercase tracking-widest w-12 text-center border-r-2 border-slate-200 print:border-slate-800">Nº</th>
+                 <th className="p-3 print:p-1.5 text-[10px] print:text-[8px] font-black uppercase tracking-widest border-r-2 border-slate-200 print:border-slate-800">Criterio Evaluado</th>
+                 <th className="p-3 print:p-1.5 text-[10px] print:text-[8px] font-black uppercase tracking-widest text-center w-40 border-r-2 border-slate-200 print:border-slate-800">Respuesta</th>
+                 <th className="p-3 print:p-1.5 text-[10px] print:text-[8px] font-black uppercase tracking-widest text-center w-16">Pts</th>
                </tr>
              </thead>
              <tbody>
@@ -582,44 +572,44 @@ export default function App() {
                  else if (rawAns === 'no') { label = 'NO'; val = 0; }
 
                  return (
-                 <tr key={i} className="border-b border-slate-200">
-                   <td className="p-4 text-sm font-black text-center text-slate-400 border-r-2 border-slate-200">{i+1}</td>
-                   <td className="p-4 text-sm font-medium text-slate-800 border-r-2 border-slate-200 leading-relaxed">{c.pregunta}</td>
-                   <td className="p-4 text-center font-black text-sm border-r-2 border-slate-200 text-indigo-600">{label}</td>
-                   <td className="p-4 text-center font-black text-sm text-slate-500">{val}</td>
+                 <tr key={i} className="border-b border-slate-200 print:border-slate-400">
+                   <td className="p-3 print:p-1.5 text-xs print:text-[10px] font-black text-center text-slate-400 print:text-slate-800 border-r-2 border-slate-200 print:border-slate-800">{i+1}</td>
+                   <td className="p-3 print:p-1.5 text-xs print:text-[10px] font-medium text-slate-800 border-r-2 border-slate-200 print:border-slate-800 leading-tight">{c.pregunta}</td>
+                   <td className="p-3 print:p-1.5 text-center font-black text-xs print:text-[10px] border-r-2 border-slate-200 print:border-slate-800 text-indigo-600 print:text-slate-800">{label}</td>
+                   <td className="p-3 print:p-1.5 text-center font-black text-xs print:text-[10px] text-slate-500 print:text-slate-800">{val}</td>
                  </tr>
                  )
                })}
              </tbody>
            </table>
 
-           <div className="flex justify-end mb-10">
-              <div className="border-2 border-slate-200 p-6 rounded-2xl w-72 text-right">
-                <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">Puntaje / Porcentaje</p>
-                <p className="text-4xl font-black text-slate-800">{printingAudit.puntaje} <span className="text-xl">({printingAudit.cumplimiento}%)</span></p>
-                <p className="text-sm font-black text-slate-600 uppercase tracking-widest mt-2">{printingAudit.estado}</p>
+           <div className="flex justify-end mb-8 print:mb-4">
+              <div className="border-2 border-slate-200 p-5 print:p-2 rounded-2xl print:rounded-none print:border-slate-800 w-64 print:w-48 text-right">
+                <p className="text-[10px] print:text-[8px] font-black text-slate-400 print:text-slate-600 uppercase tracking-widest mb-1 print:mb-0">Puntaje / Porcentaje</p>
+                <p className="text-3xl print:text-2xl font-black text-slate-800">{printingAudit.puntaje} <span className="text-lg print:text-sm">({printingAudit.cumplimiento}%)</span></p>
+                <p className="text-xs print:text-[10px] font-black text-slate-600 uppercase tracking-widest mt-1">{printingAudit.estado}</p>
               </div>
            </div>
 
            {printingAudit.observaciones && (
-             <div className="mb-12">
-                <h3 className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-3 border-b-2 border-slate-800 pb-2">Observaciones Generales</h3>
-                <div className="p-5 border-2 border-slate-100 rounded-2xl text-sm font-medium text-slate-700 whitespace-pre-wrap leading-relaxed">
+             <div className="mb-10 print:mb-4">
+                <h3 className="text-[10px] print:text-[8px] font-black text-slate-400 print:text-slate-800 uppercase tracking-widest mb-2 border-b-2 border-slate-800 pb-1">Observaciones Generales</h3>
+                <div className="p-4 print:p-0 text-xs print:text-[10px] font-medium text-slate-700 print:text-slate-900 whitespace-pre-wrap leading-tight">
                    {printingAudit.observaciones}
                 </div>
              </div>
            )}
 
-           <div className="mt-20 pt-12 border-t-2 border-slate-200 flex justify-between px-16">
+           <div className="mt-16 print:mt-10 pt-10 print:pt-6 border-t-2 border-slate-200 print:border-slate-800 flex justify-between px-12 print:px-6">
               <div className="text-center">
-                 <div className="w-56 border-b-2 border-slate-800 mb-3"></div>
-                 <p className="text-xs font-black uppercase tracking-widest text-slate-800">{printingAudit.evaluador}</p>
-                 <p className="text-[9px] font-bold text-slate-500 uppercase mt-1">Evaluador SGCC-SM</p>
+                 <div className="w-48 print:w-40 border-b-2 border-slate-800 mb-2"></div>
+                 <p className="text-[10px] print:text-[8px] font-black uppercase tracking-widest text-slate-800">{printingAudit.evaluador}</p>
+                 <p className="text-[8px] print:text-[7px] font-bold text-slate-500 uppercase mt-0.5">Evaluador SGCC-SM</p>
               </div>
               <div className="text-center">
-                 <div className="w-56 border-b-2 border-slate-800 mb-3"></div>
-                 <p className="text-xs font-black uppercase tracking-widest text-slate-800">Firma de Recepción</p>
-                 <p className="text-[9px] font-bold text-slate-500 uppercase mt-1">{printingAudit.centro}</p>
+                 <div className="w-48 print:w-40 border-b-2 border-slate-800 mb-2"></div>
+                 <p className="text-[10px] print:text-[8px] font-black uppercase tracking-widest text-slate-800">Firma de Recepción</p>
+                 <p className="text-[8px] print:text-[7px] font-bold text-slate-500 uppercase mt-0.5">{printingAudit.centro}</p>
               </div>
            </div>
         </div>
@@ -655,12 +645,10 @@ export default function App() {
 
   return (
     <div className="min-h-screen bg-slate-50 flex flex-col md:flex-row font-sans">
-      {/* SIDEBAR */}
-      <aside className="w-full md:w-64 bg-[#0a2540] text-white flex flex-col h-screen sticky top-0 shrink-0 shadow-xl overflow-y-auto">
-        <div className="p-5 border-b border-white/5">
-          <h1 className="text-xl font-bold tracking-tight">SGCC-SM</h1>
-          <p className="text-xs text-blue-400 font-black uppercase tracking-widest mt-1">UHCIP INFANTO JUVENIL</p>
-        </div>
+      
+      {/* SIDEBAR: Oculto en impresión */}
+      <aside className="print:hidden w-full md:w-64 bg-[#0a2540] text-white flex flex-col h-screen sticky top-0 shrink-0 shadow-xl overflow-y-auto">
+        <div className="p-5 border-b border-white/5"><h1 className="text-xl font-bold tracking-tight">SGCC-SM</h1><p className="text-xs text-blue-400 font-black uppercase tracking-widest mt-1">UHCIP INFANTO JUVENIL</p></div>
         <nav className="flex-1 p-3 space-y-1">
           <button onClick={() => setActiveTab('dashboard')} className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl text-xs font-bold uppercase tracking-widest transition-all ${activeTab === 'dashboard' ? 'bg-blue-600 shadow-lg' : 'hover:bg-white/5 opacity-80'}`}><LayoutDashboard size={18}/> Panel Principal</button>
           <button onClick={() => setActiveTab('stats')} className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl text-xs font-bold uppercase tracking-widest transition-all ${activeTab === 'stats' ? 'bg-blue-600 shadow-lg' : 'hover:bg-white/5 opacity-80'}`}><BarChart3 size={18}/> Plazos Meta</button>
@@ -689,8 +677,8 @@ export default function App() {
         </div>
       </aside>
 
-      {/* CONTENIDO PRINCIPAL */}
-      <main className="flex-1 p-6 md:p-8 overflow-y-auto bg-slate-50 relative">
+      {/* ÁREA PRINCIPAL: Oculta en impresión */}
+      <main className="print:hidden flex-1 p-6 md:p-8 overflow-y-auto relative">
         
         {/* HEADER FLOTANTE (NOTIFICACIONES) */}
         <div className="absolute top-6 right-6 z-20">
@@ -719,7 +707,7 @@ export default function App() {
           </div>
         </div>
 
-        {/* PESTAÑA 1: DASHBOARD CLÁSICO */}
+        {/* PESTAÑA 1: DASHBOARD */}
         {activeTab === 'dashboard' && (
           <div className="space-y-6 animate-in fade-in mt-12 md:mt-0">
             <div><h2 className="text-2xl font-black text-slate-800 tracking-tight">Panel de Gestión Integral</h2><p className="text-xs text-slate-500 font-medium mt-1">Resumen de actividad clínica y normativa</p></div>
@@ -759,7 +747,6 @@ export default function App() {
                     <div className="mt-auto p-3 bg-white/10 rounded-xl text-center text-[9px] font-black uppercase tracking-widest text-indigo-300">Exclusivo Administradores</div>
                   )}
                 </div>
-                {/* MOSTRANDO REPORTE EN DASHBOARD */}
                 {reportContent && activeTab === 'dashboard' && currentUser?.rol === 'Admin' && (
                   <div className="mt-4 bg-[#081b30] p-4 rounded-xl border border-white/10 animate-in slide-in-from-top-4 relative z-10">
                      <div className="flex justify-between items-center mb-3 pb-2 border-b border-white/10">
@@ -773,7 +760,6 @@ export default function App() {
               </div>
             </div>
 
-            {/* SEGUIMIENTO DE TAREAS */}
             <div className="bg-white rounded-2xl shadow-sm border border-slate-200 p-6">
               <h3 className="text-xs font-black text-slate-800 uppercase tracking-widest mb-4 flex items-center gap-2"><ListTodo size={16} className="text-blue-500" /> Tareas Intersectoriales Pendientes</h3>
               <div className="overflow-x-auto">
@@ -822,9 +808,9 @@ export default function App() {
                  <div className="flex items-center gap-2 bg-slate-50 p-2 rounded-xl border border-slate-200">
                     <span className="text-[9px] font-black text-slate-400 ml-2 uppercase tracking-widest">META RED:</span>
                     {currentUser?.rol === 'Admin' ? (
-                      <input type="number" value={targetDays} onChange={(e) => handleUpdateTarget(e.target.value)} className="w-16 p-2 bg-white border border-blue-100 rounded-lg text-center font-black text-blue-600 outline-none focus:border-blue-500 text-sm shadow-sm"/>
+                      <input type="number" value={appConfig.targetDays || 7} onChange={(e) => handleUpdateTarget(e.target.value)} className="w-16 p-2 bg-white border border-blue-100 rounded-lg text-center font-black text-blue-600 outline-none focus:border-blue-500 text-sm shadow-sm"/>
                     ) : (
-                      <span className="px-3 py-2 font-black text-blue-600 text-sm">{targetDays}</span>
+                      <span className="px-3 py-2 font-black text-blue-600 text-sm">{appConfig.targetDays || 7}</span>
                     )}
                     <span className="text-[9px] font-black text-slate-500 mr-2 uppercase tracking-widest">Días</span>
                  </div>
@@ -846,7 +832,7 @@ export default function App() {
 
               <div className="bg-white p-6 rounded-2xl shadow-sm border border-slate-100 border-l-[8px] border-l-red-500 relative overflow-hidden">
                 <div className="flex justify-between items-start mb-3 relative z-10"><div className="p-2 bg-red-50 rounded-xl text-red-600"><AlertTriangle size={18}/></div><div className="px-2 py-1 bg-red-100 text-red-700 text-[8px] font-black rounded-lg uppercase tracking-[0.2em] shadow-sm">Brecha</div></div>
-                <h3 className="text-[9px] font-black text-slate-400 uppercase tracking-widest relative z-10">Casos sobre la meta ({targetDays} d)</h3>
+                <h3 className="text-[9px] font-black text-slate-400 uppercase tracking-widest relative z-10">Casos sobre la meta ({appConfig.targetDays || 7} d)</h3>
                 <p className="text-4xl font-black text-slate-800 mt-1 relative z-10">{redMetrics.fueraDePlazo} <span className="text-xs font-bold text-slate-300 uppercase tracking-widest">Casos</span></p>
                 {redMetrics.fueraDePlazo > 0 && <div className="absolute top-0 right-0 w-24 h-24 bg-red-50 rounded-full -mr-8 -mt-8 blur-xl"></div>}
               </div>
@@ -898,7 +884,7 @@ export default function App() {
                   <tbody className="divide-y divide-slate-50">
                     {visibleCases.map(c => {
                       const daysC = diffInDays(c.fechaEgreso, c.fechaIngresoEfectivo);
-                      const isOver = daysC !== null && daysC > targetDays;
+                      const isOver = daysC !== null && daysC > (appConfig.targetDays || 7);
                       return (
                         <tr key={c.id} className={`hover:bg-slate-50/80 transition-colors ${isOver ? 'bg-red-50/20' : ''}`}>
                           <td className="p-4">
@@ -941,7 +927,12 @@ export default function App() {
               {docs.map((d) => (
                 <div key={d.id} className="bg-white p-6 rounded-2xl shadow-sm border border-slate-200 hover:border-blue-200 transition-colors flex flex-col justify-between">
                   <div>
-                    <div className="flex justify-between items-start mb-3"><span className="text-[9px] font-black text-blue-600 bg-blue-50 px-2 py-1 rounded-lg uppercase tracking-widest">{d.id}</span><button onClick={() => { setEditingDocId(d.id); setDocForm(d); setActiveDocModalTab('datos'); setIsDocModalOpen(true); }} className="text-slate-300 hover:text-blue-600 p-1.5 bg-slate-50 rounded-lg"><Edit2 size={14} /></button></div>
+                    <div className="flex justify-between items-start mb-3"><span className="text-[9px] font-black text-blue-600 bg-blue-50 px-2 py-1 rounded-lg uppercase tracking-widest">{d.id}</span>
+                      <div className="flex gap-2">
+                        <button onClick={() => { setEditingDocId(d.id); setDocForm(d); setActiveDocModalTab('datos'); setIsDocModalOpen(true); }} className="text-slate-400 hover:text-blue-600 p-1.5 bg-slate-50 rounded-lg"><Edit2 size={14} /></button>
+                        {currentUser?.rol === 'Admin' && (<button onClick={async () => { if(window.confirm('¿Eliminar protocolo permanente?')) await deleteFromCloud('docs', d.id); }} className="text-slate-400 hover:text-red-500 p-1.5 bg-slate-50 rounded-lg"><Trash2 size={14}/></button>)}
+                      </div>
+                    </div>
                     <h3 className="text-lg font-black text-slate-800 mb-1 leading-tight">{d.nombre}</h3><p className="text-[10px] font-bold text-slate-400 mb-4 uppercase tracking-widest flex items-center gap-1.5"><Activity size={12}/> {d.ambito} • {d.fase}</p>
                   </div>
                   <div>
@@ -982,7 +973,7 @@ export default function App() {
                          <div>
                            <h3 className="font-black text-slate-800 uppercase text-xs mb-1">{a.centro}</h3>
                            <p className="text-[9px] text-blue-600 font-black uppercase tracking-widest mb-2 bg-blue-50 px-2 py-0.5 rounded w-fit">{template ? template.nombre : 'Pauta Eliminada'}</p>
-                           <p className="text-[9px] text-slate-400 font-bold uppercase tracking-widest flex items-center gap-1"><Calendar size={10}/> {a.fecha} • {a.evaluador}</p>
+                           <p className="text-[9px] text-slate-400 font-bold uppercase tracking-widest flex items-center gap-1"><Calendar size={10}/> {a.fecha} • Eval: {a.evaluador}</p>
                          </div>
                          <div className="text-right flex flex-col items-end">
                             <div className="text-3xl font-black text-slate-800">{a.cumplimiento}%</div>
@@ -992,10 +983,14 @@ export default function App() {
                        </div>
                        
                        <div className="mt-4 pt-4 border-t border-slate-100 flex flex-col gap-3">
-                         {a.observaciones && <p className="text-[10px] text-slate-500 font-medium italic"><MessageSquare size={12} className="inline mr-1"/> {a.observaciones}</p>}
+                         {a.observaciones && (
+                           <p className="text-[10px] text-slate-500 font-medium italic"><MessageSquare size={12} className="inline mr-1 text-slate-400"/> {a.observaciones}</p>
+                         )}
                          <div className="flex justify-end gap-2 mt-2">
-                           <button onClick={() => setPrintingAudit(a)} className="bg-slate-100 text-slate-600 px-3 py-1.5 rounded-lg text-[9px] font-black uppercase tracking-widest hover:bg-slate-200 flex items-center gap-1.5 transition-colors"><Printer size={12}/> Ver / Imprimir</button>
-                           {currentUser?.rol === 'Admin' && (<button onClick={async () => { if(window.confirm('¿Eliminar evaluación permanente?')) await deleteFromCloud('audits', a.id); }} className="bg-red-50 text-red-500 px-3 py-1.5 rounded-lg text-[9px] font-black uppercase tracking-widest hover:bg-red-100 flex items-center gap-1.5 transition-colors"><Trash2 size={12}/> Eliminar</button>)}
+                           <button onClick={() => setPrintingAudit(a)} className="bg-slate-100 text-slate-600 px-3 py-1.5 rounded-lg text-[9px] font-black uppercase tracking-widest hover:bg-slate-200 flex items-center gap-1.5 transition-colors"><Printer size={12}/> Imprimir / PDF</button>
+                           {currentUser?.rol === 'Admin' && (
+                             <button onClick={async () => { if(window.confirm('¿Eliminar evaluación permanente?')) await deleteFromCloud('audits', a.id); }} className="bg-red-50 text-red-500 px-3 py-1.5 rounded-lg text-[9px] font-black uppercase tracking-widest hover:bg-red-100 flex items-center gap-1.5 transition-colors"><Trash2 size={12}/> Eliminar</button>
+                           )}
                          </div>
                        </div>
                     </div>
@@ -1018,7 +1013,7 @@ export default function App() {
               </div>
             </div>
             <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-              {directory.filter(d => d.nombre.toLowerCase().includes(dirSearch.toLowerCase()) || d.institucion.toLowerCase().includes(dirSearch.toLowerCase())).map(d => (
+              {directory.filter(d => (d.nombre || '').toLowerCase().includes(dirSearch.toLowerCase()) || (d.institucion || '').toLowerCase().includes(dirSearch.toLowerCase())).map(d => (
                 <div key={d.id} className="bg-white p-6 rounded-2xl shadow-sm border border-slate-100 relative group hover:border-blue-200 transition-colors">
                    <div className="absolute top-3 right-3 opacity-0 group-hover:opacity-100 transition-opacity flex gap-1.5">
                      <button onClick={() => { setEditingDirId(d.id); setDirForm(d); setIsDirModalOpen(true); }} className="p-1.5 bg-slate-50 hover:bg-blue-50 text-slate-400 hover:text-blue-600 rounded-lg"><Edit2 size={14}/></button>
@@ -1133,14 +1128,14 @@ export default function App() {
                <button onClick={() => setIsTemplateModalOpen(false)} className="text-white/60 hover:text-white font-bold text-3xl">&times;</button>
             </div>
             
-            <div className="p-6 md:p-8 overflow-y-auto flex-1 bg-white">
+            <div className="p-6 md:p-8 overflow-y-auto flex-1 bg-slate-50">
               <div className="grid grid-cols-1 lg:grid-cols-5 gap-8">
                 
                 {/* PANEL IZQUIERDO: EXTRACCIÓN Y CONFIG BASE */}
                 <div className="lg:col-span-2 space-y-6">
                   <div className="bg-indigo-50/50 p-6 rounded-2xl border-2 border-indigo-100 text-center">
-                    <h4 className="text-[11px] font-black text-indigo-900 uppercase tracking-[0.2em] mb-2 flex items-center justify-center gap-2"><Wand2 size={16}/> Constructor por IA</h4>
-                    <p className="text-[10px] text-indigo-700/80 mb-4 font-medium leading-relaxed">Sube el PDF o pega el texto para armar el formulario completo automáticamente.</p>
+                    <h4 className="text-[11px] font-black text-indigo-900 uppercase tracking-[0.2em] mb-2 flex items-center justify-center gap-2"><Wand2 size={16}/> Constructor Dinámico por IA</h4>
+                    <p className="text-[10px] text-indigo-700/80 mb-4 font-medium leading-relaxed">Sube el PDF o pega el texto para armar el formulario, sus encabezados y escalas de evaluación automáticamente.</p>
                     
                     <div className="flex flex-col gap-3 w-full">
                       <label className="flex flex-col items-center justify-center w-full h-20 border-2 border-indigo-300 border-dashed rounded-xl cursor-pointer bg-white hover:bg-indigo-50 transition-colors shadow-sm">
@@ -1152,30 +1147,30 @@ export default function App() {
                       </label>
                       <span className="text-[9px] font-black text-indigo-400 uppercase tracking-widest">O LA OPCIÓN MÁS RÁPIDA:</span>
                       <textarea value={rawTextForAI} onChange={e=>setRawTextForAI(e.target.value)} className="w-full border-2 border-indigo-200 p-3 rounded-xl text-xs font-medium outline-none focus:border-indigo-400 resize-y min-h-[80px]" placeholder="2. Pega el texto aquí..."/>
-                      <button onClick={handleProcessRawTextForAI} disabled={!rawTextForAI.trim() || isDigitizing} className="w-full bg-indigo-600 text-white px-4 py-2.5 rounded-xl text-[10px] font-black uppercase tracking-widest hover:bg-indigo-700 disabled:opacity-50 flex justify-center items-center gap-2">
-                        {isDigitizing ? <Loader2 size={14} className="animate-spin"/> : <Wand2 size={14}/>} Estructurar con IA
+                      <button onClick={handleProcessRawTextForAI} disabled={!rawTextForAI.trim() || isDigitizing} className="w-full bg-indigo-600 text-white px-4 py-2.5 rounded-xl text-[10px] font-black uppercase tracking-widest hover:bg-indigo-700 disabled:opacity-50 transition-colors flex justify-center items-center gap-2">
+                        {isDigitizing ? <Loader2 size={14} className="animate-spin"/> : <Wand2 size={14}/>} Generar Formato
                       </button>
                     </div>
                   </div>
                   
-                  <div className="space-y-4">
+                  <div className="space-y-4 bg-white p-5 border border-slate-200 rounded-2xl">
                     <div><label className="block text-[10px] font-black text-slate-400 uppercase mb-1.5">Nombre del Instrumento</label><input type="text" value={templateForm.nombre} onChange={e=>setTemplateForm({...templateForm, nombre: e.target.value})} className="w-full border-2 border-slate-100 p-3 rounded-xl text-sm font-bold"/></div>
                     <div><label className="block text-[10px] font-black text-slate-400 uppercase mb-1.5">Tipo de Actividad</label><select value={templateForm.tipo} onChange={e=>setTemplateForm({...templateForm, tipo: e.target.value})} className="w-full border-2 border-slate-100 p-3 rounded-xl text-sm font-bold bg-slate-50"><option value="Ambos">Híbrida (Audit/Consult)</option><option value="Auditoría">Solo Auditorías</option><option value="Consultoría">Solo Consultorías</option></select></div>
                   </div>
                   
                   {/* RANGOS */}
-                  <div className="bg-slate-50 p-5 rounded-2xl border-2 border-slate-200">
-                    <label className="block text-[10px] font-black text-slate-600 uppercase mb-2">Rangos de Resultado</label>
+                  <div className="bg-white p-5 rounded-2xl border border-slate-200">
+                    <label className="block text-[10px] font-black text-slate-600 uppercase mb-2">Escalas de Resultado</label>
                     {templateForm.rangos.map((r, i) => (
                        <div key={i} className="flex gap-1.5 mb-2 items-center">
-                          <input type="number" placeholder="Min" value={r.min} onChange={(e) => {const newR=[...templateForm.rangos]; newR[i].min=e.target.value; setTemplateForm({...templateForm, rangos: newR})}} className="w-12 border-2 border-white rounded-lg p-2.5 text-[10px] font-black text-center" />
+                          <input type="number" placeholder="Min" value={r.min} onChange={(e) => {const newR=[...templateForm.rangos]; newR[i].min=e.target.value; setTemplateForm({...templateForm, rangos: newR})}} className="w-12 border-2 border-slate-100 rounded-lg p-2 text-[10px] font-black text-center" />
                           <span className="text-[10px] font-black text-slate-300">-</span>
-                          <input type="number" placeholder="Max" value={r.max} onChange={(e) => {const newR=[...templateForm.rangos]; newR[i].max=e.target.value; setTemplateForm({...templateForm, rangos: newR})}} className="w-12 border-2 border-white rounded-lg p-2.5 text-[10px] font-black text-center" />
-                          <input type="text" placeholder="Ej: Riesgo" value={r.resultado} onChange={(e) => {const newR=[...templateForm.rangos]; newR[i].resultado=e.target.value; setTemplateForm({...templateForm, rangos: newR})}} className="flex-1 border-2 border-white rounded-lg p-2.5 text-xs font-bold" />
-                          <button onClick={()=>{const newR=[...templateForm.rangos]; newR.splice(i,1); setTemplateForm({...templateForm, rangos: newR});}} className="p-2.5 bg-red-50 text-red-500 rounded-lg"><Trash2 size={14}/></button>
+                          <input type="number" placeholder="Max" value={r.max} onChange={(e) => {const newR=[...templateForm.rangos]; newR[i].max=e.target.value; setTemplateForm({...templateForm, rangos: newR})}} className="w-12 border-2 border-slate-100 rounded-lg p-2 text-[10px] font-black text-center" />
+                          <input type="text" placeholder="Ej: Riesgo" value={r.resultado} onChange={(e) => {const newR=[...templateForm.rangos]; newR[i].resultado=e.target.value; setTemplateForm({...templateForm, rangos: newR})}} className="flex-1 border-2 border-slate-100 rounded-lg p-2 text-xs font-bold" />
+                          <button onClick={()=>{const newR=[...templateForm.rangos]; newR.splice(i,1); setTemplateForm({...templateForm, rangos: newR});}} className="p-2 bg-red-50 text-red-500 rounded-lg"><Trash2 size={14}/></button>
                        </div>
                     ))}
-                    <button onClick={()=>setTemplateForm({...templateForm, rangos: [...templateForm.rangos, {min:'', max:'', resultado:''}]})} className="text-[10px] text-indigo-600 font-black uppercase flex items-center gap-1.5 mt-4"><Plus size={14}/> Añadir Rango</button>
+                    <button onClick={()=>setTemplateForm({...templateForm, rangos: [...templateForm.rangos, {min:'', max:'', resultado:''}]})} className="text-[10px] text-indigo-600 font-black uppercase flex items-center gap-1.5 mt-4"><Plus size={14}/> Añadir Escala</button>
                   </div>
                 </div>
 
@@ -1183,12 +1178,12 @@ export default function App() {
                 <div className="lg:col-span-3 flex flex-col gap-6">
                   
                   {/* ENCABEZADOS DINÁMICOS */}
-                  <div>
-                    <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-3 bg-slate-100 p-2 rounded-lg">1. Encabezados Libres (Identificación)</label>
+                  <div className="bg-white p-5 border border-slate-200 rounded-2xl shadow-sm">
+                    <label className="block text-[10px] font-black text-slate-500 uppercase tracking-widest mb-3 bg-slate-50 p-2 rounded-lg border border-slate-100">1. Encabezados Libres (Identificación)</label>
                     <div className="space-y-2">
                       {templateForm.encabezados.map((h, i) => (
                         <div key={i} className="flex gap-3 items-center">
-                          <input type="text" value={h.label} onChange={e=>{const n=[...templateForm.encabezados]; n[i].label=e.target.value; setTemplateForm({...templateForm, encabezados: n});}} className="flex-1 border-2 border-slate-100 p-2 rounded-xl text-xs font-bold" placeholder="Ej: Nombre del Referente"/>
+                          <input type="text" value={h.label} onChange={e=>{const n=[...templateForm.encabezados]; n[i].label=e.target.value; setTemplateForm({...templateForm, encabezados: n});}} className="flex-1 border-2 border-slate-100 p-2 rounded-xl text-xs font-bold bg-white" placeholder="Ej: Nombre del Referente"/>
                           <select value={h.type} onChange={e=>{const n=[...templateForm.encabezados]; n[i].type=e.target.value; setTemplateForm({...templateForm, encabezados: n});}} className="border-2 border-slate-100 p-2 rounded-xl text-xs font-bold bg-slate-50">
                             <option value="text">Texto Corto</option>
                             <option value="date">Fecha</option>
@@ -1196,35 +1191,35 @@ export default function App() {
                           <button onClick={()=>{const n=[...templateForm.encabezados]; n.splice(i,1); setTemplateForm({...templateForm, encabezados: n});}} className="p-2 bg-red-50 text-red-500 rounded-xl"><Trash2 size={16}/></button>
                         </div>
                       ))}
-                      <button onClick={()=>setTemplateForm({...templateForm, encabezados: [...templateForm.encabezados, {id: `enc_${Date.now()}`, label: '', type: 'text'}]})} className="text-[9px] bg-slate-50 text-slate-500 px-4 py-2 rounded-lg font-black uppercase flex items-center gap-2 mt-2 border border-slate-200"><Plus size={12}/> Agregar Encabezado</button>
+                      <button onClick={()=>setTemplateForm({...templateForm, encabezados: [...templateForm.encabezados, {id: `enc_${Date.now()}`, label: '', type: 'text'}]})} className="text-[9px] bg-white text-slate-500 px-4 py-2 rounded-lg font-black uppercase flex items-center gap-2 mt-3 border-2 border-slate-200 hover:bg-slate-50 transition-colors"><Plus size={12}/> Agregar Campo Adicional</button>
                     </div>
                   </div>
 
                   {/* CRITERIOS DINÁMICOS */}
-                  <div className="flex-1 flex flex-col min-h-[400px]">
-                    <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-3 bg-slate-100 p-2 rounded-lg">2. Criterios y Alternativas de Puntuación</label>
+                  <div className="flex-1 flex flex-col min-h-[400px] bg-white p-5 border border-slate-200 rounded-2xl shadow-sm">
+                    <label className="block text-[10px] font-black text-slate-500 uppercase tracking-widest mb-3 bg-slate-50 p-2 rounded-lg border border-slate-100">2. Criterios y Alternativas de Puntuación</label>
                     <div className="overflow-y-auto pr-2 space-y-4">
                       {templateForm.criterios.map((c, i) => (
                         <div key={i} className="flex flex-col gap-2 p-4 border-2 border-slate-100 rounded-2xl bg-slate-50 relative">
                           <button onClick={()=>{const newC=[...templateForm.criterios]; newC.splice(i,1); setTemplateForm({...templateForm, criterios: newC});}} className="absolute top-3 right-3 text-slate-300 hover:text-red-500"><Trash2 size={16}/></button>
                           <div className="flex items-start gap-2 pr-8">
-                             <div className="p-2 bg-white text-slate-400 rounded-lg text-[10px] font-black shrink-0 border border-slate-100">{i+1}</div>
+                             <div className="p-2 bg-white text-slate-400 rounded-lg text-[10px] font-black shrink-0 border border-slate-200">{i+1}</div>
                              <textarea rows="2" value={c.pregunta} onChange={e=>{const newC=[...templateForm.criterios]; newC[i].pregunta=e.target.value; setTemplateForm({...templateForm, criterios: newC});}} className="flex-1 border-2 border-white p-2.5 rounded-xl text-sm font-medium resize-y shadow-sm" placeholder="Escribe el criterio a evaluar..."/>
                           </div>
                           <div className="pl-10">
-                            <label className="text-[9px] font-black text-slate-400 uppercase tracking-widest flex items-center gap-1 mb-1">Opciones y Puntajes (Formato: Nombre=Valor)</label>
+                            <label className="text-[9px] font-black text-slate-400 uppercase tracking-widest flex items-center gap-1 mb-1">Opciones y Puntajes (Formato: Etiqueta=Puntaje, separadas por coma)</label>
                             <input type="text" value={c.opciones} onChange={e=>{const newC=[...templateForm.criterios]; newC[i].opciones=e.target.value; setTemplateForm({...templateForm, criterios: newC});}} className="w-full border-2 border-white p-2.5 rounded-xl text-xs font-bold text-indigo-700 shadow-sm" placeholder="Ej: SÍ=1, NO=0  o  Siempre=3, A veces=2, Nunca=0"/>
                           </div>
                         </div>
                       ))}
                     </div>
-                    <button onClick={()=>setTemplateForm({...templateForm, criterios: [...templateForm.criterios, {id: `crit_${Date.now()}`, pregunta: '', opciones: 'SÍ=1, NO=0'}]})} className="mt-4 text-[10px] bg-slate-800 text-white px-5 py-3 rounded-xl font-black uppercase flex items-center justify-center gap-2 hover:bg-slate-900"><Plus size={14}/> Agregar Pregunta Manual</button>
+                    <button onClick={()=>setTemplateForm({...templateForm, criterios: [...templateForm.criterios, {id: `crit_${Date.now()}`, pregunta: '', opciones: 'SÍ=1, NO=0'}]})} className="mt-5 text-[10px] bg-slate-800 text-white px-5 py-3 rounded-xl font-black uppercase flex items-center justify-center gap-2 hover:bg-slate-900"><Plus size={14}/> Agregar Pregunta Manual</button>
                   </div>
 
                 </div>
               </div>
             </div>
-            <div className="bg-slate-50 p-6 border-t border-slate-200 flex justify-end gap-4 shrink-0"><button onClick={() => setIsTemplateModalOpen(false)} className="px-8 py-3 text-slate-500 font-bold text-xs uppercase hover:text-slate-700">Cancelar</button><button onClick={handleSaveTemplate} className="px-10 py-3 bg-slate-900 text-white font-black text-[10px] uppercase rounded-xl shadow-lg hover:bg-black flex items-center gap-2"><CheckCircle size={16}/> Guardar Formulario</button></div>
+            <div className="bg-white p-6 border-t border-slate-200 flex justify-end gap-4 shrink-0"><button onClick={() => setIsTemplateModalOpen(false)} className="px-8 py-3 text-slate-500 font-bold text-xs uppercase hover:text-slate-700">Cancelar</button><button onClick={handleSaveTemplate} className="px-10 py-3 bg-slate-900 text-white font-black text-[10px] uppercase rounded-xl shadow-lg hover:bg-black flex items-center gap-2"><CheckCircle size={16}/> Guardar Formulario</button></div>
           </div>
         </div>
       )}
@@ -1240,7 +1235,7 @@ export default function App() {
              
              <div className="p-6 md:p-8 overflow-y-auto space-y-6 flex-1 bg-slate-50">
                 {/* SELECTOR DE PAUTA BASE */}
-                <div className="bg-white p-5 rounded-2xl border-2 border-slate-100">
+                <div className="bg-white p-5 rounded-2xl border-2 border-slate-100 shadow-sm">
                   <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-2">Instrumento a Evaluar</label>
                   <select value={auditForm.templateId} onChange={e=>setAuditForm({...auditForm, templateId: e.target.value, answers: {}, headerAnswers: {}})} className="w-full p-4 border-2 border-blue-100 rounded-xl bg-blue-50 text-blue-900 font-black text-sm outline-none cursor-pointer shadow-sm">
                     <option value="">Seleccione formulario del catálogo...</option>
@@ -1259,14 +1254,17 @@ export default function App() {
                          <div className="bg-white p-6 rounded-2xl border-2 border-slate-100 shadow-sm">
                            <h4 className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-4 border-b-2 border-slate-100 pb-2">Identificación de la Evaluación</h4>
                            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                             <div>
-                               <label className="block text-[10px] font-black text-slate-600 uppercase mb-1.5">Centro a Evaluar (Vinculación)</label>
-                               <select value={auditForm.centro} onChange={e=>setAuditForm({...auditForm, centro: e.target.value})} className="w-full p-3 border-2 border-slate-200 rounded-xl text-xs font-bold"><option value="">Seleccione...</option>{centros.map(c=><option key={c}>{c}</option>)}</select>
-                             </div>
                              {template.encabezados.map(h => (
                                <div key={h.id}>
                                   <label className="block text-[10px] font-black text-slate-600 uppercase mb-1.5">{h.label}</label>
-                                  <input type={h.type} value={auditForm.headerAnswers?.[h.id] || ''} onChange={e=>setAuditForm({...auditForm, headerAnswers: {...auditForm.headerAnswers, [h.id]: e.target.value}})} className="w-full p-3 border-2 border-slate-200 rounded-xl text-xs font-bold outline-none focus:border-blue-400"/>
+                                  {h.label.toLowerCase().includes('centro') || h.label.toLowerCase().includes('dispositivo') ? (
+                                     <select value={auditForm.headerAnswers[h.id] || ''} onChange={e=>setAuditForm({...auditForm, centro: e.target.value, headerAnswers: {...auditForm.headerAnswers, [h.id]: e.target.value}})} className="w-full p-3 border-2 border-slate-200 rounded-xl text-xs font-bold outline-none focus:border-blue-400 bg-white">
+                                        <option value="">Seleccione Centro de la red...</option>
+                                        {centros.map(c=><option key={c} value={c}>{c}</option>)}
+                                     </select>
+                                  ) : (
+                                     <input type={h.type} value={auditForm.headerAnswers[h.id] || ''} onChange={e=>setAuditForm({...auditForm, headerAnswers: {...auditForm.headerAnswers, [h.id]: e.target.value}})} className="w-full p-3 border-2 border-slate-200 rounded-xl text-xs font-bold outline-none focus:border-blue-400"/>
+                                  )}
                                </div>
                              ))}
                            </div>
@@ -1309,14 +1307,14 @@ export default function App() {
 
                        <div className="bg-white p-6 rounded-2xl border-2 border-slate-100 shadow-sm">
                          <label className="block text-[10px] font-black text-slate-600 uppercase tracking-widest mb-3 flex items-center gap-2"><MessageSquare size={14}/> Notas Clínicas o Aclaraciones (Opcional)</label>
-                         <textarea rows="3" value={auditForm.observaciones || ''} onChange={e=>setAuditForm({...auditForm, observaciones: e.target.value})} className="w-full border-2 border-slate-200 p-4 rounded-xl text-xs font-medium text-slate-700 outline-none focus:border-blue-500 bg-slate-50" placeholder="Observaciones generales para imprimir en el documento..."/>
+                         <textarea rows="3" value={auditForm.observaciones || ''} onChange={e=>setAuditForm({...auditForm, observaciones: e.target.value})} className="w-full border-2 border-slate-200 p-4 rounded-xl text-xs font-medium text-slate-700 outline-none focus:border-blue-500 bg-slate-50" placeholder="Observaciones generales para imprimir en el documento final..."/>
                        </div>
                     </div>
                   );
                 })()}
              </div>
              
-             <div className="bg-white p-6 border-t-2 border-slate-100 flex justify-end gap-3 shrink-0"><button onClick={() => setIsAuditModalOpen(false)} className="px-8 py-3.5 text-slate-500 font-bold text-xs uppercase tracking-widest">Cancelar</button><button onClick={handleSaveAudit} disabled={!auditForm.templateId || !auditForm.centro} className="px-10 py-3.5 bg-blue-600 text-white font-black text-[10px] uppercase tracking-[0.2em] rounded-xl shadow-lg hover:bg-blue-700 transition-all disabled:opacity-50">Guardar Evaluación</button></div>
+             <div className="bg-white p-6 border-t-2 border-slate-100 flex justify-end gap-3 shrink-0"><button onClick={() => setIsAuditModalOpen(false)} className="px-8 py-3.5 text-slate-500 font-bold text-xs uppercase tracking-widest">Cancelar</button><button onClick={handleSaveAudit} disabled={!auditForm.templateId} className="px-10 py-3.5 bg-blue-600 text-white font-black text-[10px] uppercase tracking-[0.2em] rounded-xl shadow-lg hover:bg-blue-700 transition-all disabled:opacity-50">Guardar Evaluación</button></div>
           </div>
         </div>
       )}
@@ -1431,7 +1429,6 @@ export default function App() {
                   <div className="bg-slate-50 p-6 rounded-2xl border-2 border-slate-200 shrink-0 shadow-inner">
                     <h4 className="text-[10px] font-black text-slate-600 uppercase tracking-widest mb-4">Nuevo Hito de Intervención / Gestión</h4>
                     <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-4">
-                      {/* SELECTOR CON REUNIONES RESTAURADO */}
                       <div className="flex flex-col gap-2"><label className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Tipo</label>
                         <select value={newBitacoraEntry.tipo} onChange={e=>setNewBitacoraEntry({...newBitacoraEntry, tipo: e.target.value})} className="border-2 border-white p-3 rounded-xl text-sm font-bold shadow-sm outline-none focus:border-blue-300 cursor-pointer">
                           <option value="Nota Adm.">📝 Nota Adm.</option>
@@ -1674,7 +1671,7 @@ export default function App() {
                       </label>
                       <span className="text-[9px] font-black text-indigo-400 uppercase tracking-widest">O LA OPCIÓN MÁS RÁPIDA:</span>
                       <textarea value={rawTextForAI} onChange={e=>setRawTextForAI(e.target.value)} className="w-full border-2 border-indigo-200 p-3 rounded-xl text-xs font-medium outline-none focus:border-indigo-400 resize-y min-h-[80px]" placeholder="2. Pega el texto aquí..."/>
-                      <button onClick={handleProcessRawTextForAI} disabled={!rawTextForAI.trim() || isDigitizing} className="w-full bg-indigo-600 text-white px-4 py-2.5 rounded-xl text-[10px] font-black uppercase tracking-widest hover:bg-indigo-700 disabled:opacity-50 flex justify-center items-center gap-2">
+                      <button onClick={handleProcessRawTextForAI} disabled={!rawTextForAI.trim() || isDigitizing} className="w-full bg-indigo-600 text-white px-4 py-2.5 rounded-xl text-[10px] font-black uppercase tracking-widest hover:bg-indigo-700 disabled:opacity-50 transition-colors flex justify-center items-center gap-2">
                         {isDigitizing ? <Loader2 size={14} className="animate-spin"/> : <Wand2 size={14}/>} Generar Formato
                       </button>
                     </div>
@@ -1845,6 +1842,102 @@ export default function App() {
           </div>
         </div>
       )}
+
+      {/* 5. MODAL DIRECTORIO */}
+      {isDirModalOpen && (
+        <div className="fixed inset-0 bg-[#0a2540]/90 backdrop-blur-sm flex items-center justify-center p-4 z-50 fade-in no-print">
+          <div className="bg-white rounded-3xl shadow-2xl w-full max-w-sm max-h-[90vh] flex flex-col border border-slate-200 overflow-hidden">
+            <div className="bg-blue-600 p-6 text-white flex justify-between items-center shrink-0">
+               <h3 className="font-black text-lg uppercase tracking-widest">{editingDirId ? 'Editar Contacto' : 'Nuevo Contacto'}</h3>
+               <button onClick={() => setIsDirModalOpen(false)} className="text-white/60 hover:text-white font-bold text-3xl">&times;</button>
+            </div>
+            <div className="p-6 space-y-4 overflow-y-auto flex-1">
+              <div><label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1.5">Nombre Completo</label><input type="text" value={dirForm.nombre} onChange={e=>setDirForm({...dirForm, nombre: e.target.value})} className="w-full border-2 border-slate-100 p-3 rounded-xl text-sm font-bold outline-none focus:border-blue-500" placeholder="Ej: Ps. Carlos Pinto" /></div>
+              <div><label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1.5">Institución / Centro</label><input type="text" value={dirForm.institucion} onChange={e=>setDirForm({...dirForm, institucion: e.target.value})} className="w-full border-2 border-slate-100 p-3 rounded-xl text-sm font-bold outline-none focus:border-blue-500" placeholder="Ej: COSAM Puerto Montt" /></div>
+              <div><label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1.5">Cargo</label><input type="text" value={dirForm.cargo} onChange={e=>setDirForm({...dirForm, cargo: e.target.value})} className="w-full border-2 border-slate-100 p-3 rounded-xl text-sm font-bold outline-none focus:border-blue-500" placeholder="Ej: Psicólogo Clínico" /></div>
+              <div><label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1.5">Teléfono</label><input type="text" value={dirForm.telefono} onChange={e=>setDirForm({...dirForm, telefono: e.target.value})} className="w-full border-2 border-slate-100 p-3 rounded-xl text-sm font-bold outline-none focus:border-blue-500" placeholder="+56 9..." /></div>
+              <div><label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1.5">Correo Electrónico</label><input type="email" value={dirForm.correo} onChange={e=>setDirForm({...dirForm, correo: e.target.value})} className="w-full border-2 border-slate-100 p-3 rounded-xl text-sm font-bold outline-none focus:border-blue-500" placeholder="correo@red.cl" /></div>
+            </div>
+            <div className="bg-slate-50 p-6 border-t border-slate-200 flex justify-end gap-3 shrink-0"><button onClick={() => setIsDirModalOpen(false)} className="px-6 py-3 text-slate-500 font-bold text-xs uppercase tracking-widest hover:text-slate-700">Cancelar</button><button onClick={handleSaveDir} className="px-8 py-3 bg-blue-600 text-white font-black text-[10px] uppercase tracking-widest rounded-xl shadow-md hover:bg-blue-700">Guardar</button></div>
+          </div>
+        </div>
+      )}
+
+      {/* 6. MODAL USUARIOS */}
+      {isUserModalOpen && (
+        <div className="fixed inset-0 bg-[#0a2540]/90 backdrop-blur-sm flex items-center justify-center p-4 z-50 fade-in no-print">
+          <div className="bg-white rounded-3xl shadow-2xl w-full max-w-lg max-h-[90vh] flex flex-col border border-slate-200 overflow-hidden">
+            <div className="bg-slate-900 p-6 text-white flex justify-between items-center shrink-0">
+              <h3 className="font-black text-lg uppercase tracking-widest flex items-center gap-3"><UserPlus size={20}/> {editingUserId ? 'Editar Credencial' : 'Nueva Credencial'}</h3>
+              <button onClick={() => setIsUserModalOpen(false)} className="text-slate-400 hover:text-white font-bold text-3xl">&times;</button>
+            </div>
+            <div className="p-6 md:p-8 overflow-y-auto space-y-4 flex-1">
+              <div className="grid grid-cols-2 gap-4">
+                <div><label className="block text-[9px] font-black text-slate-400 uppercase tracking-widest mb-1.5">RUT Acceso *</label><input type="text" value={userForm.rut} onChange={e=>setUserForm({...userForm, rut: e.target.value})} className="w-full border-2 border-slate-100 p-3 rounded-xl text-sm font-bold outline-none focus:border-indigo-500" placeholder="11.111.111-1"/></div>
+                <div><label className="block text-[9px] font-black text-slate-400 uppercase tracking-widest mb-1.5">Contraseña *</label><input type="text" value={userForm.password} onChange={e=>setUserForm({...userForm, password: e.target.value})} className="w-full border-2 border-slate-100 p-3 rounded-xl text-sm font-bold outline-none focus:border-indigo-500" placeholder="••••••"/></div>
+              </div>
+              <div className="grid grid-cols-4 gap-4">
+                <div className="col-span-3"><label className="block text-[9px] font-black text-slate-400 uppercase tracking-widest mb-1.5">Nombre Completo *</label><input type="text" value={userForm.nombre} onChange={e=>setUserForm({...userForm, nombre: e.target.value})} className="w-full border-2 border-slate-100 p-3 rounded-xl text-sm font-bold outline-none focus:border-indigo-500" placeholder="Dra. Andrea Silva"/></div>
+                <div className="col-span-1"><label className="block text-[9px] font-black text-slate-400 uppercase tracking-widest mb-1.5">Iniciales</label><input type="text" value={userForm.iniciales} onChange={e=>setUserForm({...userForm, iniciales: e.target.value.toUpperCase()})} className="w-full border-2 border-slate-100 p-3 rounded-xl text-sm font-bold text-center outline-none focus:border-indigo-500" placeholder="AS" maxLength={3}/></div>
+              </div>
+              <div><label className="block text-[9px] font-black text-slate-400 uppercase tracking-widest mb-1.5">Cargo Institucional</label><input type="text" value={userForm.cargo} onChange={e=>setUserForm({...userForm, cargo: e.target.value})} className="w-full border-2 border-slate-100 p-3 rounded-xl text-sm font-bold outline-none focus:border-indigo-500" placeholder="Ej: Directora COSAM"/></div>
+              <div className="border-t-2 border-slate-100 pt-4 mt-2">
+                <label className="block text-[10px] font-black text-slate-800 mb-2 uppercase tracking-widest">Nivel de Privilegios</label>
+                <select value={userForm.rol} onChange={e=>setUserForm({...userForm, rol: e.target.value})} className="w-full border-2 border-slate-100 p-3 rounded-xl text-sm font-black outline-none focus:border-indigo-500 mb-3 bg-slate-50 text-slate-600 cursor-pointer">
+                  <option value="Usuario">Usuario Clínico Estándar (Limitado)</option>
+                  <option value="Admin">Administrador UHCIP (Acceso Total)</option>
+                </select>
+                {userForm.rol === 'Usuario' && (
+                  <div className="bg-indigo-50 p-4 rounded-2xl border-2 border-indigo-100">
+                    <p className="text-[9px] text-indigo-800 font-black uppercase tracking-widest mb-3">Dispositivos Permitidos:</p>
+                    <div className="space-y-1.5 max-h-[120px] overflow-y-auto pr-2">
+                      {centros.map(c => (
+                        <label key={c} className="flex items-center gap-3 text-sm font-bold text-slate-700 cursor-pointer p-2 hover:bg-indigo-100 rounded-lg transition-colors">
+                          <input type="checkbox" checked={userForm.centrosAsignados.includes(c)} onChange={() => { const isAsignado = userForm.centrosAsignados.includes(c); setUserForm({ ...userForm, centrosAsignados: isAsignado ? userForm.centrosAsignados.filter(x => x !== c) : [...userForm.centrosAsignados, c] }); }} className="w-4 h-4 accent-indigo-600" /> {c}
+                        </label>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </div>
+            </div>
+            <div className="bg-slate-50 p-6 border-t border-slate-200 flex justify-end gap-3 shrink-0">
+              <button onClick={() => setIsUserModalOpen(false)} className="px-6 py-3 text-slate-500 font-bold text-xs uppercase tracking-widest hover:text-slate-700">Cancelar</button>
+              <button onClick={handleSaveUser} className="px-8 py-3 bg-indigo-600 text-white font-black text-[10px] uppercase tracking-[0.2em] rounded-xl shadow-md hover:bg-indigo-700">Guardar Credencial</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* 7. MODAL PERFIL CONTRASEÑA */}
+      {isProfileModalOpen && (
+        <div className="fixed inset-0 bg-[#0a2540]/90 backdrop-blur-sm flex items-center justify-center p-4 z-50 fade-in no-print">
+          <div className="bg-white rounded-3xl shadow-2xl w-full max-w-sm max-h-[90vh] flex flex-col border border-slate-200 overflow-hidden">
+            <div className="bg-blue-600 p-6 text-white flex justify-between items-center shrink-0"><h3 className="font-black text-lg uppercase tracking-widest flex items-center gap-2"><Key size={20}/> Seguridad</h3><button onClick={() => setIsProfileModalOpen(false)} className="text-white/60 hover:text-white font-bold text-3xl">&times;</button></div>
+            <div className="p-6 space-y-4 overflow-y-auto flex-1">
+              <div><label className="block text-[9px] font-black text-slate-400 uppercase tracking-widest mb-1.5">Contraseña Actual</label><input type="password" value={passwordForm.current} onChange={e=>setPasswordForm({...passwordForm, current: e.target.value})} className="w-full border-2 border-slate-100 p-3 rounded-xl text-sm font-bold outline-none focus:border-blue-500" placeholder="••••••"/></div>
+              <div className="border-t-2 border-slate-100 pt-4 mt-2"><label className="block text-[9px] font-black text-slate-400 uppercase tracking-widest mb-1.5">Nueva Contraseña</label><input type="password" value={passwordForm.new} onChange={e=>setPasswordForm({...passwordForm, new: e.target.value})} className="w-full border-2 border-slate-100 p-3 rounded-xl text-sm font-bold outline-none focus:border-blue-500" placeholder="••••••"/></div>
+              <div><label className="block text-[9px] font-black text-slate-400 uppercase tracking-widest mb-1.5">Repetir Nueva Contraseña</label><input type="password" value={passwordForm.confirm} onChange={e=>setPasswordForm({...passwordForm, confirm: e.target.value})} className="w-full border-2 border-slate-100 p-3 rounded-xl text-sm font-bold outline-none focus:border-blue-500" placeholder="••••••"/></div>
+            </div>
+            <div className="bg-slate-50 p-6 border-t border-slate-200 flex justify-end gap-3 shrink-0"><button onClick={() => setIsProfileModalOpen(false)} className="px-6 py-3 text-slate-500 font-bold text-xs uppercase tracking-widest hover:text-slate-700 transition-colors">Cancelar</button><button onClick={handleUpdatePassword} className="px-8 py-3 bg-blue-600 text-white font-black text-[10px] uppercase tracking-[0.2em] rounded-xl shadow-md hover:bg-blue-700 transition-colors">Actualizar</button></div>
+          </div>
+        </div>
+      )}
+      
+      <style dangerouslySetInnerHTML={{__html: `
+        .fade-in { animation: fadeIn 0.4s ease-out; }
+        .animate-in { animation: slideUp 0.5s cubic-bezier(0.16, 1, 0.3, 1); }
+        @keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
+        @keyframes slideUp { from { opacity: 0; transform: translateY(20px); } to { opacity: 1; transform: translateY(0); } }
+        ::-webkit-scrollbar { width: 8px; height: 8px; }
+        ::-webkit-scrollbar-track { background: transparent; }
+        ::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 4px; }
+        ::-webkit-scrollbar-thumb:hover { background: #94a3b8; }
+        @media print {
+          body { background-color: white !important; overflow: hidden !important; }
+          .no-print { display: none !important; }
+        }
+      `}} />
     </div>
   );
 }
