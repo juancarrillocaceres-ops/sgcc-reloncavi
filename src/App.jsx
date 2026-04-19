@@ -515,7 +515,7 @@ export default function App() {
 
   const handleSaveDir = async () => {
     if (!dirForm.nombre) return alert("Nombre obligatorio");
-    const finalId = editingDirId || Date.now();
+    const finalId = editingDirId || Date.now().toString();
     await saveToCloud('directory', finalId, { ...dirForm, id: finalId });
     setIsDirModalOpen(false);
   };
@@ -942,20 +942,20 @@ export default function App() {
             <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
               {(directory || []).filter(d => {
                  if (!d) return false;
-                 const search = (dirSearch || '').toLowerCase();
-                 const name = (d.nombre || '').toLowerCase();
-                 const inst = (d.institucion || '').toLowerCase();
-                 const cargo = (d.cargo || '').toLowerCase();
+                 const search = String(dirSearch || '').toLowerCase();
+                 const name = String(d.nombre || '').toLowerCase();
+                 const inst = String(d.institucion || '').toLowerCase();
+                 const cargo = String(d.cargo || '').toLowerCase();
                  return name.includes(search) || inst.includes(search) || cargo.includes(search);
-              }).map(d => (
-                <div key={d.id} className="bg-white p-6 rounded-2xl shadow-sm border border-slate-100 relative group hover:border-blue-200 transition-colors">
+              }).map((d, index) => (
+                <div key={d.id || `dir-${index}`} className="bg-white p-6 rounded-2xl shadow-sm border border-slate-100 relative group hover:border-blue-200 transition-colors">
                    <div className="absolute top-3 right-3 opacity-0 group-hover:opacity-100 transition-opacity flex gap-1.5">
                      <button onClick={() => { setEditingDirId(d.id); setDirForm(d); setIsDirModalOpen(true); }} className="p-1.5 bg-slate-50 hover:bg-blue-50 text-slate-400 hover:text-blue-600 rounded-lg"><Edit2 size={14}/></button>
                      <button onClick={() => deleteFromCloud('directory', d.id)} className="p-1.5 bg-slate-50 hover:bg-red-50 text-slate-400 hover:text-red-600 rounded-lg"><Trash2 size={14}/></button>
                    </div>
-                   <h3 className="font-black text-slate-800 text-base flex items-center gap-2.5 mb-1"><div className="p-1.5 bg-blue-50 text-blue-600 rounded-lg"><User size={16}/></div> {d.nombre}</h3>
-                   <p className="text-[10px] text-indigo-600 font-black uppercase tracking-widest mb-3 ml-9">{d.cargo || 'Sin cargo'} • {d.institucion || 'Sin institución'}</p>
-                   <div className="space-y-0.5 ml-9"><p className="text-[10px] font-bold text-slate-500">{d.telefono}</p><p className="text-[10px] font-bold text-slate-500">{d.correo}</p></div>
+                   <h3 className="font-black text-slate-800 text-base flex items-center gap-2.5 mb-1"><div className="p-1.5 bg-blue-50 text-blue-600 rounded-lg"><User size={16}/></div> {String(d.nombre || 'Sin nombre')}</h3>
+                   <p className="text-[10px] text-indigo-600 font-black uppercase tracking-widest mb-3 ml-9">{String(d.cargo || 'Sin cargo')} • {String(d.institucion || 'Sin institución')}</p>
+                   <div className="space-y-0.5 ml-9"><p className="text-[10px] font-bold text-slate-500">{String(d.telefono || '')}</p><p className="text-[10px] font-bold text-slate-500">{String(d.correo || '')}</p></div>
                 </div>
               ))}
               {(!directory || directory.length === 0) && <div className="col-span-3 text-center py-16 text-slate-300 font-black uppercase tracking-widest text-xs">Directorio vacío.</div>}
@@ -1404,11 +1404,11 @@ export default function App() {
                <button onClick={() => setIsDirModalOpen(false)} className="text-white/60 hover:text-white font-bold text-3xl">&times;</button>
             </div>
             <div className="p-6 space-y-4 overflow-y-auto flex-1">
-              <div><label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1.5">Nombre Completo</label><input type="text" value={dirForm.nombre} onChange={e=>setDirForm({...dirForm, nombre: e.target.value})} className="w-full border-2 border-slate-100 p-3 rounded-xl text-sm font-bold outline-none focus:border-blue-500" placeholder="Ej: Ps. Carlos Pinto" /></div>
-              <div><label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1.5">Institución / Centro</label><input type="text" value={dirForm.institucion} onChange={e=>setDirForm({...dirForm, institucion: e.target.value})} className="w-full border-2 border-slate-100 p-3 rounded-xl text-sm font-bold outline-none focus:border-blue-500" placeholder="Ej: COSAM Puerto Montt" /></div>
-              <div><label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1.5">Cargo</label><input type="text" value={dirForm.cargo} onChange={e=>setDirForm({...dirForm, cargo: e.target.value})} className="w-full border-2 border-slate-100 p-3 rounded-xl text-sm font-bold outline-none focus:border-blue-500" placeholder="Ej: Psicólogo Clínico" /></div>
-              <div><label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1.5">Teléfono</label><input type="text" value={dirForm.telefono} onChange={e=>setDirForm({...dirForm, telefono: e.target.value})} className="w-full border-2 border-slate-100 p-3 rounded-xl text-sm font-bold outline-none focus:border-blue-500" placeholder="+56 9..." /></div>
-              <div><label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1.5">Correo Electrónico</label><input type="email" value={dirForm.correo} onChange={e=>setDirForm({...dirForm, correo: e.target.value})} className="w-full border-2 border-slate-100 p-3 rounded-xl text-sm font-bold outline-none focus:border-blue-500" placeholder="correo@red.cl" /></div>
+              <div><label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1.5">Nombre Completo</label><input type="text" value={dirForm.nombre || ''} onChange={e=>setDirForm({...dirForm, nombre: e.target.value})} className="w-full border-2 border-slate-100 p-3 rounded-xl text-sm font-bold outline-none focus:border-blue-500" placeholder="Ej: Ps. Carlos Pinto" /></div>
+              <div><label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1.5">Institución / Centro</label><input type="text" value={dirForm.institucion || ''} onChange={e=>setDirForm({...dirForm, institucion: e.target.value})} className="w-full border-2 border-slate-100 p-3 rounded-xl text-sm font-bold outline-none focus:border-blue-500" placeholder="Ej: COSAM Puerto Montt" /></div>
+              <div><label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1.5">Cargo</label><input type="text" value={dirForm.cargo || ''} onChange={e=>setDirForm({...dirForm, cargo: e.target.value})} className="w-full border-2 border-slate-100 p-3 rounded-xl text-sm font-bold outline-none focus:border-blue-500" placeholder="Ej: Psicólogo Clínico" /></div>
+              <div><label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1.5">Teléfono</label><input type="text" value={dirForm.telefono || ''} onChange={e=>setDirForm({...dirForm, telefono: e.target.value})} className="w-full border-2 border-slate-100 p-3 rounded-xl text-sm font-bold outline-none focus:border-blue-500" placeholder="+56 9..." /></div>
+              <div><label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1.5">Correo Electrónico</label><input type="email" value={dirForm.correo || ''} onChange={e=>setDirForm({...dirForm, correo: e.target.value})} className="w-full border-2 border-slate-100 p-3 rounded-xl text-sm font-bold outline-none focus:border-blue-500" placeholder="correo@red.cl" /></div>
             </div>
             <div className="bg-slate-50 p-6 border-t border-slate-200 flex justify-end gap-3 shrink-0"><button onClick={() => setIsDirModalOpen(false)} className="px-6 py-3 text-slate-500 font-bold text-xs uppercase tracking-widest hover:text-slate-700">Cancelar</button><button onClick={handleSaveDir} className="px-8 py-3 bg-blue-600 text-white font-black text-[10px] uppercase tracking-widest rounded-xl shadow-md hover:bg-blue-700">Guardar</button></div>
           </div>
