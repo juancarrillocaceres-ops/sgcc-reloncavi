@@ -824,7 +824,12 @@ export default function App() {
                          {a.observaciones && (
                            <p className="text-[10px] text-slate-500 font-medium italic"><MessageSquare size={12} className="inline mr-1 text-slate-400"/> {a.observaciones}</p>
                          )}
-                         <button onClick={() => setPrintingAudit(a)} className="self-end bg-slate-100 text-slate-600 px-3 py-1.5 rounded-lg text-[9px] font-black uppercase tracking-widest hover:bg-slate-200 flex items-center gap-1.5 transition-colors"><Printer size={12}/> Imprimir / PDF</button>
+                         <div className="flex justify-end gap-2 mt-2">
+                           <button onClick={() => setPrintingAudit(a)} className="bg-slate-100 text-slate-600 px-3 py-1.5 rounded-lg text-[9px] font-black uppercase tracking-widest hover:bg-slate-200 flex items-center gap-1.5 transition-colors"><Printer size={12}/> Imprimir / PDF</button>
+                           {currentUser?.rol === 'Admin' && (
+                             <button onClick={async () => { if(window.confirm('¿Eliminar evaluación de forma permanente?')) await deleteFromCloud('audits', a.id); }} className="bg-red-50 text-red-500 px-3 py-1.5 rounded-lg text-[9px] font-black uppercase tracking-widest hover:bg-red-100 flex items-center gap-1.5 transition-colors"><Trash2 size={12}/> Eliminar</button>
+                           )}
+                         </div>
                        </div>
                     </div>
                     );
