@@ -24,7 +24,7 @@ const auth = getAuth(app);
 const db = getFirestore(app);
 const appId = typeof __app_id !== 'undefined' ? __app_id : "sgcc-reloncavi-v1";
 
-// --- UTILIDADES DE BLINDAJE (Previene pantallas en blanco) ---
+// --- UTILIDADES DE BLINDAJE ---
 const safeArr = (arr) => Array.isArray(arr) ? arr : [];
 const safeStr = (str) => (str !== null && str !== undefined) ? String(str) : '';
 
@@ -378,7 +378,7 @@ export default function App() {
   const handleCaseFileUpload = (e) => {
     const file = e.target.files[0];
     if (!file) return;
-    setCaseForm(prev => ({ ...prev, archivos: [...safeArr(prev.archivos), { id: Date.now().toString(), nombre: file.name, size: (file.size / 1024 / 1024).toFixed(2) + ' MB', fecha: new Date().toISOString().split('T')[0] }] }));
+    setCaseForm(prev => ({ ...prev, archivos: [{ id: Date.now().toString(), nombre: file.name, size: (file.size / 1024 / 1024).toFixed(2) + ' MB', fecha: new Date().toISOString().split('T')[0] }, ...safeArr(prev.archivos)] }));
   };
 
   const handleSaveDoc = async () => {
@@ -401,10 +401,10 @@ export default function App() {
      await saveToCloud('docs', docId, { ...documento, bitacora: updatedBitacora });
   };
 
-  const handleFileUpload = (e) => {
+  const handleDocFileUpload = (e) => {
     const file = e.target.files[0];
     if (!file) return;
-    setDocForm(prev => ({ ...prev, archivos: [...safeArr(prev.archivos), { id: Date.now().toString(), nombre: file.name, size: (file.size / 1024 / 1024).toFixed(2) + ' MB', fecha: new Date().toISOString().split('T')[0] }] }));
+    setDocForm(prev => ({ ...prev, archivos: [{ id: Date.now().toString(), nombre: file.name, size: (file.size / 1024 / 1024).toFixed(2) + ' MB', fecha: new Date().toISOString().split('T')[0] }, ...safeArr(prev.archivos)] }));
   };
 
   const handleSaveTemplate = async () => {
@@ -570,8 +570,8 @@ export default function App() {
           <div className="flex items-start gap-3 mb-1">
              <div className="w-10 h-10 rounded-xl bg-blue-600 flex items-center justify-center font-black text-sm shadow-lg shrink-0 mt-0.5">{String(currentUser?.iniciales || 'U')}</div>
              <div className="flex-1 w-full flex flex-col justify-center min-w-0">
-               <h1 className="text-sm font-black tracking-tight leading-tight text-white break-words whitespace-normal" style={{wordBreak:'break-word'}}>{String(currentUser?.nombre || 'Usuario')}</h1>
-               <p className="text-[9px] text-blue-300 font-black uppercase tracking-widest mt-1.5 leading-snug break-words whitespace-normal" style={{wordBreak:'break-word'}}>{String(currentUser?.cargo || 'SGCC-SM')}</p>
+               <h1 className="text-sm font-black tracking-tight leading-tight text-white whitespace-normal break-words" style={{wordBreak:'break-word'}}>{String(currentUser?.nombre || 'Usuario')}</h1>
+               <p className="text-[9px] text-blue-300 font-black uppercase tracking-widest mt-1.5 leading-snug whitespace-normal break-words" style={{wordBreak:'break-word'}}>{String(currentUser?.cargo || 'SGCC-SM')}</p>
              </div>
           </div>
         </div>
@@ -942,24 +942,62 @@ export default function App() {
                   <div><Lbl>Ingreso Efectivo</Lbl><Inp type="date" value={caseForm.fechaIngresoEfectivo} onChange={e=>setCaseForm({...caseForm, fechaIngresoEfectivo: e.target.value})}/></div>
                   <div><Lbl>Origen</Lbl><Sel value={caseForm.origen} onChange={e=>setCaseForm({...caseForm, origen: e.target.value})}><option value="">Origen...</option>{safeArr(centros).map(c => <option key={c} value={c}>{String(c)}</option>)}</Sel></div>
                   <div><Lbl>Destino</Lbl><Sel value={caseForm.destino} onChange={e=>setCaseForm({...caseForm, destino: e.target.value})}><option value="">Destino...</option>{safeArr(centros).map(c => <option key={c} value={c}>{String(c)}</option>)}</Sel></div>
-                  <div><Lbl>Estado</Lbl><Sel value={caseForm.estado} onChange={e=>setCaseForm({...caseForm, estado: e.target.value})}><option>Pendiente</option><option>Concretado</option><option>Alerta</option></Sel></div>
+                  <div className="col-span-2"><Lbl>Estado</Lbl><Sel value={caseForm.estado} onChange={e=>setCaseForm({...caseForm, estado: e.target.value})}><option>Pendiente</option><option>Concretado</option><option>Alerta</option></Sel></div>
+                </div>
+                <div className="mt-4 border-t pt-4">
+                  <Lbl>Tutor Legal / Familiar</Lbl>
+                  <div className="grid grid-cols-3 gap-2 mb-4">
+                    <Inp value={caseForm.tutor?.nombre||''} onChange={e=>setCaseForm({...caseForm, tutor: {...caseForm.tutor, nombre: e.target.value}})} placeholder="Nombre"/>
+                    <Inp value={caseForm.tutor?.relacion||''} onChange={e=>setCaseForm({...caseForm, tutor: {...caseForm.tutor, relacion: e.target.value}})} placeholder="Parentesco"/>
+                    <Inp value={caseForm.tutor?.telefono||''} onChange={e=>setCaseForm({...caseForm, tutor: {...caseForm.tutor, telefono: e.target.value}})} placeholder="Teléfono"/>
+                  </div>
+                  <Lbl>Referentes Clínicos</Lbl>
+                  {safeArr(caseForm.referentes).map((ref, i) => (
+                     <div key={i} className="flex gap-2 mb-2">
+                       <Inp value={ref.nombre} onChange={e=>{const r=[...caseForm.referentes]; r[i].nombre=e.target.value; setCaseForm({...caseForm, referentes: r})}} placeholder="Nombre"/>
+                       <Inp value={ref.dispositivo} onChange={e=>{const r=[...caseForm.referentes]; r[i].dispositivo=e.target.value; setCaseForm({...caseForm, referentes: r})}} placeholder="Dispositivo"/>
+                       <Inp value={ref.contacto} onChange={e=>{const r=[...caseForm.referentes]; r[i].contacto=e.target.value; setCaseForm({...caseForm, referentes: r})}} placeholder="Contacto"/>
+                       <button onClick={()=>{const r=[...caseForm.referentes]; r.splice(i,1); setCaseForm({...caseForm, referentes: r})}} className="p-2 text-red-500 bg-red-50 rounded-xl"><Trash2 size={16}/></button>
+                     </div>
+                  ))}
+                  <button onClick={()=>setCaseForm({...caseForm, referentes: [...safeArr(caseForm.referentes), {nombre:'', dispositivo:'', contacto:''}]})} className="text-[10px] text-blue-600 font-black uppercase mt-2"><Plus size={12} className="inline"/> Añadir Referente</button>
                 </div>
               </div>
             )}
             {activeModalTab === 'bitacora' && (
               <div className="space-y-4">
                 <div className="bg-slate-50 p-4 rounded-xl grid grid-cols-4 gap-3">
-                   <Sel value={newBitacoraEntry.tipo} onChange={e=>setNewBitacoraEntry({...newBitacoraEntry, tipo: e.target.value})}><option value="Nota Adm.">Nota</option><option value="Intervención">Intervención</option><option value="Tarea">Tarea</option></Sel>
+                   <Sel value={newBitacoraEntry.tipo} onChange={e=>setNewBitacoraEntry({...newBitacoraEntry, tipo: e.target.value})}>
+                     <option value="Nota Adm.">📝 Nota Adm.</option>
+                     <option value="Intervención">🗣️ Intervención</option>
+                     <option value="Reunión">🤝 Reunión de Red</option>
+                     <option value="Tarea">🎯 Tarea Enlace</option>
+                   </Sel>
                    <Inp value={newBitacoraEntry.responsable} onChange={e=>setNewBitacoraEntry({...newBitacoraEntry, responsable: e.target.value})} placeholder="Resp..." />
-                   <Inp value={newBitacoraEntry.descripcion} onChange={e=>setNewBitacoraEntry({...newBitacoraEntry, descripcion: e.target.value})} placeholder="Detalle..." className="col-span-2" />
+                   <Txt rows="2" value={newBitacoraEntry.descripcion} onChange={e=>setNewBitacoraEntry({...newBitacoraEntry, descripcion: e.target.value})} placeholder="Detalle (Multilínea)..." className="col-span-2" />
                    {newBitacoraEntry.tipo === 'Tarea' && <Inp type="date" value={newBitacoraEntry.fechaCumplimiento} onChange={e=>setNewBitacoraEntry({...newBitacoraEntry, fechaCumplimiento: e.target.value})} className="col-span-4 bg-amber-50" />}
                    <button onClick={handleAddBitacora} className={clsBtnP + " col-span-4"}>Añadir Registro</button>
                 </div>
-                {safeArr(caseForm.bitacora).map(b => <div key={b.id} className="p-4 border rounded-xl flex justify-between"><div className="flex-1"><p className="text-sm font-bold">{String(b.descripcion)}</p><p className="text-[10px] text-slate-400 mt-1 uppercase">{String(b.tipo)} | {String(b.fecha)}</p></div><button onClick={() => setCaseForm({ ...caseForm, bitacora: safeArr(caseForm.bitacora).filter(x => x.id !== b.id) })} className="text-red-400"><Trash2 size={16}/></button></div>)}
+                {safeArr(caseForm.bitacora).map(b => <div key={b.id} className="p-4 border rounded-xl flex justify-between"><div className="flex-1"><p className="text-sm font-bold whitespace-pre-wrap">{String(b.descripcion)}</p><p className="text-[10px] text-slate-400 mt-1 uppercase">{String(b.tipo)} | {String(b.fecha)}</p></div><button onClick={() => setCaseForm({ ...caseForm, bitacora: safeArr(caseForm.bitacora).filter(x => x.id !== b.id) })} className="text-red-400"><Trash2 size={16}/></button></div>)}
               </div>
             )}
             {activeModalTab === 'archivos' && (
               <div className="space-y-4">
+                 <div className="bg-indigo-50/50 p-6 rounded-2xl border border-indigo-100 text-center mb-4">
+                   <label className="cursor-pointer block">
+                     <UploadCloud size={24} className="mx-auto text-indigo-400 mb-2"/>
+                     <span className="text-[10px] font-black text-indigo-900 uppercase">Subir Archivo de Respaldo</span>
+                     <input type="file" className="hidden" onChange={handleCaseFileUpload} />
+                   </label>
+                 </div>
+                 <div className="space-y-2 mb-4">
+                   {safeArr(caseForm.archivos).map(f => (
+                     <div key={f.id} className="flex justify-between items-center p-3 bg-white border rounded-xl">
+                        <span className="text-xs font-bold">{f.nombre} <span className="text-[9px] text-slate-400 ml-2">{f.size}</span></span>
+                        <button onClick={()=>setCaseForm(p=>({...p, archivos: p.archivos.filter(a=>a.id!==f.id)}))} className="text-red-400"><Trash2 size={14}/></button>
+                     </div>
+                   ))}
+                 </div>
                  <Lbl>Epicrisis</Lbl><Txt value={caseForm.epicrisis || ''} onChange={e=>setCaseForm({...caseForm, epicrisis: e.target.value})} className="min-h-[140px]"/>
                  <div className="flex justify-between items-center"><Lbl>Resumen Inteligente</Lbl><button onClick={handleGenerateCaseSummary} disabled={isGeneratingCaseSummary} className={clsBtnP}>Generar</button></div>
                  {caseSummary && <div className="p-4 bg-indigo-50 rounded-xl whitespace-pre-wrap text-sm">{String(caseSummary)}</div>}
@@ -974,6 +1012,7 @@ export default function App() {
         <div className="flex bg-slate-50 border-b shrink-0 px-6">
           <button onClick={() => setActiveDocModalTab('datos')} className={`px-6 py-4 text-[10px] font-black uppercase tracking-[0.2em] border-b-4 ${activeDocModalTab === 'datos' ? 'border-blue-600 text-blue-600 bg-white' : 'border-transparent text-slate-400'}`}>Datos</button>
           <button onClick={() => setActiveDocModalTab('bitacora')} className={`px-6 py-4 text-[10px] font-black uppercase tracking-[0.2em] border-b-4 ${activeDocModalTab === 'bitacora' ? 'border-blue-600 text-blue-600 bg-white' : 'border-transparent text-slate-400'}`}>Tareas</button>
+          <button onClick={() => setActiveDocModalTab('archivos')} className={`px-6 py-4 text-[10px] font-black uppercase tracking-[0.2em] border-b-4 ${activeDocModalTab === 'archivos' ? 'border-blue-600 text-blue-600 bg-white' : 'border-transparent text-slate-400'}`}>Archivos</button>
         </div>
         <div className="p-6 overflow-y-auto flex-1 bg-white space-y-6">
           {activeDocModalTab === 'datos' && (
@@ -983,6 +1022,7 @@ export default function App() {
                 <div><Lbl>Ámbito</Lbl><Inp list="ambitos" value={docForm.ambito} onChange={e=>setDocForm({...docForm, ambito: e.target.value})}/><datalist id="ambitos"><option value="Red Integral"/><option value="Hospitalario"/>{safeArr(centros).map(c=><option key={c} value={c}/>)}</datalist></div>
                 <div><Lbl>Fase</Lbl><Sel value={docForm.fase} onChange={e=>setDocForm({...docForm, fase: e.target.value})}><option>Levantamiento</option><option>Validación Técnica</option><option>Difusión</option></Sel></div>
               </div>
+              <div><Lbl>Notas y Observaciones</Lbl><Txt rows="3" value={docForm.notas || ''} onChange={e=>setDocForm({...docForm, notas: e.target.value})} placeholder="Apuntes..." /></div>
               <div><Lbl>Avance: {docForm.avance}%</Lbl><input type="range" min="0" max="100" step="5" value={docForm.avance} onChange={e=>setDocForm({...docForm, avance: e.target.value})} className="w-full" /></div>
             </div>
           )}
@@ -991,6 +1031,25 @@ export default function App() {
                 <div className="bg-slate-50 p-4 rounded-xl grid grid-cols-2 gap-3"><Inp value={newDocBitacoraEntry.responsable} onChange={e=>setNewDocBitacoraEntry({...newDocBitacoraEntry, responsable: e.target.value})} placeholder="Responsable" /><Inp type="date" value={newDocBitacoraEntry.fechaCumplimiento} onChange={e=>setNewDocBitacoraEntry({...newDocBitacoraEntry, fechaCumplimiento: e.target.value})} /><Inp value={newDocBitacoraEntry.descripcion} onChange={e=>setNewDocBitacoraEntry({...newDocBitacoraEntry, descripcion: e.target.value})} placeholder="Tarea..." className="col-span-2"/><button onClick={handleAddDocBitacora} className={clsBtnP + " col-span-2"}>Añadir Tarea</button></div>
                 {safeArr(docForm.bitacora).map(b => <div key={b.id} className="p-4 border rounded-xl flex justify-between"><p className="text-sm font-bold">{String(b.descripcion)}</p><button onClick={() => setDocForm({ ...docForm, bitacora: safeArr(docForm.bitacora).filter(x => x.id !== b.id) })} className="text-red-400"><Trash2 size={16}/></button></div>)}
              </div>
+          )}
+          {activeDocModalTab === 'archivos' && (
+            <div className="space-y-4">
+               <div className="bg-indigo-50/50 p-6 rounded-2xl border border-indigo-100 text-center mb-4">
+                 <label className="cursor-pointer block">
+                   <UploadCloud size={24} className="mx-auto text-indigo-400 mb-2"/>
+                   <span className="text-[10px] font-black text-indigo-900 uppercase">Subir Documento o Insumo</span>
+                   <input type="file" className="hidden" onChange={handleDocFileUpload} />
+                 </label>
+               </div>
+               <div className="space-y-2 mb-4">
+                 {safeArr(docForm.archivos).map(f => (
+                   <div key={f.id} className="flex justify-between items-center p-3 bg-white border rounded-xl">
+                      <span className="text-xs font-bold">{f.nombre} <span className="text-[9px] text-slate-400 ml-2">{f.size}</span></span>
+                      <button onClick={()=>setDocForm(p=>({...p, archivos: p.archivos.filter(a=>a.id!==f.id)}))} className="text-red-400"><Trash2 size={14}/></button>
+                   </div>
+                 ))}
+               </div>
+            </div>
           )}
         </div>
         <ModalFtr onCancel={()=>setIsDocModalOpen(false)} onSave={handleSaveDoc} />
