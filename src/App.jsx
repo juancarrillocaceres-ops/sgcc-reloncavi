@@ -97,9 +97,12 @@ export default function App() {
   const [directory, setDirectory] = useState([]);
   const [users, setUsers] = useState([]);
   
-  const [appConfig, setAppConfig] = useState({ targetDays: 7, apiKey: '' });
+  const [appConfig, setAppConfig] = useState({ targetDays: 7, apiKey: '', plazos: {} });
   const [apiConfigKey, setApiConfigKey] = useState('');
   const [newCentroName, setNewCentroName] = useState('');
+  
+  const [plazoCentroInput, setPlazoCentroInput] = useState('');
+  const [plazoDaysInput, setPlazoDaysInput] = useState('');
 
   // --- ESTADOS DE MODALES Y FORMULARIOS ---
   const defaultCaseState = { 
@@ -123,10 +126,8 @@ export default function App() {
   const [isTemplateModalOpen, setIsTemplateModalOpen] = useState(false);
   const [editingTemplateId, setEditingTemplateId] = useState(null);
   
-  // Formulario Dinámico
   const [auditForm, setAuditForm] = useState({ centro: '', templateId: '', headerAnswers: {}, answers: {}, tipo: 'Auditoría', observaciones: '', fecha: new Date().toISOString().split('T')[0], estadoManual: '' });
   
-  // Pauta Dinámica
   const [templateForm, setTemplateForm] = useState({ 
     nombre: '', 
     metodoCalculo: 'Suma Automática',
@@ -186,11 +187,12 @@ export default function App() {
     const unsubDir = onSnapshot(collection(db, 'artifacts', appId, 'public', 'data', 'directory'), snap => setDirectory(snap.docs.map(d => d.data())), console.error);
     const unsubUsers = onSnapshot(collection(db, 'artifacts', appId, 'public', 'data', 'users'), snap => setUsers(snap.docs.map(d => d.data())), console.error);
     const unsubCentros = onSnapshot(doc(db, 'artifacts', appId, 'public', 'data', 'settings', 'centros'), snap => { if (snap.exists() && snap.data().list) setCentros(snap.data().list); }, console.error);
+    
     const unsubConfig = onSnapshot(doc(db, 'artifacts', appId, 'public', 'data', 'settings', 'config'), snap => { 
       if (snap.exists()) {
         const data = snap.data();
-        setAppConfig(data);
-        if (data.apiKey) setApiConfigKey(data.apiKey);
+        setAppConfig({ targetDays: 7, plazos: {}, ...data });
+        if (data?.apiKey) setApiConfigKey(data.apiKey);
       } 
     }, console.error);
 
@@ -201,6 +203,14 @@ export default function App() {
   const deleteFromCloud = async (coll, id) => { if (firebaseUser) await deleteDoc(doc(db, 'artifacts', appId, 'public', 'data', coll, id.toString())); };
 
   // --- DERIVADOS Y FILTROS SEGURIZADOS ---
+  const getTargetDaysForCase = (destino) => {
+    if (!destino) return Number(appConfig?.targetDays || 7);
+    if (appConfig?.plazos && appConfig.plazos[destino] !== undefined) {
+       return Number(appConfig.plazos[destino]);
+    }
+    return Number(appConfig?.targetDays || 7);
+  };
+
   const visibleCases = useMemo(() => {
     if (currentUser?.rol === 'Admin') return cases || [];
     return (cases || []).filter(c => (currentUser?.centrosAsignados || []).includes(c.origen) || (currentUser?.centrosAsignados || []).includes(c.destino));
@@ -234,15 +244,16 @@ export default function App() {
 
   const redMetrics = useMemo(() => {
     let sumEnlace = 0, countEnlace = 0, sumIngreso = 0, countIngreso = 0, alertCount = 0;
-    const currentTarget = appConfig?.targetDays || 7;
     visibleCases.forEach(c => {
       const enlaceDays = diffInDays(c.fechaEgreso, c.fechaRecepcionRed);
       const ingresoDays = diffInDays(c.fechaEgreso, c.fechaIngresoEfectivo);
+      const currentTarget = getTargetDaysForCase(c.destino);
+      
       if (enlaceDays !== null) { sumEnlace += enlaceDays; countEnlace++; }
       if (ingresoDays !== null) { sumIngreso += ingresoDays; countIngreso++; if (ingresoDays > currentTarget) alertCount++; }
     });
     return { avgEnlace: countEnlace > 0 ? (sumEnlace / countEnlace).toFixed(1) : '---', avgIngreso: countIngreso > 0 ? (sumIngreso / countIngreso).toFixed(1) : '---', fueraDePlazo: alertCount };
-  }, [visibleCases, appConfig.targetDays]);
+  }, [visibleCases, appConfig]);
 
   // --- HANDLERS GENERALES ---
   const handleLogin = (e) => {
@@ -256,10 +267,27 @@ export default function App() {
     if (!isNaN(newDays)) { await saveToCloud('settings', 'config', { ...appConfig, targetDays: newDays }); }
   };
 
+  const handleAddPlazoCentro = async () => {
+    if (!plazoCentroInput.trim() || !plazoDaysInput) return;
+    const newPlazos = { ...(appConfig?.plazos || {}) };
+    newPlazos[plazoCentroInput.trim()] = parseInt(plazoDaysInput);
+    await saveToCloud('settings', 'config', { ...appConfig, plazos: newPlazos });
+    setPlazoCentroInput('');
+    setPlazoDaysInput('');
+  };
+
+  const handleDeletePlazoCentro = async (centroStr) => {
+    const newPlazos = { ...(appConfig?.plazos || {}) };
+    delete newPlazos[centroStr];
+    await saveToCloud('settings', 'config', { ...appConfig, plazos: newPlazos });
+  };
+
   const handleExportCSV = () => {
-    const currentTarget = appConfig?.targetDays || 7;
-    const headers = ['ID_Seguimiento', 'RUT', 'Paciente', 'Origen', 'Destino', 'Estado', 'Fecha_Egreso', 'Fecha_Recepcion', 'Fecha_Ingreso_Efectivo', 'Plazo_Meta'];
-    const rows = visibleCases.map(c => [c.id, c.paciente, c.nombre, c.origen, c.destino, c.estado, c.fechaEgreso||'', c.fechaRecepcionRed||'', c.fechaIngresoEfectivo||'', currentTarget]);
+    const headers = ['ID_Seguimiento', 'RUT', 'Paciente', 'Origen', 'Destino', 'Estado', 'Fecha_Egreso', 'Fecha_Recepcion', 'Fecha_Ingreso_Efectivo', 'Plazo_Meta_Especifico'];
+    const rows = visibleCases.map(c => {
+       const target = getTargetDaysForCase(c.destino);
+       return [c.id, c.paciente, c.nombre, c.origen, c.destino, c.estado, c.fechaEgreso||'', c.fechaRecepcionRed||'', c.fechaIngresoEfectivo||'', target];
+    });
     const csvContent = [headers.join(','), ...rows.map(r => r.join(','))].join('\n');
     const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
     const link = document.createElement("a");
@@ -323,11 +351,13 @@ export default function App() {
     setIsGeneratingReport(true); 
     setReportContent('');
     let prompt = "";
-    const currentTarget = appConfig?.targetDays || 7;
     if (type === 'stats') {
-      const delayCases = visibleCases.filter(c => diffInDays(c.fechaEgreso, c.fechaIngresoEfectivo) > currentTarget);
+      const delayCases = visibleCases.filter(c => {
+         const target = getTargetDaysForCase(c.destino);
+         return diffInDays(c.fechaEgreso, c.fechaIngresoEfectivo) > target;
+      });
       if (delayCases.length === 0) { setIsGeneratingReport(false); return alert("No hay casos fuera de plazo para reportar."); }
-      prompt = `Actúa como clínico experto. Redacta un reporte breve sobre estos ${delayCases.length} casos fuera de plazo (${currentTarget} días): ${JSON.stringify(delayCases.map(c => ({ paciente: c.nombre, destino: c.destino })))}$. Identifica nudos críticos.`;
+      prompt = `Actúa como clínico experto. Redacta un reporte breve sobre estos ${delayCases.length} casos fuera de plazo de la red: ${JSON.stringify(delayCases.map(c => ({ paciente: c.nombre, destino: c.destino })))}$. Identifica nudos críticos.`;
     } else {
       if (alertCases.length === 0) { setIsGeneratingReport(false); return alert("No hay casos en alerta para reportar."); }
       prompt = `Redacta un correo urgente para rescatar estos pacientes en alerta de red: ${JSON.stringify(alertCases.map(c => ({ paciente: c.nombre, destino: c.destino })))}$. Dirigido a directores de centros.`;
@@ -522,7 +552,7 @@ export default function App() {
 
   const handleSaveUser = async () => {
     if (!userForm.rut || !userForm.password) return alert("RUT y Contraseña obligatorios.");
-    const finalId = editingUserId || Date.now();
+    const finalId = editingUserId || Date.now().toString();
     await saveToCloud('users', finalId, { ...userForm, id: finalId });
     setIsUserModalOpen(false);
   };
@@ -535,8 +565,7 @@ export default function App() {
     setCurrentUser(updatedUser); setIsProfileModalOpen(false); alert("Actualizada exitosamente!");
   };
 
-
-  // ================= PANTALLAS DE LOGIN Y APP NORMAL =================
+  // ================= PANTALLAS DE LOGIN =================
   if (!currentUser) return (
     <div className="min-h-screen bg-[#0a2540] flex items-center justify-center p-4 fade-in">
       <div className="max-w-md w-full bg-white rounded-3xl shadow-2xl p-8">
@@ -565,14 +594,14 @@ export default function App() {
   return (
     <div className="min-h-screen bg-slate-50 flex flex-col md:flex-row font-sans">
       
-      {/* SIDEBAR */}
+      {/* SIDEBAR: Oculto en impresión */}
       <aside className="print:hidden w-full md:w-64 bg-[#0a2540] text-white flex flex-col h-screen sticky top-0 shrink-0 shadow-xl overflow-y-auto">
         <div className="p-5 border-b border-white/5">
-          <div className="flex items-center gap-3 mb-1">
-             <div className="w-10 h-10 rounded-xl bg-blue-600 flex items-center justify-center font-black text-sm shadow-lg shrink-0">{currentUser?.iniciales || 'U'}</div>
-             <div className="flex-1 min-w-0">
-               <h1 className="text-sm font-black tracking-tight leading-tight text-white whitespace-normal break-words">{currentUser?.nombre || 'Usuario'}</h1>
-               <p className="text-[9px] text-blue-300 font-black uppercase tracking-widest mt-1 whitespace-normal break-words">{currentUser?.cargo || 'SGCC-SM'}</p>
+          <div className="flex items-start gap-3 mb-1">
+             <div className="w-10 h-10 rounded-xl bg-blue-600 flex items-center justify-center font-black text-sm shadow-lg shrink-0 mt-0.5">{currentUser?.iniciales || 'U'}</div>
+             <div className="flex-1 w-full flex flex-col justify-center">
+               <h1 className="text-sm font-black tracking-tight leading-tight text-white break-words" style={{ wordBreak: 'break-word' }}>{currentUser?.nombre || 'Usuario'}</h1>
+               <p className="text-[9px] text-blue-300 font-black uppercase tracking-widest mt-1.5 leading-snug break-words" style={{ wordBreak: 'break-word' }}>{currentUser?.cargo || 'SGCC-SM'}</p>
              </div>
           </div>
         </div>
@@ -603,10 +632,10 @@ export default function App() {
         </div>
       </aside>
 
-      {/* ÁREA PRINCIPAL */}
+      {/* ÁREA PRINCIPAL: Oculta en impresión */}
       <main className="print:hidden flex-1 p-6 md:p-8 overflow-y-auto relative">
         
-        {/* NOTIFICACIONES */}
+        {/* HEADER FLOTANTE (NOTIFICACIONES) */}
         <div className="absolute top-6 right-6 z-20">
           <div className="relative">
             <button onClick={() => setIsNotificationsOpen(!isNotificationsOpen)} className="p-2.5 bg-white rounded-xl border border-slate-200 text-slate-600 hover:bg-slate-50 shadow-sm relative transition-all">
@@ -719,31 +748,60 @@ export default function App() {
         {activeTab === 'stats' && (
           <div className="space-y-6 animate-in fade-in mt-12 md:mt-0">
             <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
-              <div><h2 className="text-2xl font-black text-slate-800 tracking-tight">Estadísticas de Continuidad</h2><p className="text-xs text-slate-500 font-medium mt-1">Análisis de tiempos de respuesta en la red</p></div>
+              <div><h2 className="text-2xl font-black text-slate-800 tracking-tight">Plazos y Estadísticas</h2><p className="text-xs text-slate-500 font-medium mt-1">Configuración de plazos meta y análisis de respuesta</p></div>
               <button onClick={handleExportCSV} className="bg-emerald-600 text-white px-5 py-2.5 rounded-xl text-[10px] font-black uppercase tracking-widest flex items-center gap-2 hover:bg-emerald-700 transition-all shadow-md"><Download size={14}/> Exportar Data Cruda</button>
             </div>
 
+            {/* CONFIGURACIÓN DE PLAZOS */}
             <div className="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm">
-              <div className="flex flex-col md:flex-row items-center justify-between gap-6">
-                 <div className="flex items-center gap-4">
-                   <div className="p-3 bg-blue-50 text-blue-600 rounded-xl"><Target size={24}/></div>
-                   <div>
-                     <h3 className="font-black text-slate-800 uppercase text-[11px] tracking-widest">Plazo Meta Operacional</h3>
-                     <p className="text-[10px] text-slate-500 mt-1 font-medium">Días tolerables para el "Ingreso Efectivo" según la capacidad local.</p>
-                   </div>
-                 </div>
-                 <div className="flex items-center gap-2 bg-slate-50 p-2 rounded-xl border border-slate-200">
-                    <span className="text-[9px] font-black text-slate-400 ml-2 uppercase tracking-widest">META RED:</span>
-                    {currentUser?.rol === 'Admin' ? (
-                      <input type="number" value={appConfig.targetDays || 7} onChange={(e) => handleUpdateTarget(e.target.value)} className="w-16 p-2 bg-white border border-blue-100 rounded-lg text-center font-black text-blue-600 outline-none focus:border-blue-500 text-sm shadow-sm"/>
-                    ) : (
-                      <span className="px-3 py-2 font-black text-blue-600 text-sm">{appConfig.targetDays || 7}</span>
+               <h3 className="font-black text-slate-800 uppercase text-xs tracking-widest mb-4 flex items-center gap-2"><Target size={16} className="text-blue-600"/> Configuración de Plazos Meta (Días)</h3>
+               
+               <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
+                  {/* Meta General */}
+                  <div className="bg-slate-50 p-5 rounded-2xl border border-slate-100">
+                    <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-2">Meta General por Defecto</label>
+                    <p className="text-[10px] text-slate-500 mb-4 font-medium leading-relaxed">Aplica para todos los dispositivos que no tengan un plazo específico asignado.</p>
+                    <div className="flex items-center gap-2">
+                       {currentUser?.rol === 'Admin' ? (
+                         <input type="number" value={appConfig?.targetDays || 7} onChange={(e) => handleUpdateTarget(e.target.value)} className="w-24 p-3 bg-white border border-blue-100 rounded-xl text-center font-black text-blue-600 outline-none focus:border-blue-500 text-sm shadow-sm"/>
+                       ) : (
+                         <span className="px-4 py-3 bg-white border border-slate-200 rounded-xl font-black text-blue-600 text-sm">{appConfig?.targetDays || 7}</span>
+                       )}
+                       <span className="text-[10px] font-black text-slate-500 uppercase tracking-widest">Días</span>
+                    </div>
+                  </div>
+
+                  {/* Metas Específicas */}
+                  <div className="bg-blue-50/50 p-5 rounded-2xl border border-blue-100">
+                    <label className="block text-[10px] font-black text-blue-800 uppercase tracking-widest mb-2">Metas Específicas por Dispositivo</label>
+                    <p className="text-[10px] text-blue-600 mb-4 font-medium leading-relaxed">Asigna plazos distintos según la realidad de cada centro (Ej: COSAM Nuevo = 15 días).</p>
+                    
+                    {currentUser?.rol === 'Admin' && (
+                      <div className="flex gap-2 mb-4">
+                        <input type="text" list="centros-list" value={plazoCentroInput} onChange={e=>setPlazoCentroInput(e.target.value)} placeholder="Escriba o seleccione centro..." className="flex-1 p-2.5 border border-white rounded-xl text-xs font-bold outline-none focus:border-blue-400 shadow-sm bg-white"/>
+                        <datalist id="centros-list">{centros.map(c=><option key={c} value={c}/>)}</datalist>
+                        <input type="number" placeholder="Días" value={plazoDaysInput} onChange={e=>setPlazoDaysInput(e.target.value)} className="w-20 p-2.5 border border-white rounded-xl text-xs font-bold text-center outline-none focus:border-blue-400 shadow-sm bg-white"/>
+                        <button onClick={handleAddPlazoCentro} className="bg-blue-600 text-white p-2.5 rounded-xl hover:bg-blue-700 transition-colors shadow-sm"><Plus size={16}/></button>
+                      </div>
                     )}
-                    <span className="text-[9px] font-black text-slate-500 mr-2 uppercase tracking-widest">Días</span>
-                 </div>
-              </div>
+
+                    <div className="space-y-2 max-h-32 overflow-y-auto pr-2">
+                      {Object.entries(appConfig?.plazos || {}).map(([centroStr, dias]) => (
+                        <div key={centroStr} className="flex justify-between items-center bg-white p-3 rounded-xl shadow-sm border border-blue-50">
+                           <span className="text-[10px] font-black text-slate-700 uppercase tracking-widest">{centroStr}</span>
+                           <div className="flex items-center gap-3">
+                              <span className="text-[10px] font-black text-blue-600 bg-blue-50 px-2 py-1 rounded-md">{dias} Días</span>
+                              {currentUser?.rol === 'Admin' && <button onClick={() => handleDeletePlazoCentro(centroStr)} className="text-slate-400 hover:text-red-500"><Trash2 size={14}/></button>}
+                           </div>
+                        </div>
+                      ))}
+                      {Object.keys(appConfig?.plazos || {}).length === 0 && <p className="text-[10px] text-slate-400 italic font-bold">No hay plazos específicos configurados.</p>}
+                    </div>
+                  </div>
+               </div>
             </div>
 
+            {/* MÉTRICAS (Usa el plazo específico de cada caso) */}
             <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
               <div className="bg-white p-6 rounded-2xl shadow-sm border border-slate-100 border-l-[8px] border-l-indigo-500">
                 <div className="flex justify-between items-start mb-3"><div className="p-2 bg-indigo-50 rounded-xl text-indigo-600"><Timer size={18}/></div><span className="text-[8px] font-black text-slate-400 uppercase tracking-[0.2em] bg-slate-50 px-2 py-1 rounded-lg">Hito A-B</span></div>
@@ -759,7 +817,7 @@ export default function App() {
 
               <div className="bg-white p-6 rounded-2xl shadow-sm border border-slate-100 border-l-[8px] border-l-red-500 relative overflow-hidden">
                 <div className="flex justify-between items-start mb-3 relative z-10"><div className="p-2 bg-red-50 rounded-xl text-red-600"><AlertTriangle size={18}/></div><div className="px-2 py-1 bg-red-100 text-red-700 text-[8px] font-black rounded-lg uppercase tracking-[0.2em] shadow-sm">Brecha</div></div>
-                <h3 className="text-[9px] font-black text-slate-400 uppercase tracking-widest relative z-10">Casos sobre la meta ({appConfig.targetDays || 7} d)</h3>
+                <h3 className="text-[9px] font-black text-slate-400 uppercase tracking-widest relative z-10">Casos sobre meta (Según Disp.)</h3>
                 <p className="text-4xl font-black text-slate-800 mt-1 relative z-10">{redMetrics.fueraDePlazo} <span className="text-xs font-bold text-slate-300 uppercase tracking-widest">Casos</span></p>
                 {redMetrics.fueraDePlazo > 0 && <div className="absolute top-0 right-0 w-24 h-24 bg-red-50 rounded-full -mr-8 -mt-8 blur-xl"></div>}
               </div>
@@ -770,7 +828,7 @@ export default function App() {
                  <div className="relative z-10 flex flex-col md:flex-row items-center justify-between gap-6">
                    <div className="max-w-2xl">
                      <h3 className="text-lg font-black mb-2 flex items-center gap-2"><TrendingUp size={20} className="text-blue-400"/> Análisis Estratégico de Brechas (IA)</h3>
-                     <p className="text-xs text-blue-100 opacity-90 font-medium leading-relaxed">Basado en tu meta, {redMetrics.fueraDePlazo} pacientes sufren demoras críticas. Genera un informe para presentar a las direcciones de la red.</p>
+                     <p className="text-xs text-blue-100 opacity-90 font-medium leading-relaxed">Basado en tus metas, {redMetrics.fueraDePlazo} pacientes sufren demoras críticas. Genera un informe para presentar a las direcciones de la red.</p>
                    </div>
                    <button onClick={() => handleGenerateReport('stats')} disabled={isGeneratingReport} className="bg-white text-indigo-900 px-6 py-3 rounded-xl text-[10px] font-black uppercase tracking-widest hover:bg-blue-50 transition-all flex items-center gap-2 shadow-lg shrink-0 disabled:opacity-50">
                      {isGeneratingReport ? <Loader2 size={16} className="animate-spin"/> : <FileText size={16}/>} Procesar Reporte
@@ -811,7 +869,8 @@ export default function App() {
                   <tbody className="divide-y divide-slate-50">
                     {visibleCases.map(c => {
                       const daysC = diffInDays(c.fechaEgreso, c.fechaIngresoEfectivo);
-                      const isOver = daysC !== null && daysC > (appConfig.targetDays || 7);
+                      const target = getTargetDaysForCase(c.destino);
+                      const isOver = daysC !== null && daysC > target;
                       return (
                         <tr key={c.id} className={`hover:bg-slate-50/80 transition-colors ${isOver ? 'bg-red-50/20' : ''}`}>
                           <td className="p-4">
@@ -848,7 +907,7 @@ export default function App() {
           <div className="space-y-6 animate-in fade-in mt-12 md:mt-0">
             <div className="flex flex-col md:flex-row justify-between items-start md:items-end gap-4">
               <div><h2 className="text-2xl font-black text-slate-800 tracking-tight">Normativas y Protocolos</h2><p className="text-xs text-slate-500 font-medium mt-1">Desarrollo documental de la red</p></div>
-              <button onClick={() => { setEditingDocId(null); setDocForm({ nombre: '', ambito: 'Red Integral', fase: 'Levantamiento', avance: 10, notas: '', bitacora: [], archivos: [] }); setActiveDocModalTab('datos'); setIsDocModalOpen(true); }} className="bg-blue-600 text-white px-6 py-3 rounded-xl text-[10px] font-black uppercase tracking-widest hover:bg-blue-700 shadow-md flex items-center gap-2"><Plus size={18}/> Nuevo Protocolo</button>
+              <button onClick={() => { setEditingDocId(null); setDocForm({ nombre: '', ambito: '', fase: 'Levantamiento', avance: 10, notas: '', bitacora: [], archivos: [] }); setActiveDocModalTab('datos'); setIsDocModalOpen(true); }} className="bg-blue-600 text-white px-6 py-3 rounded-xl text-[10px] font-black uppercase tracking-widest hover:bg-blue-700 shadow-md flex items-center gap-2"><Plus size={18}/> Nuevo Protocolo</button>
             </div>
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
               {docs.map((d) => (
@@ -1168,7 +1227,7 @@ export default function App() {
                 </div>
               </div>
             </div>
-            <div className="bg-slate-50 p-6 border-t border-slate-200 flex justify-end gap-4 shrink-0"><button onClick={() => setIsTemplateModalOpen(false)} className="px-8 py-3 text-slate-500 font-bold text-xs uppercase hover:text-slate-700">Cancelar</button><button onClick={handleSaveTemplate} className="px-10 py-3 bg-slate-900 text-white font-black text-[10px] uppercase rounded-xl shadow-lg hover:bg-black flex items-center gap-2"><CheckCircle size={16}/> Guardar Formulario</button></div>
+            <div className="bg-white p-6 border-t border-slate-200 flex justify-end gap-4 shrink-0"><button onClick={() => setIsTemplateModalOpen(false)} className="px-8 py-3 text-slate-500 font-bold text-xs uppercase hover:text-slate-700">Cancelar</button><button onClick={handleSaveTemplate} className="px-10 py-3 bg-slate-900 text-white font-black text-[10px] uppercase rounded-xl shadow-lg hover:bg-black flex items-center gap-2"><CheckCircle size={16}/> Guardar Formulario</button></div>
           </div>
         </div>
       )}
