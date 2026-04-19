@@ -34,6 +34,7 @@ const appId = typeof __app_id !== 'undefined' ? __app_id : "sgcc-reloncavi-v1";
 
 const apiKey = ""; 
 
+// --- UTILIDADES ---
 const diffInDays = (d1, d2) => {
   if (!d1 || !d2) return null;
   const date1 = new Date(d1);
@@ -108,6 +109,8 @@ export default function App() {
   const [isDocModalOpen, setIsDocModalOpen] = useState(false);
   const [editingDocId, setEditingDocId] = useState(null);
   const [docForm, setDocForm] = useState({ nombre: '', ambito: ambitosProtocolo[0], fase: 'Levantamiento', avance: 10, bitacora: [], archivos: [] });
+  const [activeDocModalTab, setActiveDocModalTab] = useState('datos');
+  const [newDocBitacoraEntry, setNewDocBitacoraEntry] = useState({ tipo: 'Tarea', descripcion: '', responsable: '', fechaCumplimiento: '' });
 
   const [isAuditModalOpen, setIsAuditModalOpen] = useState(false);
   const [isTemplateModalOpen, setIsTemplateModalOpen] = useState(false);
@@ -130,11 +133,8 @@ export default function App() {
   const [passwordForm, setPasswordForm] = useState({ current: '', new: '', confirm: '' });
   const [isNotificationsOpen, setIsNotificationsOpen] = useState(false);
 
-  // IA States
   const [isGeneratingReport, setIsGeneratingReport] = useState(false);
   const [reportContent, setReportContent] = useState('');
-  const [isGeneratingCaseSummary, setIsGeneratingCaseSummary] = useState(false);
-  const [caseSummary, setCaseSummary] = useState('');
 
   // --- EFECTOS DE FIREBASE ---
   useEffect(() => {
@@ -212,7 +212,7 @@ export default function App() {
     return { avgEnlace: countEnlace > 0 ? (sumEnlace / countEnlace).toFixed(1) : '---', avgIngreso: countIngreso > 0 ? (sumIngreso / countIngreso).toFixed(1) : '---', fueraDePlazo: alertCount };
   }, [visibleCases, targetDays]);
 
-  // --- HANDLERS ---
+  // --- HANDLERS GENERALES ---
   const handleLogin = (e) => {
     e.preventDefault();
     const user = users.find(u => u.rut === loginData.rut && u.password === loginData.password);
@@ -250,7 +250,7 @@ export default function App() {
 
   const copyToClipboard = (text) => { navigator.clipboard.writeText(text); alert("Copiado al portapapeles"); };
 
-  // Guardados en Nube
+  // --- GUARDADOS EN NUBE ---
   const handleSaveCase = async () => { 
     if (!caseForm.rut || !caseForm.nombre) return alert("RUT y Nombre son obligatorios.");
     const finalId = editingCaseId || `CASO-${String(cases.length + 1).padStart(3, '0')}`;
@@ -263,13 +263,77 @@ export default function App() {
     setCaseForm({ ...caseForm, bitacora: [{ id: Date.now(), ...newBitacoraEntry, fecha: new Date().toISOString().split('T')[0], completada: false }, ...caseForm.bitacora] });
     setNewBitacoraEntry({ tipo: 'Nota', descripcion: '', responsable: '', fechaCumplimiento: '' });
   };
-  const toggleTaskCompletion = (entryId) => setCaseForm({ ...caseForm, bitacora: caseForm.bitacora.map(entry => entry.id === entryId ? { ...entry, completada: !entry.completada } : entry) });
+  const toggleTaskCompletion = async (caseId, entryId) => {
+     const caso = cases.find(c => c.id === caseId);
+     if (!caso) return;
+     const updatedBitacora = (caso.bitacora || []).map(entry => entry.id === entryId ? { ...entry, completada: !entry.completada } : entry);
+     await saveToCloud('cases', caseId, { ...caso, bitacora: updatedBitacora });
+  };
 
   const handleSaveDoc = async () => {
-    if(!docForm.nombre) return alert("Nombre obligatorio"); 
+    if(!docForm.nombre) return alert("El nombre del protocolo es obligatorio"); 
     const finalId = editingDocId || `DOC-00${docs.length + 1}`;
     await saveToCloud('docs', finalId, { ...docForm, id: finalId });
     setIsDocModalOpen(false); setEditingDocId(null);
+  };
+
+  const handleAddDocBitacora = () => {
+    if (!newDocBitacoraEntry.descripcion) return;
+    setDocForm(prev => ({ ...prev, bitacora: [{ id: Date.now(), ...newDocBitacoraEntry, fecha: new Date().toISOString().split('T')[0], completada: false }, ...(prev.bitacora || [])] }));
+    setNewDocBitacoraEntry({ tipo: 'Tarea', descripcion: '', responsable: '', fechaCumplimiento: '' });
+  };
+  const toggleDocTaskCompletion = async (docId, entryId) => {
+     const documento = docs.find(d => d.id === docId);
+     if (!documento) return;
+     const updatedBitacora = (documento.bitacora || []).map(entry => entry.id === entryId ? { ...entry, completada: !entry.completada } : entry);
+     await saveToCloud('docs', docId, { ...documento, bitacora: updatedBitacora });
+  };
+
+  const handleFileUpload = (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+    const newFile = { id: Date.now().toString(), nombre: file.name, size: (file.size / 1024 / 1024).toFixed(2) + ' MB', fecha: new Date().toISOString().split('T')[0] };
+    setDocForm(prev => ({ ...prev, archivos: [...(prev.archivos || []), newFile] }));
+  };
+
+  const handleSaveTemplate = async () => {
+    const validCriterios = templateForm.criterios.filter(c=>c.trim()!=='');
+    if (!templateForm.nombre || validCriterios.length === 0) return alert("Ingresa nombre y al menos un criterio.");
+    const finalId = `TPL-00${auditTemplates.length + 1}`;
+    await saveToCloud('auditTemplates', finalId, { id: finalId, nombre: templateForm.nombre, tipo: templateForm.tipo, criterios: validCriterios, rangos: templateForm.rangos });
+    setIsTemplateModalOpen(false);
+  };
+
+  const handleSaveAudit = async () => {
+    const selectedTemplate = auditTemplates.find(t => t.id === auditForm.templateId);
+    if (!selectedTemplate) return;
+    const totalCriterios = selectedTemplate.criterios.length;
+    const aprobados = Object.values(auditForm.answers).filter(val => val === 'si').length;
+    const score = totalCriterios > 0 ? Math.round((aprobados / totalCriterios) * 100) : 0;
+    
+    // Calcular estado según los rangos
+    let estadoTexto = score >= 75 ? 'Óptimo' : 'Riesgo';
+    if (selectedTemplate.rangos && selectedTemplate.rangos.length > 0) {
+       const match = selectedTemplate.rangos.find(r => aprobados >= Number(r.min) && aprobados <= Number(r.max));
+       if (match) estadoTexto = match.resultado;
+    }
+
+    const finalId = `AUD-00${audits.length + 1}`;
+    await saveToCloud('audits', finalId, { id: finalId, centro: auditForm.centro, tipo: auditForm.tipo, templateId: selectedTemplate.id, fecha: new Date().toISOString().split('T')[0], cumplimiento: score, puntaje: `${aprobados} / ${totalCriterios} pts`, estado: estadoTexto, evaluador: currentUser.nombre });
+    setIsAuditModalOpen(false);
+  };
+
+  const handlePdfUploadForAI = async (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+    setIsDigitizing(true);
+    const prompt = `Actúa como auditor. Extrae los criterios a evaluar del documento "${file.name}". Devuelve ÚNICAMENTE los criterios encontrados, uno por línea, listos para un checklist de Sí/No.`;
+    try {
+      const result = await generateTextWithRetry(prompt);
+      const criteriosGenerados = result.split('\n').map(c => c.trim().replace(/^[-*•\d.)]+\s*/, '')).filter(c => c.length > 2);
+      setTemplateForm({...templateForm, nombre: `Evaluación: ${file.name}`, criterios: [...templateForm.criterios.filter(c=>c!==''), ...criteriosGenerados]});
+      alert(`¡Documento procesado!`);
+    } catch (err) { alert("Error al procesar con IA."); } finally { setIsDigitizing(false); }
   };
 
   const handleSaveDir = async () => {
@@ -294,39 +358,7 @@ export default function App() {
     setCurrentUser(updatedUser); setIsProfileModalOpen(false); alert("Actualizada exitosamente!");
   };
 
-  const handleSaveTemplate = async () => {
-    const validCriterios = templateForm.criterios.filter(c=>c.trim()!=='');
-    if (!templateForm.nombre || validCriterios.length === 0) return alert("Ingresa nombre y criterios.");
-    const finalId = `TPL-00${auditTemplates.length + 1}`;
-    await saveToCloud('auditTemplates', finalId, { id: finalId, nombre: templateForm.nombre, tipo: templateForm.tipo, criterios: validCriterios, rangos: templateForm.rangos });
-    setIsTemplateModalOpen(false);
-  };
-
-  const handleSaveAudit = async () => {
-    const selectedTemplate = auditTemplates.find(t => t.id === auditForm.templateId);
-    if (!selectedTemplate) return;
-    const totalCriterios = selectedTemplate.criterios.length;
-    const aprobados = Object.values(auditForm.answers).filter(val => val === 'si').length;
-    const score = totalCriterios > 0 ? Math.round((aprobados / totalCriterios) * 100) : 0;
-    const finalId = `AUD-00${audits.length + 1}`;
-    await saveToCloud('audits', finalId, { id: finalId, centro: auditForm.centro, tipo: auditForm.tipo, templateId: selectedTemplate.id, fecha: new Date().toISOString().split('T')[0], cumplimiento: score, puntaje: `${aprobados} / ${totalCriterios} pts`, estado: score >= 75 ? 'Óptimo' : 'Riesgo', evaluador: currentUser.nombre });
-    setIsAuditModalOpen(false);
-  };
-
-  const handlePdfUploadForAI = async (e) => {
-    const file = e.target.files[0];
-    if (!file) return;
-    setIsDigitizing(true);
-    const prompt = `Actúa como auditor. Extrae los criterios a evaluar del documento "${file.name}". Devuelve ÚNICAMENTE los criterios encontrados, uno por línea, listos para un checklist de Sí/No.`;
-    try {
-      const result = await generateTextWithRetry(prompt);
-      const criteriosGenerados = result.split('\n').map(c => c.trim().replace(/^[-*•\d.)]+\s*/, '')).filter(c => c.length > 2);
-      setTemplateForm({...templateForm, nombre: `Evaluación: ${file.name}`, criterios: [...templateForm.criterios.filter(c=>c!==''), ...criteriosGenerados]});
-      alert(`¡Documento procesado!`);
-    } catch (err) { alert("Error al procesar con IA."); } finally { setIsDigitizing(false); }
-  };
-
-  // ================= COMPONENTES RENDERIZADOS =================
+  // ================= RENDERIZADO PRINCIPAL =================
 
   if (!currentUser) return (
     <div className="min-h-screen bg-[#0a2540] flex items-center justify-center p-4 fade-in">
@@ -355,7 +387,7 @@ export default function App() {
 
   return (
     <div className="min-h-screen bg-slate-50 flex flex-col md:flex-row font-sans">
-      {/* SIDEBAR COMPLETO */}
+      {/* SIDEBAR */}
       <aside className="w-full md:w-64 bg-[#0a2540] text-white flex flex-col h-screen sticky top-0 shrink-0 shadow-xl overflow-y-auto">
         <div className="p-6 border-b border-white/5">
           <h1 className="text-xl font-bold tracking-tight">SGCC-SM</h1>
@@ -419,12 +451,11 @@ export default function App() {
           </div>
         </div>
 
-        {/* PESTAÑA 1: DASHBOARD CLÁSICO (RECUPERADO) */}
+        {/* PESTAÑA 1: DASHBOARD CLÁSICO */}
         {activeTab === 'dashboard' && (
           <div className="space-y-8 animate-in fade-in mt-12 md:mt-0">
             <div><h2 className="text-3xl font-black text-slate-800 tracking-tight">Panel de Gestión Integral</h2><p className="text-sm text-slate-500 font-medium mt-1">Resumen de actividad clínica y normativa</p></div>
 
-            {/* TARJETAS SUPERIORES */}
             <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
               <div className="bg-white p-5 rounded-[2rem] shadow-sm border border-slate-100 border-l-[8px] border-l-red-500"><p className="text-[9px] text-slate-400 font-black uppercase tracking-widest">Pérdida Continuidad</p><h3 className="text-3xl font-black text-red-600 mt-2">{alertCases.length}</h3></div>
               <div className="bg-white p-5 rounded-[2rem] shadow-sm border border-slate-100 border-l-[8px] border-l-blue-500"><p className="text-[9px] text-slate-400 font-black uppercase tracking-widest">Pacientes en Tránsito</p><h3 className="text-3xl font-black text-blue-600 mt-2">{visibleCases.filter(c => c.estado === 'Pendiente').length}</h3></div>
@@ -433,7 +464,6 @@ export default function App() {
               <div className="bg-white p-5 rounded-[2rem] shadow-sm border border-slate-100 border-l-[8px] border-l-teal-500"><p className="text-[9px] text-slate-400 font-black uppercase tracking-widest">Consultorías Clínicas</p><h3 className="text-3xl font-black text-teal-600 mt-2">{visibleAudits.filter(a => a.tipo === 'Consultoría').length}</h3></div>
             </div>
 
-            {/* TABLA DE ALERTAS Y ASISTENTE IA */}
             <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
               <div className="bg-white rounded-[2rem] shadow-sm border border-slate-200 p-6 lg:col-span-2 overflow-hidden">
                 <h3 className="text-sm font-black text-slate-800 uppercase tracking-widest mb-4 flex items-center gap-2"><AlertTriangle size={18} className="text-red-500" /> Casos Requiriendo Rescate</h3>
@@ -455,15 +485,17 @@ export default function App() {
               </div>
             </div>
 
-            {/* SEGUIMIENTO DE TAREAS */}
+            {/* SEGUIMIENTO DE TAREAS (Casos + Protocolos) */}
             <div className="bg-white rounded-[2rem] shadow-sm border border-slate-200 p-8">
               <h3 className="text-sm font-black text-slate-800 uppercase tracking-widest mb-6 flex items-center gap-2"><ListTodo size={18} className="text-blue-500" /> Tareas Intersectoriales Pendientes</h3>
-              <div className="overflow-x-auto"><table className="w-full text-left border-collapse"><thead><tr className="bg-slate-50 text-[10px] font-black uppercase tracking-widest text-slate-400"><th className="p-4 rounded-l-xl w-12">Est.</th><th className="p-4">Origen (Caso/Doc)</th><th className="p-4">Tarea Asignada</th><th className="p-4">Responsable</th><th className="p-4 rounded-r-xl">Vencimiento</th></tr></thead><tbody className="divide-y divide-slate-50">
+              <div className="overflow-x-auto"><table className="w-full text-left border-collapse"><thead><tr className="bg-slate-50 text-[10px] font-black uppercase tracking-widest text-slate-400"><th className="p-4 rounded-l-xl w-12">Est.</th><th className="p-4">Origen (Caso/Doc)</th><th className="p-4">Tarea Asignada</th><th className="p-4">Responsable</th><th className="p-4 rounded-r-xl">Acción / Vencimiento</th></tr></thead><tbody className="divide-y divide-slate-50">
                     {allPendingTasks.map(tarea => {
                       const statusInfo = getTaskStatus(tarea.fechaCumplimiento);
                       return (
-                        <tr key={tarea.id} className="hover:bg-slate-50 transition-colors">
-                          <td className="p-4 text-slate-300"><Square size={18} /></td>
+                        <tr key={tarea.id} className="hover:bg-slate-50 transition-colors group">
+                          <td className="p-4 text-slate-300">
+                             <button onClick={() => tarea.source === 'Caso' ? toggleTaskCompletion(tarea.parentId, tarea.id) : toggleDocTaskCompletion(tarea.parentId, tarea.id)} className="hover:text-emerald-500 transition-colors"><Square size={18} /></button>
+                          </td>
                           <td className="p-4"><div className="text-xs font-black text-slate-800 flex items-center gap-2">{tarea.parentName} {statusInfo.status === 'upcoming' && <span className="bg-amber-100 text-amber-700 px-2 py-0.5 rounded-lg text-[8px] uppercase animate-pulse">Próximo</span>} {statusInfo.status === 'overdue' && <span className="bg-red-100 text-red-700 px-2 py-0.5 rounded-lg text-[8px] uppercase">Vencida</span>}</div><div className="text-[9px] text-slate-400 mt-1 uppercase tracking-widest font-bold">{tarea.source}</div></td>
                           <td className="p-4 text-sm font-medium text-slate-600">{tarea.descripcion}</td>
                           <td className="p-4 text-xs font-bold text-slate-500">{tarea.responsable || 'No asignado'}</td>
@@ -477,7 +509,7 @@ export default function App() {
           </div>
         )}
 
-        {/* PESTAÑA 2: ESTADÍSTICAS Y PLAZOS (NUEVO TAB MOVIDO) */}
+        {/* PESTAÑA 2: ESTADÍSTICAS Y PLAZOS */}
         {activeTab === 'stats' && (
           <div className="space-y-8 animate-in fade-in mt-12 md:mt-0">
             <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
@@ -523,7 +555,6 @@ export default function App() {
               </div>
             </div>
 
-            {/* IA PARA REPORTE DE PLAZOS */}
             {redMetrics.fueraDePlazo > 0 && (
               <div className="bg-gradient-to-br from-indigo-900 to-[#0a2540] rounded-[2.5rem] p-10 text-white shadow-xl relative overflow-hidden">
                  <div className="relative z-10 flex flex-col md:flex-row items-center justify-between gap-8">
@@ -585,18 +616,18 @@ export default function App() {
           </div>
         )}
 
-        {/* PESTAÑA 4: PROTOCOLOS */}
+        {/* PESTAÑA 4: PROTOCOLOS (RESTAURADA CON TODAS LAS PESTAÑAS) */}
         {activeTab === 'docs' && (
           <div className="space-y-6 animate-in fade-in mt-12 md:mt-0">
             <div className="flex justify-between items-end">
               <div><h2 className="text-3xl font-black text-slate-800 tracking-tight">Normativas y Protocolos</h2><p className="text-sm text-slate-500 font-medium">Desarrollo documental de la red</p></div>
-              <button onClick={() => { setEditingDocId(null); setDocForm({ nombre: '', ambito: ambitosProtocolo[0], fase: 'Levantamiento', avance: 10, bitacora: [], archivos: [] }); setIsDocModalOpen(true); }} className="bg-blue-600 text-white px-8 py-4 rounded-[1.5rem] text-xs font-black uppercase tracking-widest hover:bg-blue-700 shadow-xl flex items-center gap-2"><Plus size={20}/> Nuevo Protocolo</button>
+              <button onClick={() => { setEditingDocId(null); setDocForm({ nombre: '', ambito: ambitosProtocolo[0], fase: 'Levantamiento', avance: 10, bitacora: [], archivos: [] }); setActiveDocModalTab('datos'); setIsDocModalOpen(true); }} className="bg-blue-600 text-white px-8 py-4 rounded-[1.5rem] text-xs font-black uppercase tracking-widest hover:bg-blue-700 shadow-xl flex items-center gap-2"><Plus size={20}/> Nuevo Protocolo</button>
             </div>
             <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
               {docs.map((d) => (
                 <div key={d.id} className="bg-white p-8 rounded-[2.5rem] shadow-sm border border-slate-200 hover:border-blue-200 transition-colors flex flex-col justify-between">
                   <div>
-                    <div className="flex justify-between items-start mb-4"><span className="text-[10px] font-black text-blue-600 bg-blue-50 px-3 py-1.5 rounded-xl uppercase tracking-widest">{d.id}</span><button onClick={() => { setEditingDocId(d.id); setDocForm(d); setIsDocModalOpen(true); }} className="text-slate-300 hover:text-blue-600 p-2 bg-slate-50 rounded-xl"><Edit2 size={16} /></button></div>
+                    <div className="flex justify-between items-start mb-4"><span className="text-[10px] font-black text-blue-600 bg-blue-50 px-3 py-1.5 rounded-xl uppercase tracking-widest">{d.id}</span><button onClick={() => { setEditingDocId(d.id); setDocForm(d); setActiveDocModalTab('datos'); setIsDocModalOpen(true); }} className="text-slate-300 hover:text-blue-600 p-2 bg-slate-50 rounded-xl"><Edit2 size={16} /></button></div>
                     <h3 className="text-xl font-black text-slate-800 mb-2 leading-tight">{d.nombre}</h3><p className="text-xs font-bold text-slate-400 mb-6 uppercase tracking-widest flex items-center gap-2"><Activity size={14}/> {d.ambito} • {d.fase}</p>
                   </div>
                   <div>
@@ -623,8 +654,8 @@ export default function App() {
                 <div><h2 className="text-3xl font-black text-slate-800 tracking-tight">{tipoLabel === 'Auditoría' ? 'Auditorías Normativas' : 'Consultorías Clínicas'}</h2><p className="text-sm text-slate-500 font-medium">Evaluación en dispositivos de la red</p></div>
                 <div className="flex flex-wrap gap-3">
                   <select value={currentFilter} onChange={e => setFilter(e.target.value)} className="px-4 py-3 border-2 border-slate-200 rounded-2xl text-xs font-bold bg-white outline-none focus:border-blue-500 uppercase tracking-widest text-slate-600"><option value="Todos">Toda la Red</option>{centros.map(c => <option key={c} value={c}>{c}</option>)}</select>
-                  {currentUser?.rol === 'Admin' && (<button onClick={() => { setTemplateForm({nombre: '', criterios: [''], rangos: [], tipo: 'Ambos'}); setIsTemplateModalOpen(true); }} className="bg-white border-2 border-slate-200 text-slate-600 hover:bg-slate-50 px-6 py-3 rounded-2xl text-xs font-black uppercase tracking-widest flex items-center gap-2"><Settings size={16} /> Pautas</button>)}
-                  <button onClick={() => { setAuditForm({ centro: centros[0] || '', templateId: auditTemplates.find(t => t.tipo === 'Ambos' || t.tipo === tipoLabel)?.id || '', answers: {}, tipo: tipoLabel }); setIsAuditModalOpen(true); }} className="bg-blue-600 hover:bg-blue-700 text-white px-8 py-3 rounded-2xl text-xs font-black uppercase tracking-widest flex items-center gap-2 shadow-xl"><ClipboardCheck size={18} /> Evaluar</button>
+                  {currentUser?.rol === 'Admin' && (<button onClick={() => { setTemplateForm({nombre: '', criterios: [''], rangos: [], tipo: 'Ambos'}); setIsTemplateModalOpen(true); }} className="bg-white border-2 border-slate-200 text-slate-600 hover:bg-slate-50 px-6 py-3 rounded-2xl text-xs font-black uppercase tracking-widest flex items-center gap-2"><Settings size={16} /> Configurar Pautas</button>)}
+                  <button onClick={() => { setAuditForm({ centro: centros[0] || '', templateId: auditTemplates.find(t => t.tipo === 'Ambos' || t.tipo === tipoLabel)?.id || '', answers: {}, tipo: tipoLabel }); setIsAuditModalOpen(true); }} className="bg-blue-600 hover:bg-blue-700 text-white px-8 py-3 rounded-2xl text-xs font-black uppercase tracking-widest flex items-center gap-2 shadow-xl"><ClipboardCheck size={18} /> Evaluar Terreno</button>
                 </div>
               </div>
               {filteredAudits.length === 0 ? (<div className="text-center py-20 bg-white rounded-[2.5rem] border border-slate-100 shadow-sm"><ClipboardCheck size={48} className="mx-auto text-slate-200 mb-4"/><p className="text-slate-400 font-black uppercase tracking-widest text-xs">No hay evaluaciones en este filtro.</p></div>) : (
@@ -636,12 +667,12 @@ export default function App() {
                        <div>
                          <h3 className="font-black text-slate-800 uppercase text-sm mb-1">{a.centro}</h3>
                          <p className="text-[10px] text-blue-600 font-black uppercase tracking-widest mb-3 bg-blue-50 px-2 py-1 rounded w-fit">{template ? template.nombre : 'Pauta Eliminada'}</p>
-                         <p className="text-[10px] text-slate-400 font-bold uppercase tracking-widest flex items-center gap-1"><Calendar size={10}/> {a.fecha} • {a.evaluador}</p>
+                         <p className="text-[10px] text-slate-400 font-bold uppercase tracking-widest flex items-center gap-1"><Calendar size={10}/> {a.fecha} • Evaluador: {a.evaluador}</p>
                        </div>
                        <div className="text-right">
                           <div className="text-4xl font-black text-slate-800">{a.cumplimiento}%</div>
                           <span className="text-[9px] uppercase text-slate-400 font-black block mb-2 tracking-[0.2em]">{a.puntaje}</span>
-                          <span className={`text-[9px] uppercase tracking-widest px-3 py-1.5 rounded-xl font-black ${a.cumplimiento >= 75 ? 'bg-emerald-100 text-emerald-700' : 'bg-red-100 text-red-700'}`}>{a.estado}</span>
+                          <span className={`text-[9px] uppercase tracking-widest px-3 py-1.5 rounded-xl font-black ${a.estado === 'Óptimo' || a.cumplimiento >= 75 ? 'bg-emerald-100 text-emerald-700' : 'bg-red-100 text-red-700'}`}>{a.estado}</span>
                        </div>
                     </div>
                     );
@@ -732,19 +763,26 @@ export default function App() {
         )}
       </main>
 
-      {/* ================= MODAL CASOS (RELOJES + BITÁCORA) ================= */}
+      {/* ================= MODALES DE LA APLICACIÓN (CON TOPES DE SCROLL APLICADOS) ================= */}
+      
+      {/* 1. MODAL CASOS (RELOJES + BITÁCORA) */}
       {isCaseModalOpen && (
         <div className="fixed inset-0 bg-[#0a2540]/90 backdrop-blur-md flex items-center justify-center p-4 z-50">
-          <div className="bg-white rounded-[2.5rem] shadow-2xl w-full max-w-5xl max-h-[95vh] flex flex-col overflow-hidden animate-in zoom-in-95 border border-slate-200">
+          {/* TOPE DE ALTURA: max-h-[90vh] flex flex-col */}
+          <div className="bg-white rounded-[2.5rem] shadow-2xl w-full max-w-5xl max-h-[90vh] flex flex-col overflow-hidden animate-in zoom-in-95 border border-slate-200">
+            {/* HEADER */}
             <div className="bg-blue-600 p-8 text-white flex justify-between items-center shrink-0 relative overflow-hidden">
               <div className="absolute top-0 right-0 w-64 h-64 bg-white/10 rounded-full -mr-20 -mt-20 blur-2xl"></div>
               <div className="flex items-center gap-5 relative z-10"><div className="p-4 bg-white/20 rounded-[1.5rem] backdrop-blur-sm border border-white/20"><FileIcon size={32}/></div><div><h3 className="font-black text-2xl uppercase tracking-widest drop-shadow-md">{editingCaseId ? `${caseForm.nombre}` : 'Nuevo Seguimiento'}</h3><p className="text-[10px] font-black text-blue-200 uppercase tracking-[0.4em] mt-1">{editingCaseId || 'ASIGNANDO ID...'}</p></div></div>
               <button onClick={() => setIsCaseModalOpen(false)} className="text-white/60 hover:text-white font-bold text-4xl transition-colors relative z-10">&times;</button>
             </div>
+            {/* TABS */}
             <div className="flex bg-slate-50 border-b border-slate-200 shrink-0 px-8">
               <button onClick={() => setActiveModalTab('datos')} className={`px-8 py-6 text-[10px] font-black uppercase tracking-[0.2em] border-b-4 transition-all ${activeModalTab === 'datos' ? 'border-blue-600 text-blue-600 bg-white shadow-inner' : 'border-transparent text-slate-400 hover:text-slate-600'}`}>1. Hitos Reales</button>
               <button onClick={() => setActiveModalTab('bitacora')} className={`px-8 py-6 text-[10px] font-black uppercase tracking-[0.2em] border-b-4 transition-all ${activeModalTab === 'bitacora' ? 'border-blue-600 text-blue-600 bg-white shadow-inner' : 'border-transparent text-slate-400 hover:text-slate-600'}`}>2. Bitácora Clínica</button>
             </div>
+            
+            {/* BODY DEL MODAL CON SCROLL */}
             <div className="p-10 overflow-y-auto flex-1 bg-white">
               {activeModalTab === 'datos' && (
                 <div className="space-y-12 animate-in slide-in-from-left-4">
@@ -789,19 +827,28 @@ export default function App() {
                     <div className="grid grid-cols-1 md:grid-cols-4 gap-6 mb-6">
                       <div className="flex flex-col gap-2"><label className="text-[9px] font-black text-slate-400 uppercase tracking-widest">Tipo</label><select value={newBitacoraEntry.tipo} onChange={e=>setNewBitacoraEntry({...newBitacoraEntry, tipo: e.target.value})} className="border-2 border-white p-4 rounded-2xl text-xs font-black uppercase tracking-widest shadow-sm outline-none focus:border-blue-300 cursor-pointer"><option value="Nota">📝 Nota Adm.</option><option value="Intervención">🗣️ Intervención</option><option value="Tarea">🎯 Tarea Enlace</option></select></div>
                       <div className="flex flex-col gap-2"><label className="text-[9px] font-black text-slate-400 uppercase tracking-widest">Responsable</label><input type="text" value={newBitacoraEntry.responsable} onChange={e=>setNewBitacoraEntry({...newBitacoraEntry, responsable: e.target.value})} className="border-2 border-white p-4 rounded-2xl text-xs font-black shadow-sm outline-none focus:border-blue-300" placeholder="Ej: Ps. Silva" /></div>
-                      <div className="flex flex-col gap-2 md:col-span-2"><label className="text-[9px] font-black text-slate-400 uppercase tracking-widest">Descripción</label><input type="text" value={newBitacoraEntry.descripcion} onChange={e=>setNewBitacoraEntry({...newBitacoraEntry, descripcion: e.target.value})} className="border-2 border-white p-4 rounded-2xl text-xs font-black shadow-sm outline-none focus:border-blue-300" placeholder="Detalle de la acción..." /></div>
+                      <div className="flex flex-col gap-2 md:col-span-2"><label className="text-[9px] font-black text-slate-400 uppercase tracking-widest">Descripción / Acuerdos</label><input type="text" value={newBitacoraEntry.descripcion} onChange={e=>setNewBitacoraEntry({...newBitacoraEntry, descripcion: e.target.value})} className="border-2 border-white p-4 rounded-2xl text-xs font-black shadow-sm outline-none focus:border-blue-300" placeholder="Detalle de la acción o tarea pendiente..." /></div>
+                      {newBitacoraEntry.tipo === 'Tarea' && (
+                         <div className="flex flex-col gap-2 md:col-span-4 mt-2">
+                           <label className="text-[9px] font-black text-amber-500 uppercase tracking-widest">Fecha Límite para Tarea</label>
+                           <input type="date" value={newBitacoraEntry.fechaCumplimiento} onChange={e=>setNewBitacoraEntry({...newBitacoraEntry, fechaCumplimiento: e.target.value})} className="border-2 border-amber-200 p-4 rounded-2xl text-xs font-black shadow-sm outline-none focus:border-amber-400 text-amber-800 bg-amber-50/50" />
+                         </div>
+                      )}
                     </div>
                     <div className="flex justify-end"><button onClick={handleAddBitacora} disabled={!newBitacoraEntry.descripcion} className="bg-blue-600 text-white px-10 py-4 rounded-2xl text-[10px] font-black uppercase tracking-[0.2em] hover:bg-blue-700 disabled:opacity-50 shadow-xl shadow-blue-100 transition-all flex items-center gap-2"><Plus size={16}/> Registrar Acción</button></div>
                   </div>
-                  <div className="flex-1 space-y-6 overflow-y-auto pr-6">
-                    <h4 className="text-[11px] font-black text-slate-400 uppercase tracking-widest border-b-2 border-slate-100 pb-4 sticky top-0 bg-white z-10 pt-2">Evolución Cronológica</h4>
+                  <div className="flex-1 space-y-6">
+                    <h4 className="text-[11px] font-black text-slate-400 uppercase tracking-widest border-b-2 border-slate-100 pb-4 pt-2">Evolución Cronológica</h4>
                     {caseForm.bitacora.map(entry => (
                       <div key={entry.id} className="p-6 bg-white border-2 border-slate-100 rounded-[1.5rem] shadow-sm flex gap-6 items-start group hover:border-blue-200 transition-all">
-                        <div className="p-4 bg-slate-50 rounded-2xl text-slate-400 group-hover:bg-blue-50 group-hover:text-blue-500 transition-colors shrink-0">{entry.tipo === 'Intervención' ? <Users size={20}/> : entry.tipo === 'Tarea' ? <CheckSquare size={20}/> : <MessageSquare size={20}/>}</div>
+                        <div className="p-4 bg-slate-50 rounded-2xl text-slate-400 group-hover:bg-blue-50 group-hover:text-blue-500 transition-colors shrink-0">{entry.tipo === 'Intervención' ? <Users size={20}/> : entry.tipo === 'Tarea' ? <CheckSquare size={20} className="text-amber-500"/> : <MessageSquare size={20}/>}</div>
                         <div className="flex-1 min-w-0">
                           <div className="flex justify-between items-center mb-2"><span className="text-[10px] font-black uppercase text-blue-600 bg-blue-50 px-3 py-1.5 rounded-lg tracking-widest">{entry.tipo}</span><span className="text-[10px] font-black text-slate-300 uppercase flex items-center gap-1"><Calendar size={12}/> {entry.fecha}</span></div>
                           <p className="text-sm font-bold text-slate-700 leading-relaxed mb-3">{entry.descripcion}</p>
-                          <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest italic opacity-70 bg-slate-50 px-2 py-1 rounded w-fit">Resp: {entry.responsable || 'No indicado'}</p>
+                          <div className="flex gap-3 items-center">
+                            <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest italic opacity-70 bg-slate-50 px-2 py-1 rounded w-fit">Resp: {entry.responsable || 'No indicado'}</p>
+                            {entry.tipo === 'Tarea' && entry.fechaCumplimiento && <p className="text-[10px] font-black text-amber-600 uppercase tracking-widest bg-amber-50 px-2 py-1 rounded w-fit border border-amber-100 flex items-center gap-1"><Timer size={10}/> Vence: {entry.fechaCumplimiento}</p>}
+                          </div>
                         </div>
                         <button onClick={() => setCaseForm({ ...caseForm, bitacora: caseForm.bitacora.filter(b => b.id !== entry.id) })} className="opacity-0 group-hover:opacity-100 p-3 text-slate-300 hover:text-red-500 transition-all bg-slate-50 rounded-xl hover:bg-red-50"><Trash2 size={20}/></button>
                       </div>
@@ -811,7 +858,9 @@ export default function App() {
                 </div>
               )}
             </div>
-            <div className="bg-slate-50 p-10 border-t border-slate-200 flex flex-col md:flex-row justify-between items-center gap-8 shrink-0">
+            
+            {/* FOOTER */}
+            <div className="bg-slate-50 p-8 border-t border-slate-200 flex flex-col md:flex-row justify-between items-center gap-8 shrink-0">
               <p className="text-[10px] text-slate-400 font-black uppercase tracking-[0.2em] flex items-center gap-3 bg-white px-5 py-3 rounded-2xl shadow-sm border border-slate-100"><Shield size={16} className="text-blue-500"/> Auditoría HPM - Ley 20.584</p>
               <div className="flex gap-4">
                 <button onClick={() => setIsCaseModalOpen(false)} className="px-10 py-5 text-slate-400 font-black text-xs uppercase tracking-widest hover:text-slate-600 transition-all">Cancelar</button>
@@ -822,29 +871,239 @@ export default function App() {
         </div>
       )}
 
-      {/* ================= OTROS MODALES (RESTAURADOS) ================= */}
+      {/* 2. MODAL PROTOCOLOS (RESTAURADAS PESTAÑAS, BITÁCORA Y ARCHIVOS) */}
       {isDocModalOpen && (
         <div className="fixed inset-0 bg-[#0a2540]/90 backdrop-blur-md flex items-center justify-center p-4 z-50 fade-in">
-          <div className="bg-white rounded-[2.5rem] shadow-2xl w-full max-w-lg p-10 border border-slate-200">
-            <h3 className="font-black text-2xl text-slate-800 mb-8 uppercase tracking-widest">{editingDocId ? 'Editar Protocolo' : 'Nuevo Protocolo'}</h3>
-            <div className="space-y-6">
-              <div><label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-2">Nombre del Documento</label><input type="text" value={docForm.nombre} onChange={e=>setDocForm({...docForm, nombre: e.target.value})} className="w-full border-2 border-slate-100 p-4 rounded-2xl text-sm font-bold outline-none focus:border-blue-500" placeholder="Ej: Vía Clínica Agitación..." /></div>
-              <div className="grid grid-cols-2 gap-4">
-                <div><label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-2">Ámbito</label><select value={docForm.ambito} onChange={e=>setDocForm({...docForm, ambito: e.target.value})} className="w-full border-2 border-slate-100 p-4 rounded-2xl text-sm font-bold outline-none focus:border-blue-500 bg-white"><option>Red Integral</option><option>Hospitalario</option><option>COSAM</option></select></div>
-                <div><label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-2">Fase</label><select value={docForm.fase} onChange={e=>setDocForm({...docForm, fase: e.target.value})} className="w-full border-2 border-slate-100 p-4 rounded-2xl text-sm font-bold outline-none focus:border-blue-500 bg-white"><option>Levantamiento</option><option>Redacción</option><option>Validación Técnica</option><option>Resolución Exenta</option></select></div>
-              </div>
-              <div><label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-2 flex justify-between"><span>Avance Estimado</span><span className="text-blue-600">{docForm.avance}%</span></label><input type="range" min="0" max="100" step="5" value={docForm.avance} onChange={e=>setDocForm({...docForm, avance: e.target.value})} className="w-full accent-blue-600" /></div>
+          {/* TOPE DE ALTURA */}
+          <div className="bg-white rounded-[2.5rem] shadow-2xl w-full max-w-5xl max-h-[90vh] flex flex-col overflow-hidden border border-slate-200">
+            <div className="bg-blue-600 p-8 text-white flex justify-between items-center shrink-0 relative overflow-hidden">
+               <div className="absolute top-0 right-0 w-64 h-64 bg-white/10 rounded-full -mr-20 -mt-20 blur-2xl"></div>
+               <div className="flex items-center gap-5 relative z-10"><div className="p-4 bg-white/20 rounded-[1.5rem] backdrop-blur-sm border border-white/20"><FileText size={32}/></div><div><h3 className="font-black text-2xl uppercase tracking-widest drop-shadow-md">{editingDocId ? 'Editar Protocolo' : 'Nuevo Protocolo'}</h3></div></div>
+               <button onClick={() => setIsDocModalOpen(false)} className="text-white/60 hover:text-white font-bold text-4xl transition-colors relative z-10">&times;</button>
             </div>
-            <div className="flex justify-end gap-4 mt-10"><button onClick={() => setIsDocModalOpen(false)} className="px-8 py-4 text-slate-400 font-bold text-xs uppercase tracking-widest hover:text-slate-600">Cancelar</button><button onClick={handleSaveDoc} className="px-10 py-4 bg-blue-600 text-white font-black text-xs uppercase tracking-widest rounded-2xl shadow-xl hover:bg-blue-700">Guardar</button></div>
+            
+            <div className="flex bg-slate-50 border-b border-slate-200 shrink-0 px-8">
+              <button onClick={() => setActiveDocModalTab('datos')} className={`px-8 py-6 text-[10px] font-black uppercase tracking-[0.2em] border-b-4 transition-all ${activeDocModalTab === 'datos' ? 'border-blue-600 text-blue-600 bg-white shadow-inner' : 'border-transparent text-slate-400 hover:text-slate-600'}`}>1. Datos y Fase</button>
+              <button onClick={() => setActiveDocModalTab('bitacora')} className={`px-8 py-6 text-[10px] font-black uppercase tracking-[0.2em] border-b-4 transition-all ${activeDocModalTab === 'bitacora' ? 'border-blue-600 text-blue-600 bg-white shadow-inner' : 'border-transparent text-slate-400 hover:text-slate-600'}`}>2. Tareas de Redacción</button>
+              <button onClick={() => setActiveDocModalTab('archivos')} className={`px-8 py-6 text-[10px] font-black uppercase tracking-[0.2em] border-b-4 transition-all ${activeDocModalTab === 'archivos' ? 'border-blue-600 text-blue-600 bg-white shadow-inner' : 'border-transparent text-slate-400 hover:text-slate-600'}`}>3. Anexos y Borradores</button>
+            </div>
+
+            <div className="p-10 overflow-y-auto flex-1 bg-white">
+              {activeDocModalTab === 'datos' && (
+                <div className="space-y-8 animate-in slide-in-from-left-4">
+                  <div><label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-3">Nombre del Documento Normativo</label><input type="text" value={docForm.nombre} onChange={e=>setDocForm({...docForm, nombre: e.target.value})} className="w-full border-2 border-slate-100 p-5 rounded-2xl text-base font-black text-slate-700 outline-none focus:border-blue-500 bg-slate-50 focus:bg-white transition-colors" placeholder="Ej: Vía Clínica Agitación Psicomotora..." /></div>
+                  <div className="grid grid-cols-2 gap-8">
+                    <div><label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-3">Ámbito de Aplicación</label><select value={docForm.ambito} onChange={e=>setDocForm({...docForm, ambito: e.target.value})} className="w-full border-2 border-slate-100 p-5 rounded-2xl text-sm font-bold text-slate-700 outline-none focus:border-blue-500 bg-slate-50 focus:bg-white transition-colors cursor-pointer"><option>Red Integral</option><option>Hospitalario</option><option>COSAM</option></select></div>
+                    <div><label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-3">Fase Actual</label><select value={docForm.fase} onChange={e=>setDocForm({...docForm, fase: e.target.value})} className="w-full border-2 border-slate-100 p-5 rounded-2xl text-sm font-bold text-slate-700 outline-none focus:border-blue-500 bg-slate-50 focus:bg-white transition-colors cursor-pointer"><option>Levantamiento</option><option>Redacción</option><option>Validación Técnica</option><option>Revisión Jurídica</option><option>Resolución Exenta</option><option>Difusión</option></select></div>
+                  </div>
+                  <div className="bg-blue-50/50 p-8 rounded-[2rem] border-2 border-blue-100 mt-6">
+                    <label className="flex justify-between items-end mb-4"><span className="block text-[10px] font-black text-blue-900 uppercase tracking-widest">Avance Estimado del Documento</span><span className="text-3xl font-black text-blue-600">{docForm.avance}%</span></label>
+                    <input type="range" min="0" max="100" step="5" value={docForm.avance} onChange={e=>setDocForm({...docForm, avance: e.target.value})} className="w-full accent-blue-600 h-2 bg-blue-200 rounded-lg appearance-none cursor-pointer" />
+                  </div>
+                </div>
+              )}
+
+              {activeDocModalTab === 'bitacora' && (
+                <div className="space-y-8 animate-in slide-in-from-right-4 h-full flex flex-col">
+                  <div className="bg-slate-50 p-8 rounded-[2rem] border-2 border-slate-200 shrink-0 shadow-inner">
+                    <h4 className="text-[11px] font-black text-slate-600 uppercase tracking-widest mb-6">Asignar Tarea de Desarrollo</h4>
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-6">
+                      <div className="flex flex-col gap-2"><label className="text-[9px] font-black text-slate-400 uppercase tracking-widest">Responsable</label><input type="text" value={newDocBitacoraEntry.responsable} onChange={e=>setNewDocBitacoraEntry({...newDocBitacoraEntry, responsable: e.target.value})} className="border-2 border-white p-4 rounded-2xl text-xs font-black shadow-sm outline-none focus:border-blue-300" placeholder="Ej: Abogado SS" /></div>
+                      <div className="flex flex-col gap-2"><label className="text-[9px] font-black text-amber-500 uppercase tracking-widest">Fecha Límite</label><input type="date" value={newDocBitacoraEntry.fechaCumplimiento} onChange={e=>setNewDocBitacoraEntry({...newDocBitacoraEntry, fechaCumplimiento: e.target.value})} className="border-2 border-amber-200 p-4 rounded-2xl text-xs font-black shadow-sm outline-none focus:border-amber-400 text-amber-800 bg-amber-50/50" /></div>
+                      <div className="flex flex-col gap-2 md:col-span-2"><label className="text-[9px] font-black text-slate-400 uppercase tracking-widest">Descripción de la Tarea</label><input type="text" value={newDocBitacoraEntry.descripcion} onChange={e=>setNewDocBitacoraEntry({...newDocBitacoraEntry, descripcion: e.target.value})} className="border-2 border-white p-4 rounded-2xl text-xs font-black shadow-sm outline-none focus:border-blue-300" placeholder="Ej: Revisión del capítulo de derivación..." /></div>
+                    </div>
+                    <div className="flex justify-end"><button onClick={handleAddDocBitacora} disabled={!newDocBitacoraEntry.descripcion} className="bg-blue-600 text-white px-10 py-4 rounded-2xl text-[10px] font-black uppercase tracking-[0.2em] hover:bg-blue-700 disabled:opacity-50 shadow-xl shadow-blue-100 transition-all flex items-center gap-2"><Plus size={16}/> Asignar Tarea</button></div>
+                  </div>
+                  <div className="flex-1 space-y-4">
+                     <h4 className="text-[11px] font-black text-slate-400 uppercase tracking-widest border-b-2 border-slate-100 pb-4 pt-2">Historial y Tareas del Protocolo</h4>
+                     {(docForm.bitacora || []).map(entry => (
+                       <div key={entry.id} className="p-6 bg-white border-2 border-slate-100 rounded-[1.5rem] shadow-sm flex gap-6 items-start group hover:border-blue-200 transition-all">
+                         <div className="p-4 bg-slate-50 rounded-2xl text-slate-400 shrink-0">{entry.tipo === 'Tarea' ? <CheckSquare size={20} className={entry.completada ? "text-emerald-500" : "text-amber-500"}/> : <MessageSquare size={20}/>}</div>
+                         <div className="flex-1 min-w-0">
+                           <div className="flex justify-between items-center mb-2"><span className="text-[10px] font-black uppercase text-blue-600 bg-blue-50 px-3 py-1.5 rounded-lg tracking-widest">{entry.tipo}</span><span className="text-[10px] font-black text-slate-300 uppercase flex items-center gap-1"><Calendar size={12}/> Asignada: {entry.fecha}</span></div>
+                           <p className={`text-sm font-bold leading-relaxed mb-3 ${entry.completada ? 'text-slate-400 line-through' : 'text-slate-700'}`}>{entry.descripcion}</p>
+                           <div className="flex gap-3 items-center">
+                             <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest italic bg-slate-50 px-2 py-1 rounded w-fit">Resp: {entry.responsable || 'Equipo'}</p>
+                             {entry.fechaCumplimiento && <p className="text-[10px] font-black text-amber-600 uppercase tracking-widest bg-amber-50 px-2 py-1 rounded w-fit border border-amber-100 flex items-center gap-1"><Timer size={10}/> Vence: {entry.fechaCumplimiento}</p>}
+                           </div>
+                         </div>
+                         <button onClick={() => setDocForm(prev => ({ ...prev, bitacora: prev.bitacora.filter(b => b.id !== entry.id) }))} className="opacity-0 group-hover:opacity-100 p-3 text-slate-300 hover:text-red-500 transition-all bg-slate-50 rounded-xl hover:bg-red-50"><Trash2 size={20}/></button>
+                       </div>
+                     ))}
+                     {(!docForm.bitacora || docForm.bitacora.length === 0) && (<div className="text-center py-20 border-2 border-dashed border-slate-100 rounded-[2rem]"><ListTodo size={32} className="text-slate-200 mx-auto mb-4"/><p className="text-slate-300 font-black text-xs uppercase tracking-widest italic">Protocolo sin tareas asignadas</p></div>)}
+                  </div>
+                </div>
+              )}
+
+              {activeDocModalTab === 'archivos' && (
+                <div className="space-y-8 animate-in slide-in-from-right-4">
+                  <div className="bg-indigo-50/50 p-10 rounded-[2.5rem] border-2 border-indigo-100 flex flex-col text-center">
+                    <h4 className="text-sm font-black text-indigo-900 uppercase tracking-widest mb-3 flex items-center justify-center gap-2"><UploadCloud size={20}/> Subir Borrador o Anexo</h4>
+                    <p className="text-xs text-indigo-700/80 mb-6 font-medium leading-relaxed">Adjunta documentos Word o PDF de respaldo para este protocolo.</p>
+                    <label className="flex flex-col items-center justify-center w-full h-40 border-2 border-indigo-300 border-dashed rounded-3xl cursor-pointer bg-white hover:bg-indigo-50 transition-colors shadow-sm">
+                      <div className="flex flex-col items-center justify-center pt-5 pb-6">
+                        <Paperclip className="w-10 h-10 text-indigo-400 mb-3" />
+                        <p className="text-sm text-indigo-900 font-black uppercase tracking-widest">Seleccionar Archivo</p>
+                      </div>
+                      <input type="file" className="hidden" onChange={handleFileUpload} />
+                    </label>
+                  </div>
+                  <div className="space-y-4">
+                     <h4 className="text-[11px] font-black text-slate-400 uppercase tracking-widest border-b-2 border-slate-100 pb-3">Archivos Vinculados</h4>
+                     <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                       {(docForm.archivos || []).map(file => (
+                         <div key={file.id} className="flex items-center justify-between p-5 bg-white border-2 border-slate-100 rounded-2xl shadow-sm group hover:border-blue-200 transition-all">
+                           <div className="flex items-center gap-4 min-w-0">
+                             <div className="p-3 bg-blue-50 text-blue-600 rounded-xl"><FileIcon size={20}/></div>
+                             <div className="min-w-0"><p className="text-sm font-black text-slate-700 truncate">{file.nombre}</p><p className="text-[9px] font-bold text-slate-400 uppercase tracking-widest mt-1">{file.size} • Subido el {file.fecha}</p></div>
+                           </div>
+                           <button onClick={() => setDocForm(prev => ({ ...prev, archivos: prev.archivos.filter(f => f.id !== file.id) }))} className="p-3 text-slate-300 hover:text-red-500 opacity-0 group-hover:opacity-100 transition-all bg-slate-50 hover:bg-red-50 rounded-xl"><Trash2 size={16}/></button>
+                         </div>
+                       ))}
+                     </div>
+                     {(!docForm.archivos || docForm.archivos.length === 0) && <p className="text-center py-10 text-slate-300 font-black text-xs uppercase tracking-widest italic">No hay archivos adjuntos.</p>}
+                  </div>
+                </div>
+              )}
+            </div>
+            
+            <div className="bg-slate-50 p-8 border-t border-slate-200 flex justify-end gap-4 shrink-0"><button onClick={() => setIsDocModalOpen(false)} className="px-10 py-5 text-slate-400 font-black text-xs uppercase tracking-widest hover:text-slate-600 transition-all">Cancelar</button><button onClick={handleSaveDoc} className="px-12 py-5 bg-blue-600 text-white font-black text-xs uppercase tracking-[0.2em] rounded-[1.5rem] shadow-2xl hover:bg-blue-700 transition-all hover:-translate-y-1 flex items-center gap-2"><CheckCircle size={18}/> Guardar Protocolo</button></div>
           </div>
         </div>
       )}
 
+      {/* 3. MODAL GESTOR DE PAUTAS (RESTAURADOS LOS RANGOS) */}
+      {isTemplateModalOpen && (
+        <div className="fixed inset-0 bg-[#0a2540]/90 backdrop-blur-md flex items-center justify-center p-4 z-50 fade-in">
+          {/* TOPE DE ALTURA */}
+          <div className="bg-white rounded-[2.5rem] shadow-2xl w-full max-w-5xl max-h-[90vh] flex flex-col overflow-hidden border border-slate-200">
+            <div className="bg-slate-800 p-8 text-white flex justify-between items-center shrink-0 relative overflow-hidden">
+               <div className="absolute top-0 right-0 w-64 h-64 bg-white/10 rounded-full -mr-20 -mt-20 blur-2xl"></div>
+               <div className="flex items-center gap-5 relative z-10"><div className="p-4 bg-white/20 rounded-[1.5rem] backdrop-blur-sm border border-white/20"><Settings size={32}/></div><div><h3 className="font-black text-2xl uppercase tracking-widest drop-shadow-md">Gestor de Pautas Normativas</h3></div></div>
+               <button onClick={() => setIsTemplateModalOpen(false)} className="text-white/60 hover:text-white font-bold text-4xl transition-colors relative z-10">&times;</button>
+            </div>
+            
+            <div className="p-10 overflow-y-auto flex-1 bg-white">
+              <div className="grid grid-cols-1 lg:grid-cols-5 gap-10">
+                <div className="lg:col-span-2 space-y-8">
+                  <div className="bg-indigo-50/50 p-8 rounded-[2.5rem] border-2 border-indigo-100 flex flex-col text-center">
+                    <h4 className="text-xs font-black text-indigo-900 uppercase tracking-[0.2em] mb-3 flex items-center justify-center gap-2"><Wand2 size={18}/> Extracción con IA</h4>
+                    <p className="text-xs text-indigo-700/80 mb-6 font-medium leading-relaxed">Sube el PDF de la norma técnica. La IA extraerá los criterios para el checklist automáticamente.</p>
+                    <label className="flex flex-col items-center justify-center w-full h-32 border-2 border-indigo-300 border-dashed rounded-3xl cursor-pointer bg-white hover:bg-indigo-50 transition-colors shadow-sm">
+                      <div className="flex flex-col items-center justify-center pt-5 pb-6">
+                        <UploadCloud className="w-8 h-8 text-indigo-400 mb-2" />
+                        <p className="text-[10px] text-indigo-900 font-black uppercase tracking-widest">Cargar Pauta PDF</p>
+                      </div>
+                      <input type="file" className="hidden" accept=".pdf,.doc,.docx" onChange={handlePdfUploadForAI} />
+                    </label>
+                    {isDigitizing && (<div className="mt-4 flex items-center justify-center gap-2 text-[10px] text-indigo-600 font-black uppercase tracking-widest"><Loader2 size={14} className="animate-spin"/> Analizando...</div>)}
+                  </div>
+                  
+                  <div className="space-y-6">
+                    <div><label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-2">Nombre del Instrumento</label><input type="text" value={templateForm.nombre} onChange={e=>setTemplateForm({...templateForm, nombre: e.target.value})} className="w-full border-2 border-slate-100 p-4 rounded-2xl text-sm font-bold outline-none focus:border-slate-800 transition-colors" placeholder="Ej: Pauta de Riesgo Suicida..."/></div>
+                    <div><label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-2">Tipo de Actividad</label><select value={templateForm.tipo} onChange={e=>setTemplateForm({...templateForm, tipo: e.target.value})} className="w-full border-2 border-slate-100 p-4 rounded-2xl text-sm font-bold outline-none focus:border-slate-800 bg-slate-50 transition-colors cursor-pointer"><option value="Ambos">Híbrida (Auditorías y Consultorías)</option><option value="Auditoría">Solo Auditorías Normativas</option><option value="Consultoría">Solo Consultorías Clínicas</option></select></div>
+                  </div>
+                  
+                  {/* SECCIÓN RANGOS RESTAURADA */}
+                  <div className="bg-slate-50 p-6 rounded-[2rem] border-2 border-slate-200">
+                    <label className="block text-[10px] font-black text-slate-600 uppercase tracking-widest mb-4">Rangos de Resultado (Opcional)</label>
+                    <p className="text-[10px] text-slate-400 mb-4 font-bold leading-relaxed">Define qué resultado entregar según el puntaje obtenido (ej: 0 a 2 pts = Riesgo Alto).</p>
+                    {templateForm.rangos.map((r, i) => (
+                       <div key={i} className="flex gap-2 mb-3 items-center">
+                          <input type="number" placeholder="Min" value={r.min} onChange={(e) => {const newR=[...templateForm.rangos]; newR[i].min=e.target.value; setTemplateForm({...templateForm, rangos: newR})}} className="w-16 border-2 border-white rounded-xl p-3 text-xs font-black text-center shadow-sm outline-none focus:border-slate-400" />
+                          <span className="text-[10px] font-black text-slate-300">-</span>
+                          <input type="number" placeholder="Max" value={r.max} onChange={(e) => {const newR=[...templateForm.rangos]; newR[i].max=e.target.value; setTemplateForm({...templateForm, rangos: newR})}} className="w-16 border-2 border-white rounded-xl p-3 text-xs font-black text-center shadow-sm outline-none focus:border-slate-400" />
+                          <input type="text" placeholder="Ej: Cumplimiento Parcial" value={r.resultado} onChange={(e) => {const newR=[...templateForm.rangos]; newR[i].resultado=e.target.value; setTemplateForm({...templateForm, rangos: newR})}} className="flex-1 border-2 border-white rounded-xl p-3 text-xs font-bold shadow-sm outline-none focus:border-slate-400" />
+                          <button onClick={()=>{const newR=[...templateForm.rangos]; newR.splice(i,1); setTemplateForm({...templateForm, rangos: newR});}} className="p-3 bg-red-50 text-red-500 rounded-xl hover:bg-red-100 transition-colors"><Trash2 size={14}/></button>
+                       </div>
+                    ))}
+                    <button onClick={()=>setTemplateForm({...templateForm, rangos: [...templateForm.rangos, {min:'', max:'', resultado:''}]})} className="text-[10px] text-indigo-600 font-black uppercase tracking-widest flex items-center gap-2 mt-4 hover:text-indigo-800 transition-colors"><Plus size={14}/> Añadir Rango de Puntaje</button>
+                  </div>
+                </div>
+
+                <div className="lg:col-span-3 flex flex-col">
+                  <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-4">Criterios a Evaluar (Checklist SÍ / NO)</label>
+                  <div className="flex-1 overflow-y-auto pr-2 space-y-3">
+                    {templateForm.criterios.map((c, i) => (
+                      <div key={i} className="flex gap-4 items-start">
+                        <div className="p-3 bg-slate-100 text-slate-400 rounded-xl text-xs font-black shrink-0">{i+1}</div>
+                        <input type="text" value={c} onChange={e=>{const newC=[...templateForm.criterios]; newC[i]=e.target.value; setTemplateForm({...templateForm, criterios: newC});}} className="flex-1 border-2 border-slate-100 p-4 rounded-2xl text-sm font-bold outline-none focus:border-slate-800 transition-colors" placeholder="Redacta el punto a evaluar..."/>
+                        <button onClick={()=>{const newC=[...templateForm.criterios]; newC.splice(i,1); setTemplateForm({...templateForm, criterios: newC});}} className="p-4 bg-red-50 text-red-500 rounded-2xl hover:bg-red-100 transition-colors"><Trash2 size={16}/></button>
+                      </div>
+                    ))}
+                  </div>
+                  <button onClick={()=>setTemplateForm({...templateForm, criterios: [...templateForm.criterios, '']})} className="text-[10px] bg-slate-100 text-slate-600 px-6 py-4 rounded-2xl font-black uppercase tracking-widest flex items-center justify-center gap-2 mt-6 hover:bg-slate-200 transition-colors"><Plus size={16}/> Agregar Fila Manualmente</button>
+                </div>
+              </div>
+            </div>
+            <div className="bg-slate-50 p-8 border-t border-slate-200 flex justify-end gap-4 shrink-0"><button onClick={() => setIsTemplateModalOpen(false)} className="px-10 py-5 text-slate-400 font-black text-xs uppercase tracking-widest hover:text-slate-600 transition-colors">Cancelar</button><button onClick={handleSaveTemplate} className="px-12 py-5 bg-slate-900 text-white font-black text-xs uppercase tracking-[0.2em] rounded-[1.5rem] shadow-2xl hover:bg-black transition-all flex items-center gap-2"><CheckCircle size={18}/> Guardar Pauta Oficial</button></div>
+          </div>
+        </div>
+      )}
+
+      {/* 4. MODAL REALIZAR AUDITORÍA / CHECKLIST */}
+      {isAuditModalOpen && (
+        <div className="fixed inset-0 bg-[#0a2540]/90 backdrop-blur-md flex items-center justify-center p-4 z-50 fade-in">
+          {/* TOPE DE ALTURA */}
+          <div className="bg-white rounded-[2.5rem] shadow-2xl w-full max-w-3xl overflow-hidden flex flex-col max-h-[90vh] border border-slate-200">
+             <div className="bg-blue-600 p-8 text-white font-black text-xl uppercase tracking-widest flex justify-between shrink-0 relative overflow-hidden">
+               <div className="absolute top-0 right-0 w-64 h-64 bg-white/10 rounded-full -mr-20 -mt-20 blur-2xl"></div>
+               <div className="flex items-center gap-4 relative z-10"><ClipboardCheck size={28}/> Ejecución de Pauta en Terreno</div>
+               <button onClick={() => setIsAuditModalOpen(false)} className="text-white/60 hover:text-white font-bold text-4xl relative z-10 transition-colors">&times;</button>
+             </div>
+             
+             <div className="p-10 overflow-y-auto space-y-8 flex-1 bg-white">
+                <div className="grid grid-cols-2 gap-8">
+                  <div className="bg-slate-50 p-6 rounded-3xl border border-slate-100">
+                    <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-3">Tipo de Actividad</label>
+                    <select disabled value={auditForm.tipo} className="w-full p-0 border-none bg-transparent text-slate-800 font-black text-base outline-none appearance-none"><option>{auditForm.tipo}</option></select>
+                  </div>
+                  <div>
+                    <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-3">Dispositivo a Evaluar</label>
+                    <select value={auditForm.centro} onChange={e=>setAuditForm({...auditForm, centro: e.target.value})} className="w-full p-5 border-2 border-slate-100 rounded-2xl bg-white font-black text-sm outline-none focus:border-blue-500 cursor-pointer transition-colors shadow-sm"><option value="">Seleccione un centro...</option>{centros.map(c=><option key={c}>{c}</option>)}</select>
+                  </div>
+                </div>
+                <div>
+                  <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-3">Instrumento / Pauta Seleccionada</label>
+                  <select value={auditForm.templateId} onChange={e=>setAuditForm({...auditForm, templateId: e.target.value, answers: {}})} className="w-full p-5 border-2 border-blue-100 rounded-2xl bg-blue-50/30 text-blue-900 font-black text-sm outline-none focus:border-blue-500 cursor-pointer transition-colors shadow-sm"><option value="">Seleccione una pauta del catálogo...</option>{auditTemplates.filter(t => t.tipo === 'Ambos' || t.tipo === auditForm.tipo).map(t => <option key={t.id} value={t.id}>{t.nombre}</option>)}</select>
+                </div>
+                
+                {/* CHECKLIST SI/NO RESTAURADO VISUALMENTE */}
+                <div className="space-y-6 border-t-2 border-slate-100 pt-8">
+                   <div className="flex justify-between items-center bg-slate-800 text-white p-6 rounded-3xl shadow-md">
+                     <span className="text-sm font-black uppercase tracking-widest flex items-center gap-3"><CheckSquare size={20}/> Checklist Técnico</span>
+                     <span className="bg-blue-500 text-white px-5 py-2 rounded-xl text-xs font-black tracking-widest uppercase shadow-inner">Puntaje Actual: {Object.values(auditForm.answers).filter(a => a === 'si').length} / {auditTemplates.find(t => t.id === auditForm.templateId)?.criterios.length || 0}</span>
+                   </div>
+                   
+                   <div className="space-y-4">
+                     {auditTemplates.find(t => t.id === auditForm.templateId)?.criterios.map((criterio, idx) => (
+                       <div key={idx} className="flex flex-col md:flex-row md:items-center justify-between gap-6 p-6 bg-white rounded-[2rem] border-2 border-slate-100 hover:border-blue-200 transition-colors shadow-sm">
+                         <span className="text-slate-700 font-bold text-sm flex-1 leading-relaxed">{criterio}</span>
+                         <div className="flex gap-3 shrink-0">
+                           <label className={`flex items-center justify-center w-20 py-3 rounded-2xl cursor-pointer transition-all font-black text-xs uppercase tracking-widest border-2 ${auditForm.answers[idx] === 'si' ? 'bg-emerald-50 text-emerald-600 border-emerald-300 shadow-sm' : 'bg-slate-50 text-slate-400 border-transparent hover:bg-slate-100'}`}><input type="radio" name={`crit-${idx}`} value="si" checked={auditForm.answers[idx] === 'si'} onChange={() => setAuditForm({...auditForm, answers: {...auditForm.answers, [idx]: 'si'}})} className="hidden" />SÍ</label>
+                           <label className={`flex items-center justify-center w-20 py-3 rounded-2xl cursor-pointer transition-all font-black text-xs uppercase tracking-widest border-2 ${auditForm.answers[idx] === 'no' ? 'bg-red-50 text-red-600 border-red-300 shadow-sm' : 'bg-slate-50 text-slate-400 border-transparent hover:bg-slate-100'}`}><input type="radio" name={`crit-${idx}`} value="no" checked={auditForm.answers[idx] === 'no'} onChange={() => setAuditForm({...auditForm, answers: {...auditForm.answers, [idx]: 'no'}})} className="hidden" />NO</label>
+                         </div>
+                       </div>
+                     ))}
+                     {(!auditForm.templateId) && <div className="text-center py-12 text-slate-300 font-black uppercase tracking-widest text-xs italic">Selecciona una pauta arriba para cargar el checklist.</div>}
+                   </div>
+                </div>
+             </div>
+             
+             <div className="bg-slate-50 p-8 border-t border-slate-200 flex justify-end gap-4 shrink-0"><button onClick={() => setIsAuditModalOpen(false)} className="px-10 py-5 text-slate-400 font-black text-xs uppercase tracking-widest hover:text-slate-600 transition-colors">Cancelar</button><button onClick={handleSaveAudit} disabled={!auditForm.templateId || !auditForm.centro} className="px-12 py-5 bg-blue-600 text-white font-black text-xs uppercase tracking-[0.2em] rounded-[1.5rem] shadow-xl hover:bg-blue-700 transition-all disabled:opacity-50 disabled:hover:translate-y-0 hover:-translate-y-1">Cerrar Evaluación</button></div>
+          </div>
+        </div>
+      )}
+
+      {/* 5. OTROS MODALES (PERFIL, DIRECTORIO, USUARIOS) TAMBIÉN PROTEGIDOS CON MAX-H Y OVERFLOW */}
       {isDirModalOpen && (
         <div className="fixed inset-0 bg-[#0a2540]/90 backdrop-blur-md flex items-center justify-center p-4 z-50 fade-in">
-          <div className="bg-white rounded-[2.5rem] shadow-2xl w-full max-w-lg p-10 border border-slate-200">
-            <h3 className="font-black text-2xl text-slate-800 mb-8 uppercase tracking-widest">{editingDirId ? 'Editar Contacto' : 'Nuevo Contacto'}</h3>
-            <div className="space-y-6">
+          <div className="bg-white rounded-[2.5rem] shadow-2xl w-full max-w-lg max-h-[90vh] flex flex-col border border-slate-200 overflow-hidden">
+            <div className="bg-blue-600 p-8 text-white flex justify-between items-center shrink-0">
+               <h3 className="font-black text-xl uppercase tracking-widest">{editingDirId ? 'Editar Contacto' : 'Nuevo Contacto'}</h3>
+               <button onClick={() => setIsDirModalOpen(false)} className="text-white/60 hover:text-white font-bold text-3xl">&times;</button>
+            </div>
+            <div className="p-10 space-y-6 overflow-y-auto flex-1">
               <div><label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-2">Nombre Completo</label><input type="text" value={dirForm.nombre} onChange={e=>setDirForm({...dirForm, nombre: e.target.value})} className="w-full border-2 border-slate-100 p-4 rounded-2xl text-sm font-bold outline-none focus:border-blue-500" placeholder="Ej: Ps. Carlos Pinto" /></div>
               <div className="grid grid-cols-2 gap-4">
                 <div><label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-2">Institución / Centro</label><input type="text" value={dirForm.institucion} onChange={e=>setDirForm({...dirForm, institucion: e.target.value})} className="w-full border-2 border-slate-100 p-4 rounded-2xl text-sm font-bold outline-none focus:border-blue-500" placeholder="Ej: COSAM Puerto Montt" /></div>
@@ -855,19 +1114,19 @@ export default function App() {
                 <div><label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-2">Correo Electrónico</label><input type="email" value={dirForm.correo} onChange={e=>setDirForm({...dirForm, correo: e.target.value})} className="w-full border-2 border-slate-100 p-4 rounded-2xl text-sm font-bold outline-none focus:border-blue-500" placeholder="correo@red.cl" /></div>
               </div>
             </div>
-            <div className="flex justify-end gap-4 mt-10"><button onClick={() => setIsDirModalOpen(false)} className="px-8 py-4 text-slate-400 font-bold text-xs uppercase tracking-widest hover:text-slate-600">Cancelar</button><button onClick={handleSaveDir} className="px-10 py-4 bg-blue-600 text-white font-black text-xs uppercase tracking-widest rounded-2xl shadow-xl hover:bg-blue-700">Guardar</button></div>
+            <div className="bg-slate-50 p-8 border-t border-slate-200 flex justify-end gap-4 shrink-0"><button onClick={() => setIsDirModalOpen(false)} className="px-8 py-4 text-slate-400 font-bold text-xs uppercase tracking-widest hover:text-slate-600">Cancelar</button><button onClick={handleSaveDir} className="px-10 py-4 bg-blue-600 text-white font-black text-xs uppercase tracking-widest rounded-2xl shadow-xl hover:bg-blue-700">Guardar</button></div>
           </div>
         </div>
       )}
 
       {isUserModalOpen && (
         <div className="fixed inset-0 bg-[#0a2540]/90 backdrop-blur-md flex items-center justify-center p-4 z-50 fade-in">
-          <div className="bg-white rounded-[2.5rem] shadow-2xl w-full max-w-lg overflow-hidden flex flex-col border border-slate-200">
+          <div className="bg-white rounded-[2.5rem] shadow-2xl w-full max-w-lg max-h-[90vh] flex flex-col border border-slate-200 overflow-hidden">
             <div className="bg-slate-900 p-8 text-white flex justify-between items-center shrink-0">
               <h3 className="font-black text-xl uppercase tracking-widest flex items-center gap-3"><UserPlus size={24}/> {editingUserId ? 'Editar Credencial' : 'Nueva Credencial'}</h3>
               <button onClick={() => setIsUserModalOpen(false)} className="text-slate-400 hover:text-white font-bold text-3xl">&times;</button>
             </div>
-            <div className="p-8 overflow-y-auto space-y-6 max-h-[70vh]">
+            <div className="p-8 overflow-y-auto space-y-6 flex-1">
               <div className="grid grid-cols-2 gap-4">
                 <div><label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-2">RUT Acceso *</label><input type="text" value={userForm.rut} onChange={e=>setUserForm({...userForm, rut: e.target.value})} className="w-full border-2 border-slate-100 p-4 rounded-2xl text-sm font-bold outline-none focus:border-indigo-500" placeholder="11.111.111-1"/></div>
                 <div><label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-2">Contraseña *</label><input type="text" value={userForm.password} onChange={e=>setUserForm({...userForm, password: e.target.value})} className="w-full border-2 border-slate-100 p-4 rounded-2xl text-sm font-bold outline-none focus:border-indigo-500" placeholder="••••••"/></div>
@@ -905,80 +1164,11 @@ export default function App() {
         </div>
       )}
 
-      {isAuditModalOpen && (
-        <div className="fixed inset-0 bg-[#0a2540]/90 backdrop-blur-md flex items-center justify-center p-4 z-50 fade-in">
-          <div className="bg-white rounded-[2.5rem] shadow-2xl w-full max-w-2xl overflow-hidden flex flex-col max-h-[90vh] border border-slate-200">
-             <div className="bg-blue-600 p-8 text-white font-black text-xl uppercase tracking-widest flex justify-between shrink-0">Evaluación Terreno <button onClick={() => setIsAuditModalOpen(false)} className="text-white/60 hover:text-white">&times;</button></div>
-             <div className="p-8 overflow-y-auto space-y-6">
-                <div className="grid grid-cols-2 gap-6">
-                  <div><label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-2">Tipo de Actividad</label><select disabled value={auditForm.tipo} className="w-full p-4 border-2 border-slate-100 rounded-2xl bg-slate-50 text-slate-500 font-black text-sm"><option>{auditForm.tipo}</option></select></div>
-                  <div><label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-2">Dispositivo Evaluado</label><select value={auditForm.centro} onChange={e=>setAuditForm({...auditForm, centro: e.target.value})} className="w-full p-4 border-2 border-slate-100 rounded-2xl bg-white font-bold text-sm outline-none focus:border-blue-500 cursor-pointer"><option value="">Seleccione...</option>{centros.map(c=><option key={c}>{c}</option>)}</select></div>
-                </div>
-                <div><label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-2">Pauta de Evaluación a Aplicar</label><select value={auditForm.templateId} onChange={e=>setAuditForm({...auditForm, templateId: e.target.value, answers: {}})} className="w-full p-4 border-2 border-slate-100 rounded-2xl bg-white font-bold text-sm outline-none focus:border-blue-500 cursor-pointer"><option value="">Seleccione una pauta validada...</option>{auditTemplates.filter(t => t.tipo === 'Ambos' || t.tipo === auditForm.tipo).map(t => <option key={t.id} value={t.id}>{t.nombre}</option>)}</select></div>
-                <div className="space-y-4 border-t-2 border-slate-100 pt-6">
-                   <div className="flex justify-between items-center mb-4"><span className="text-xs font-black text-slate-800 uppercase tracking-widest">Checklist Técnico</span><span className="bg-blue-50 text-blue-600 px-4 py-2 rounded-xl text-xs font-black tracking-widest uppercase">Puntaje: {Object.values(auditForm.answers).filter(a => a === 'si').length} / {auditTemplates.find(t => t.id === auditForm.templateId)?.criterios.length || 0} pts</span></div>
-                   <div className="space-y-3 max-h-[350px] overflow-y-auto pr-4">
-                     {auditTemplates.find(t => t.id === auditForm.templateId)?.criterios.map((criterio, idx) => (
-                       <div key={idx} className="flex flex-col md:flex-row md:items-center justify-between gap-4 p-5 bg-white rounded-2xl border-2 border-slate-100 hover:border-blue-200 transition-colors">
-                         <span className="text-slate-700 font-bold text-sm flex-1">{criterio}</span>
-                         <div className="flex gap-2 shrink-0">
-                           <label className={`flex items-center justify-center w-16 py-2 rounded-xl cursor-pointer transition-all font-black text-xs uppercase tracking-widest border-2 ${auditForm.answers[idx] === 'si' ? 'bg-emerald-50 text-emerald-600 border-emerald-200 shadow-inner' : 'bg-white text-slate-400 border-slate-100 hover:bg-slate-50'}`}><input type="radio" name={`crit-${idx}`} value="si" checked={auditForm.answers[idx] === 'si'} onChange={() => setAuditForm({...auditForm, answers: {...auditForm.answers, [idx]: 'si'}})} className="hidden" />SÍ</label>
-                           <label className={`flex items-center justify-center w-16 py-2 rounded-xl cursor-pointer transition-all font-black text-xs uppercase tracking-widest border-2 ${auditForm.answers[idx] === 'no' ? 'bg-red-50 text-red-600 border-red-200 shadow-inner' : 'bg-white text-slate-400 border-slate-100 hover:bg-slate-50'}`}><input type="radio" name={`crit-${idx}`} value="no" checked={auditForm.answers[idx] === 'no'} onChange={() => setAuditForm({...auditForm, answers: {...auditForm.answers, [idx]: 'no'}})} className="hidden" />NO</label>
-                         </div>
-                       </div>
-                     ))}
-                   </div>
-                </div>
-             </div>
-             <div className="bg-slate-50 p-8 border-t border-slate-200 flex justify-end gap-4 shrink-0"><button onClick={() => setIsAuditModalOpen(false)} className="px-8 py-4 text-slate-400 font-black text-xs uppercase tracking-widest hover:text-slate-600">Cancelar</button><button onClick={handleSaveAudit} className="px-10 py-4 bg-blue-600 text-white font-black text-xs uppercase tracking-[0.2em] rounded-2xl shadow-xl hover:bg-blue-700">Cerrar Auditoría</button></div>
-          </div>
-        </div>
-      )}
-
-      {isTemplateModalOpen && (
-        <div className="fixed inset-0 bg-[#0a2540]/90 backdrop-blur-md flex items-center justify-center p-4 z-50 fade-in">
-          <div className="bg-white rounded-[2.5rem] shadow-2xl w-full max-w-4xl overflow-hidden flex flex-col max-h-[95vh] border border-slate-200">
-            <div className="bg-slate-800 p-8 text-white flex justify-between items-center shrink-0"><h3 className="font-black text-xl uppercase tracking-widest flex items-center gap-3"><Settings size={24}/> Gestor de Pautas Normativas</h3><button onClick={() => setIsTemplateModalOpen(false)} className="text-white/60 hover:text-white font-bold text-4xl">&times;</button></div>
-            <div className="p-10 overflow-y-auto space-y-8 flex-1">
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-10">
-                <div className="bg-indigo-50/50 p-8 rounded-[2.5rem] border-2 border-indigo-100 flex flex-col text-center">
-                  <h4 className="text-sm font-black text-indigo-900 uppercase tracking-widest mb-3 flex items-center justify-center gap-2"><Wand2 size={20}/> Procesamiento IA</h4>
-                  <p className="text-xs text-indigo-700/80 mb-6 font-medium leading-relaxed flex-1">Sube un documento normativo. La IA extraerá los criterios textuales para construir el checklist digital automáticamente.</p>
-                  <label className="flex flex-col items-center justify-center w-full h-40 border-2 border-indigo-300 border-dashed rounded-3xl cursor-pointer bg-white hover:bg-indigo-50 transition-colors shadow-sm">
-                    <div className="flex flex-col items-center justify-center pt-5 pb-6">
-                      <UploadCloud className="w-10 h-10 text-indigo-400 mb-3" />
-                      <p className="text-sm text-indigo-900 font-black uppercase tracking-widest">Cargar Pauta PDF</p>
-                    </div>
-                    <input type="file" className="hidden" accept=".pdf,.doc,.docx" onChange={handlePdfUploadForAI} />
-                  </label>
-                  {isDigitizing && (<div className="mt-6 flex items-center justify-center gap-3 text-xs text-indigo-600 font-black uppercase tracking-widest"><Loader2 size={18} className="animate-spin"/> Analizando documento...</div>)}
-                </div>
-                <div className="space-y-6 flex flex-col">
-                  <div><label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-2">Nombre del Instrumento</label><input type="text" value={templateForm.nombre} onChange={e=>setTemplateForm({...templateForm, nombre: e.target.value})} className="w-full border-2 border-slate-100 p-4 rounded-2xl text-sm font-bold outline-none focus:border-slate-800" placeholder="Ej: Pauta de Riesgo..."/></div>
-                  <div><label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-2">Tipo de Actividad</label><select value={templateForm.tipo} onChange={e=>setTemplateForm({...templateForm, tipo: e.target.value})} className="w-full border-2 border-slate-100 p-4 rounded-2xl text-sm font-bold outline-none focus:border-slate-800 bg-white"><option value="Ambos">Híbrida (Auditorías y Consultorías)</option><option value="Auditoría">Solo Auditorías Normativas</option><option value="Consultoría">Solo Consultorías Clínicas</option></select></div>
-                  <div className="flex-1 overflow-y-auto pr-2">
-                    <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-4">Criterios de Evaluación</label>
-                    {templateForm.criterios.map((c, i) => (
-                      <div key={i} className="flex gap-3 mb-3">
-                        <input type="text" value={c} onChange={e=>{const newC=[...templateForm.criterios]; newC[i]=e.target.value; setTemplateForm({...templateForm, criterios: newC});}} className="flex-1 border-2 border-slate-100 p-3 rounded-xl text-sm font-bold outline-none focus:border-slate-800" placeholder={`Punto a evaluar ${i+1}...`}/>
-                        <button onClick={()=>{const newC=[...templateForm.criterios]; newC.splice(i,1); setTemplateForm({...templateForm, criterios: newC});}} className="p-3 bg-red-50 text-red-500 rounded-xl hover:bg-red-100 transition-colors"><Trash2 size={16}/></button>
-                      </div>
-                    ))}
-                    <button onClick={()=>setTemplateForm({...templateForm, criterios: [...templateForm.criterios, '']})} className="text-[10px] text-blue-600 font-black uppercase tracking-widest flex items-center gap-1 mt-4 hover:text-blue-800 transition-colors"><Plus size={14}/> Fila Manual</button>
-                  </div>
-                </div>
-              </div>
-            </div>
-            <div className="bg-slate-50 p-8 border-t border-slate-200 flex justify-end gap-4 shrink-0"><button onClick={() => setIsTemplateModalOpen(false)} className="px-8 py-4 text-slate-400 font-black text-xs uppercase tracking-widest hover:text-slate-600">Cancelar</button><button onClick={handleSaveTemplate} className="px-10 py-4 bg-slate-900 text-white font-black text-xs uppercase tracking-[0.2em] rounded-2xl shadow-xl hover:bg-black transition-all">Guardar Pauta Oficial</button></div>
-          </div>
-        </div>
-      )}
-
       {isProfileModalOpen && (
         <div className="fixed inset-0 bg-[#0a2540]/90 backdrop-blur-md flex items-center justify-center p-4 z-50 fade-in">
-          <div className="bg-white rounded-[2.5rem] shadow-2xl w-full max-w-sm overflow-hidden flex flex-col border border-slate-200">
+          <div className="bg-white rounded-[2.5rem] shadow-2xl w-full max-w-sm max-h-[90vh] flex flex-col border border-slate-200 overflow-hidden">
             <div className="bg-blue-600 p-8 text-white flex justify-between items-center shrink-0"><h3 className="font-black text-xl uppercase tracking-widest flex items-center gap-3"><Key size={24}/> Seguridad</h3><button onClick={() => setIsProfileModalOpen(false)} className="text-white/60 hover:text-white font-bold text-3xl">&times;</button></div>
-            <div className="p-10 space-y-6">
+            <div className="p-10 space-y-6 overflow-y-auto flex-1">
               <div><label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-2">Contraseña Actual</label><input type="password" value={passwordForm.current} onChange={e=>setPasswordForm({...passwordForm, current: e.target.value})} className="w-full border-2 border-slate-100 p-4 rounded-2xl text-sm font-bold outline-none focus:border-blue-500" placeholder="••••••"/></div>
               <div className="border-t-2 border-slate-100 pt-6 mt-4"><label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-2">Nueva Contraseña</label><input type="password" value={passwordForm.new} onChange={e=>setPasswordForm({...passwordForm, new: e.target.value})} className="w-full border-2 border-slate-100 p-4 rounded-2xl text-sm font-bold outline-none focus:border-blue-500" placeholder="••••••"/></div>
               <div><label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-2">Repetir Nueva Contraseña</label><input type="password" value={passwordForm.confirm} onChange={e=>setPasswordForm({...passwordForm, confirm: e.target.value})} className="w-full border-2 border-slate-100 p-4 rounded-2xl text-sm font-bold outline-none focus:border-blue-500" placeholder="••••••"/></div>
