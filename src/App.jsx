@@ -115,8 +115,7 @@ export default function App() {
 
   const [isDocModalOpen, setIsDocModalOpen] = useState(false);
   const [editingDocId, setEditingDocId] = useState(null);
-  // docForm.ambito se deja libre para autocompletar
-  const [docForm, setDocForm] = useState({ nombre: '', ambito: 'Red Integral', fase: 'Levantamiento', avance: 10, notas: '', bitacora: [], archivos: [] });
+  const [docForm, setDocForm] = useState({ nombre: '', ambito: '', fase: 'Levantamiento', avance: 10, notas: '', bitacora: [], archivos: [] });
   const [activeDocModalTab, setActiveDocModalTab] = useState('datos');
   const [newDocBitacoraEntry, setNewDocBitacoraEntry] = useState({ tipo: 'Tarea', descripcion: '', responsable: '', fechaCumplimiento: '' });
 
@@ -124,8 +123,10 @@ export default function App() {
   const [isTemplateModalOpen, setIsTemplateModalOpen] = useState(false);
   const [editingTemplateId, setEditingTemplateId] = useState(null);
   
+  // Formulario Dinámico
   const [auditForm, setAuditForm] = useState({ centro: '', templateId: '', headerAnswers: {}, answers: {}, tipo: 'Auditoría', observaciones: '', fecha: new Date().toISOString().split('T')[0], estadoManual: '' });
   
+  // Pauta Dinámica
   const [templateForm, setTemplateForm] = useState({ 
     nombre: '', 
     metodoCalculo: 'Suma Automática',
@@ -534,7 +535,8 @@ export default function App() {
     setCurrentUser(updatedUser); setIsProfileModalOpen(false); alert("Actualizada exitosamente!");
   };
 
-  // ================= PANTALLAS DE LOGIN =================
+
+  // ================= PANTALLAS DE LOGIN Y APP NORMAL =================
   if (!currentUser) return (
     <div className="min-h-screen bg-[#0a2540] flex items-center justify-center p-4 fade-in">
       <div className="max-w-md w-full bg-white rounded-3xl shadow-2xl p-8">
@@ -555,6 +557,7 @@ export default function App() {
           {loginError && <p className="text-red-500 text-xs text-center font-black uppercase tracking-widest">{loginError}</p>}
           <button type="submit" className="w-full bg-blue-600 text-white font-black text-sm uppercase tracking-widest py-3 rounded-xl hover:bg-blue-700 shadow-lg shadow-blue-100 transition-all">INGRESAR AL SISTEMA</button>
         </form>
+        <div className="mt-6 text-center pt-4 border-t border-slate-100"><p className="text-[10px] text-slate-400 font-bold uppercase tracking-tighter flex items-center justify-center gap-1"><Shield size={12}/> Acceso restringido red Reloncaví</p></div>
       </div>
     </div>
   );
@@ -562,14 +565,14 @@ export default function App() {
   return (
     <div className="min-h-screen bg-slate-50 flex flex-col md:flex-row font-sans">
       
-      {/* SIDEBAR: Oculto en impresión */}
+      {/* SIDEBAR */}
       <aside className="print:hidden w-full md:w-64 bg-[#0a2540] text-white flex flex-col h-screen sticky top-0 shrink-0 shadow-xl overflow-y-auto">
         <div className="p-5 border-b border-white/5">
           <div className="flex items-center gap-3 mb-1">
-             <div className="w-10 h-10 rounded-xl bg-blue-600 flex items-center justify-center font-black text-sm shadow-lg">{currentUser?.iniciales || 'U'}</div>
+             <div className="w-10 h-10 rounded-xl bg-blue-600 flex items-center justify-center font-black text-sm shadow-lg shrink-0">{currentUser?.iniciales || 'U'}</div>
              <div className="flex-1 min-w-0">
-               <h1 className="text-sm font-black tracking-tight leading-none text-white truncate">{currentUser?.nombre || 'Usuario'}</h1>
-               <p className="text-[8px] text-blue-300 font-black uppercase tracking-widest mt-1.5 truncate">{currentUser?.cargo || 'SGCC-SM'}</p>
+               <h1 className="text-sm font-black tracking-tight leading-tight text-white whitespace-normal break-words">{currentUser?.nombre || 'Usuario'}</h1>
+               <p className="text-[9px] text-blue-300 font-black uppercase tracking-widest mt-1 whitespace-normal break-words">{currentUser?.cargo || 'SGCC-SM'}</p>
              </div>
           </div>
         </div>
@@ -661,12 +664,24 @@ export default function App() {
                 <div className="relative z-10 flex-1 flex flex-col">
                   <h3 className="text-xs font-black uppercase tracking-widest mb-2 flex items-center gap-2"><Wand2 size={16} className="text-blue-300"/> Asistente de Rescate</h3>
                   <p className="text-[10px] text-indigo-200 font-medium mb-4 leading-relaxed">Genera un correo formal automático para solicitar revisión urgente a los directores de los {alertCases.length} casos perdidos.</p>
+                  
                   {currentUser?.rol === 'Admin' ? (
-                    <button onClick={() => handleGenerateReport('alerts')} disabled={alertCases.length === 0 || isGeneratingReport} className="w-full bg-white text-indigo-900 py-3 rounded-xl text-[10px] font-black uppercase tracking-widest flex justify-center items-center gap-2 shadow-lg mt-auto hover:-translate-y-1 transition-transform">{isGeneratingReport ? <Loader2 size={14} className="animate-spin"/> : <MessageSquare size={14}/>} Redactar Correo</button>
-                  ) : (<div className="mt-auto p-3 bg-white/10 rounded-xl text-center text-[9px] font-black uppercase tracking-widest text-indigo-300">Exclusivo Administradores</div>)}
+                    <button onClick={() => handleGenerateReport('alerts')} disabled={alertCases.length === 0 || isGeneratingReport} className="w-full bg-white text-indigo-900 py-3 rounded-xl text-[10px] font-black uppercase tracking-widest flex justify-center items-center gap-2 shadow-lg disabled:opacity-50 transition-transform hover:-translate-y-1 mt-auto">
+                      {isGeneratingReport ? <Loader2 size={14} className="animate-spin"/> : <MessageSquare size={14}/>} Redactar Correo
+                    </button>
+                  ) : (
+                    <div className="mt-auto p-3 bg-white/10 rounded-xl text-center text-[9px] font-black uppercase tracking-widest text-indigo-300">Exclusivo Administradores</div>
+                  )}
                 </div>
+                {/* MOSTRANDO REPORTE EN DASHBOARD */}
                 {reportContent && activeTab === 'dashboard' && currentUser?.rol === 'Admin' && (
-                  <div className="mt-4 bg-[#081b30] p-4 rounded-xl border border-white/10 relative z-10"><div className="flex justify-between items-center mb-3 pb-2 border-b border-white/10"><span className="text-[9px] font-black uppercase tracking-[0.2em] text-blue-300">Borrador:</span><button onClick={()=>copyToClipboard(reportContent)} className="text-white hover:text-blue-300"><Copy size={12}/></button></div><p className="text-[10px] font-medium text-slate-300 whitespace-pre-wrap leading-relaxed max-h-32 overflow-y-auto">{reportContent}</p></div>
+                  <div className="mt-4 bg-[#081b30] p-4 rounded-xl border border-white/10 animate-in slide-in-from-top-4 relative z-10">
+                     <div className="flex justify-between items-center mb-3 pb-2 border-b border-white/10">
+                       <span className="text-[9px] font-black uppercase tracking-[0.2em] text-blue-300">Borrador de Correo:</span>
+                       <button onClick={()=>copyToClipboard(reportContent)} className="text-white bg-white/10 hover:bg-white/20 p-1.5 rounded-lg transition-colors"><Copy size={12}/></button>
+                     </div>
+                     <p className="text-[10px] font-medium text-slate-300 whitespace-pre-wrap leading-relaxed max-h-32 overflow-y-auto">{reportContent}</p>
+                  </div>
                 )}
                 <div className="absolute top-0 right-0 w-32 h-32 bg-blue-500/20 rounded-full -mr-10 -mt-10 blur-xl"></div>
               </div>
@@ -682,7 +697,9 @@ export default function App() {
                       const statusInfo = getTaskStatus(tarea.fechaCumplimiento);
                       return (
                         <tr key={tarea.id} className="hover:bg-slate-50 transition-colors group">
-                          <td className="p-3 text-slate-300"><button onClick={() => tarea.source === 'Caso' ? toggleTaskCompletion(tarea.parentId, tarea.id) : toggleDocTaskCompletion(tarea.parentId, tarea.id)} className="hover:text-emerald-500 transition-colors"><Square size={16} /></button></td>
+                          <td className="p-3 text-slate-300">
+                             <button onClick={() => tarea.source === 'Caso' ? toggleTaskCompletion(tarea.parentId, tarea.id) : toggleDocTaskCompletion(tarea.parentId, tarea.id)} className="hover:text-emerald-500 transition-colors"><Square size={16} /></button>
+                          </td>
                           <td className="p-3"><div className="text-[11px] font-black text-slate-800 flex items-center gap-2">{tarea.parentName} {statusInfo.status === 'upcoming' && <span className="bg-amber-100 text-amber-700 px-1.5 py-0.5 rounded text-[7px] uppercase animate-pulse">Próximo</span>} {statusInfo.status === 'overdue' && <span className="bg-red-100 text-red-700 px-1.5 py-0.5 rounded text-[7px] uppercase">Vencida</span>}</div><div className="text-[8px] text-slate-400 mt-1 uppercase tracking-widest font-bold">{tarea.source}</div></td>
                           <td className="p-3 text-xs font-medium text-slate-600">{tarea.descripcion}</td>
                           <td className="p-3 text-[10px] font-bold text-slate-500">{tarea.responsable || 'No asignado'}</td>
@@ -1035,342 +1052,8 @@ export default function App() {
       </main>
 
       {/* ================= MODALES DE LA APLICACIÓN ================= */}
-      
-      {/* 1. MODAL CASOS (CON RED DE APOYO, BITÁCORA Y EPICRISIS) */}
-      {isCaseModalOpen && (
-        <div className="fixed inset-0 bg-[#0a2540]/90 backdrop-blur-sm flex items-center justify-center p-4 z-50 fade-in no-print">
-          <div className="bg-white rounded-3xl shadow-2xl w-full max-w-4xl max-h-[90vh] flex flex-col overflow-hidden border border-slate-200">
-            <div className="bg-blue-600 p-6 text-white flex justify-between items-center shrink-0 relative overflow-hidden">
-              <div className="absolute top-0 right-0 w-32 h-32 bg-white/10 rounded-full -mr-10 -mt-10 blur-xl"></div>
-              <div className="flex items-center gap-4 relative z-10"><div className="p-3 bg-white/20 rounded-xl backdrop-blur-sm border border-white/20"><FileIcon size={24}/></div><div><h3 className="font-black text-xl uppercase tracking-widest drop-shadow-md">{editingCaseId ? `${caseForm.nombre}` : 'Nuevo Seguimiento'}</h3><p className="text-[10px] font-black text-blue-200 uppercase tracking-[0.4em] mt-1">{editingCaseId || 'ASIGNANDO ID...'}</p></div></div>
-              <button onClick={() => setIsCaseModalOpen(false)} className="text-white/60 hover:text-white font-bold text-3xl transition-colors relative z-10">&times;</button>
-            </div>
-            <div className="flex bg-slate-50 border-b border-slate-200 shrink-0 px-6 overflow-x-auto">
-              <button onClick={() => setActiveModalTab('datos')} className={`px-6 py-4 text-[10px] font-black uppercase tracking-[0.2em] border-b-4 transition-all whitespace-nowrap ${activeModalTab === 'datos' ? 'border-blue-600 text-blue-600 bg-white shadow-inner' : 'border-transparent text-slate-400 hover:text-slate-600'}`}>1. Hitos y Red de Apoyo</button>
-              <button onClick={() => setActiveModalTab('bitacora')} className={`px-6 py-4 text-[10px] font-black uppercase tracking-[0.2em] border-b-4 transition-all whitespace-nowrap ${activeModalTab === 'bitacora' ? 'border-blue-600 text-blue-600 bg-white shadow-inner' : 'border-transparent text-slate-400 hover:text-slate-600'}`}>2. Bitácora Clínica</button>
-              <button onClick={() => setActiveModalTab('archivos')} className={`px-6 py-4 text-[10px] font-black uppercase tracking-[0.2em] border-b-4 transition-all whitespace-nowrap ${activeModalTab === 'archivos' ? 'border-blue-600 text-blue-600 bg-white shadow-inner' : 'border-transparent text-slate-400 hover:text-slate-600'}`}>3. Archivos y Epicrisis</button>
-            </div>
-            
-            <div className="p-6 md:p-8 overflow-y-auto flex-1 bg-white">
-              {activeModalTab === 'datos' && (
-                <div className="space-y-8 animate-in slide-in-from-left-4">
-                  <div className="bg-blue-50/50 p-6 rounded-2xl border-2 border-blue-100 shadow-inner">
-                    <h4 className="text-xs font-black text-blue-900 uppercase tracking-widest mb-4 flex items-center gap-2"><Clock size={18}/> Tiempos de la Continuidad</h4>
-                    <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-                      <div className="bg-white p-4 rounded-xl shadow-sm border-2 border-slate-100 hover:border-slate-300 transition-colors">
-                        <label className="block text-[10px] font-black text-slate-400 mb-2 uppercase tracking-widest">A. EGRESO UHCIP</label>
-                        <input type="date" value={caseForm.fechaEgreso} onChange={e=>setCaseForm({...caseForm, fechaEgreso: e.target.value})} className="w-full font-bold text-slate-700 outline-none text-sm bg-transparent border-none p-0 focus:ring-0 cursor-pointer" />
-                      </div>
-                      <div className="bg-white p-4 rounded-xl shadow-sm border-2 border-indigo-50 hover:border-indigo-200 transition-colors">
-                        <label className="block text-[10px] font-black text-indigo-400 mb-2 uppercase tracking-widest">B. RECEPCIÓN EN RED</label>
-                        <input type="date" value={caseForm.fechaRecepcionRed} onChange={e=>setCaseForm({...caseForm, fechaRecepcionRed: e.target.value})} className="w-full font-bold text-indigo-700 outline-none text-sm bg-transparent border-none p-0 focus:ring-0 cursor-pointer" />
-                      </div>
-                      <div className="bg-white p-4 rounded-xl shadow-sm border-2 border-green-50 hover:border-green-200 transition-colors">
-                        <label className="block text-[10px] font-black text-green-500 mb-2 uppercase tracking-widest">C. INGRESO EFECTIVO</label>
-                        <input type="date" value={caseForm.fechaIngresoEfectivo} onChange={e=>setCaseForm({...caseForm, fechaIngresoEfectivo: e.target.value})} className="w-full font-bold text-green-700 outline-none text-sm bg-transparent border-none p-0 focus:ring-0 cursor-pointer" />
-                      </div>
-                    </div>
-                  </div>
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
-                    <div className="space-y-4">
-                      <h4 className="text-xs font-black text-slate-400 uppercase tracking-widest border-b-2 border-slate-100 pb-2">Identificación Paciente</h4>
-                      <div className="grid grid-cols-2 gap-4">
-                        <div><label className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Nombre</label><input type="text" value={caseForm.nombre} onChange={e=>setCaseForm({...caseForm, nombre: e.target.value})} className="w-full border-b-2 border-slate-100 py-2 outline-none focus:border-blue-500 font-bold text-sm text-slate-800 transition-colors" placeholder="Ej: Juan Pérez" /></div>
-                        <div><label className="text-[10px] font-black text-slate-400 uppercase tracking-widest">RUT</label><input type="text" value={caseForm.rut} onChange={e=>setCaseForm({...caseForm, rut: e.target.value})} className="w-full border-b-2 border-slate-100 py-2 outline-none focus:border-blue-500 font-bold text-sm text-slate-800 transition-colors" placeholder="Ej: 11.111.111-1" /></div>
-                      </div>
-                      <div className="mt-2"><label className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Estado Clínico Operativo</label><select value={caseForm.estado} onChange={e=>setCaseForm({...caseForm, estado: e.target.value})} className="w-full border-b-2 border-slate-100 py-2 outline-none focus:border-blue-500 font-bold text-sm text-slate-800 bg-transparent transition-colors cursor-pointer mt-1"><option>Pendiente</option><option>Concretado</option><option>Alerta</option></select></div>
-                    </div>
-                    <div className="space-y-4">
-                      <h4 className="text-xs font-black text-slate-400 uppercase tracking-widest border-b-2 border-slate-100 pb-2">Ruta Institucional</h4>
-                      <div><label className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Origen del Traslado</label><select value={caseForm.origen} onChange={e=>setCaseForm({...caseForm, origen: e.target.value})} className="w-full border-b-2 border-slate-100 py-2 outline-none focus:border-blue-500 font-bold text-sm text-slate-800 bg-transparent transition-colors cursor-pointer mt-1"><option value="">Seleccione...</option>{centros.map(c => <option key={c} value={c}>{c}</option>)}</select></div>
-                      <div className="mt-2"><label className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Dispositivo Receptor (Destino)</label><select value={caseForm.destino} onChange={e=>setCaseForm({...caseForm, destino: e.target.value})} className="w-full border-b-2 border-slate-100 py-2 outline-none focus:border-blue-500 font-bold text-sm text-slate-800 bg-transparent transition-colors cursor-pointer mt-1"><option value="">Seleccione...</option>{centros.map(c => <option key={c} value={c}>{c}</option>)}</select></div>
-                    </div>
-                  </div>
 
-                  {/* RED DE APOYO Y REFERENTES */}
-                  <div className="space-y-4 border-t-2 border-slate-100 pt-6">
-                    <h4 className="text-xs font-black text-slate-400 uppercase tracking-widest border-b-2 border-slate-100 pb-2">Red de Apoyo y Referentes</h4>
-                    
-                    <div className="bg-slate-50 p-5 rounded-xl border border-slate-200 shadow-sm">
-                       <h5 className="text-[11px] font-black text-slate-600 uppercase tracking-widest mb-4 flex items-center gap-2"><User size={16}/> Tutor Legal / Familiar Responsable</h5>
-                       <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-                          <div><label className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Nombre</label><input type="text" value={caseForm.tutor?.nombre || ''} onChange={e=>setCaseForm({...caseForm, tutor: {...caseForm.tutor, nombre: e.target.value}})} className="w-full border-b-2 border-slate-200 py-2 outline-none focus:border-blue-500 font-bold text-sm text-slate-700 bg-transparent transition-colors" placeholder="Ej: María Cáceres"/></div>
-                          <div><label className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Relación / Parentesco</label><input type="text" value={caseForm.tutor?.relacion || ''} onChange={e=>setCaseForm({...caseForm, tutor: {...caseForm.tutor, relacion: e.target.value}})} className="w-full border-b-2 border-slate-200 py-2 outline-none focus:border-blue-500 font-bold text-sm text-slate-700 bg-transparent transition-colors" placeholder="Ej: Madre"/></div>
-                          <div><label className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Teléfono de Contacto</label><input type="text" value={caseForm.tutor?.telefono || ''} onChange={e=>setCaseForm({...caseForm, tutor: {...caseForm.tutor, telefono: e.target.value}})} className="w-full border-b-2 border-slate-200 py-2 outline-none focus:border-blue-500 font-bold text-sm text-slate-700 bg-transparent transition-colors" placeholder="+56 9..."/></div>
-                       </div>
-                    </div>
-
-                    <div className="bg-indigo-50/50 p-5 rounded-xl border border-indigo-100 shadow-sm">
-                       <h5 className="text-[11px] font-black text-indigo-800 uppercase tracking-widest mb-4 flex items-center gap-2"><BookOpen size={16}/> Referentes Institucionales y Clínicos</h5>
-                       {caseForm.referentes?.map((ref, idx) => (
-                          <div key={idx} className="flex flex-col md:flex-row gap-4 mb-4 items-end bg-white p-4 rounded-xl border border-indigo-50 shadow-sm">
-                             <div className="flex-1 w-full"><label className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Nombre y Cargo</label><input type="text" value={ref.nombre} onChange={e=>{const newRefs=[...caseForm.referentes]; newRefs[idx].nombre=e.target.value; setCaseForm({...caseForm, referentes: newRefs});}} className="w-full border-b-2 border-indigo-100 py-2 outline-none focus:border-indigo-500 font-bold text-sm text-slate-700 bg-transparent transition-colors" placeholder="Ej: Ps. Andrea Silva"/></div>
-                             <div className="flex-1 w-full"><label className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Dispositivo</label><input type="text" value={ref.dispositivo} onChange={e=>{const newRefs=[...caseForm.referentes]; newRefs[idx].dispositivo=e.target.value; setCaseForm({...caseForm, referentes: newRefs});}} className="w-full border-b-2 border-indigo-100 py-2 outline-none focus:border-indigo-500 font-bold text-sm text-slate-700 bg-transparent transition-colors" placeholder="Ej: COSAM Puerto Montt"/></div>
-                             <div className="flex-1 w-full"><label className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Contacto</label><input type="text" value={ref.contacto} onChange={e=>{const newRefs=[...caseForm.referentes]; newRefs[idx].contacto=e.target.value; setCaseForm({...caseForm, referentes: newRefs});}} className="w-full border-b-2 border-indigo-100 py-2 outline-none focus:border-indigo-500 font-bold text-sm text-slate-700 bg-transparent transition-colors" placeholder="Teléfono o correo..."/></div>
-                             <button onClick={()=>{const newRefs=[...caseForm.referentes]; newRefs.splice(idx,1); setCaseForm({...caseForm, referentes: newRefs});}} className="p-3 text-slate-400 hover:text-red-500 bg-slate-50 rounded-lg shadow-sm border border-slate-100 transition-colors mb-1"><Trash2 size={16}/></button>
-                          </div>
-                       ))}
-                       <button onClick={()=>setCaseForm({...caseForm, referentes: [...(caseForm.referentes||[]), {nombre:'', dispositivo:'', contacto:''}]})} className="text-[10px] font-black text-indigo-600 uppercase tracking-widest flex items-center gap-1.5 mt-2 hover:text-indigo-800 transition-colors bg-indigo-100 px-4 py-2 rounded-lg w-fit"><Plus size={14}/> Añadir Referente de Red</button>
-                    </div>
-                  </div>
-                  
-                  {/* RESUMEN IA */}
-                  <div className="space-y-4 border-t-2 border-slate-100 pt-6">
-                    <div className="flex justify-between items-end">
-                      <div>
-                        <h4 className="text-xs font-black text-slate-400 uppercase tracking-widest pb-1 flex items-center gap-2"><Wand2 size={16}/> Resumen Clínico Inteligente</h4>
-                        <p className="text-[9px] text-slate-400 italic">La IA analizará la Bitácora (Pestaña 2) y el texto de Epicrisis (Pestaña 3).</p>
-                      </div>
-                      
-                      {currentUser?.rol === 'Admin' ? (
-                        <button onClick={handleGenerateCaseSummary} disabled={isGeneratingCaseSummary || (caseForm.bitacora.length === 0 && !caseForm.epicrisis)} className="bg-indigo-50 text-indigo-600 px-4 py-2.5 rounded-xl text-[10px] font-black uppercase tracking-widest hover:bg-indigo-100 transition-colors flex items-center gap-2 border border-indigo-100 disabled:opacity-50">
-                          {isGeneratingCaseSummary ? <Loader2 size={14} className="animate-spin"/> : <FileText size={14}/>} Generar Resumen
-                        </button>
-                      ) : (
-                        <span className="text-[9px] font-black uppercase text-slate-300">Exclusivo Administrador</span>
-                      )}
-                    </div>
-                    {caseSummary && currentUser?.rol === 'Admin' && (
-                      <div className="bg-white p-5 rounded-xl border-2 border-indigo-50 text-sm font-medium text-slate-700 relative shadow-sm">
-                        <button onClick={() => copyToClipboard(caseSummary)} className="absolute top-3 right-3 p-2 text-indigo-400 hover:text-indigo-600 bg-indigo-50 rounded-lg transition-colors"><Copy size={16}/></button>
-                        <p className="pr-8 whitespace-pre-wrap leading-relaxed text-xs">{caseSummary}</p>
-                      </div>
-                    )}
-                    {caseForm.bitacora.length === 0 && !caseForm.epicrisis && !caseSummary && currentUser?.rol === 'Admin' && <p className="text-[10px] text-slate-400 italic font-medium uppercase tracking-widest">Agrega eventos o epicrisis para habilitar el resumen inteligente.</p>}
-                  </div>
-
-                </div>
-              )}
-              {activeModalTab === 'bitacora' && (
-                <div className="space-y-8 animate-in slide-in-from-right-4 h-full flex flex-col">
-                  <div className="bg-slate-50 p-6 rounded-2xl border-2 border-slate-200 shrink-0 shadow-inner">
-                    <h4 className="text-[10px] font-black text-slate-600 uppercase tracking-widest mb-4">Nuevo Hito de Intervención / Gestión</h4>
-                    <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-4">
-                      <div className="flex flex-col gap-2"><label className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Tipo</label>
-                        <select value={newBitacoraEntry.tipo} onChange={e=>setNewBitacoraEntry({...newBitacoraEntry, tipo: e.target.value})} className="border-2 border-white p-3 rounded-xl text-sm font-bold shadow-sm outline-none focus:border-blue-300 cursor-pointer">
-                          <option value="Nota Adm.">📝 Nota Adm.</option>
-                          <option value="Intervención">🗣️ Intervención</option>
-                          <option value="Reunión">🤝 Reunión de Red</option>
-                          <option value="Tarea">🎯 Tarea Enlace</option>
-                        </select>
-                      </div>
-                      
-                      <div className="flex flex-col gap-2"><label className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Responsable</label><input type="text" value={newBitacoraEntry.responsable} onChange={e=>setNewBitacoraEntry({...newBitacoraEntry, responsable: e.target.value})} className="border-2 border-white p-3 rounded-xl text-sm font-bold shadow-sm outline-none focus:border-blue-300" placeholder="Ej: Ps. Silva" /></div>
-                      
-                      <div className="flex flex-col gap-2 md:col-span-2">
-                        <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Descripción / Acuerdos</label>
-                        <textarea rows="2" value={newBitacoraEntry.descripcion} onChange={e=>setNewBitacoraEntry({...newBitacoraEntry, descripcion: e.target.value})} className="border-2 border-white p-3 rounded-xl text-sm font-medium shadow-sm outline-none focus:border-blue-300 resize-y" placeholder="Detalle de la acción, reunión o tarea... (Presiona Enter para nuevo párrafo)" />
-                      </div>
-                      
-                      {newBitacoraEntry.tipo === 'Tarea' && (
-                         <div className="flex flex-col gap-2 md:col-span-4 mt-2">
-                           <label className="text-[10px] font-black text-amber-500 uppercase tracking-widest">Fecha Límite para Tarea</label>
-                           <input type="date" value={newBitacoraEntry.fechaCumplimiento} onChange={e=>setNewBitacoraEntry({...newBitacoraEntry, fechaCumplimiento: e.target.value})} className="border-2 border-amber-200 p-3 rounded-xl text-sm font-bold shadow-sm outline-none focus:border-amber-400 text-amber-800 bg-amber-50/50" />
-                         </div>
-                      )}
-                    </div>
-                    <div className="flex justify-end"><button onClick={handleAddBitacora} disabled={!newBitacoraEntry.descripcion} className="bg-blue-600 text-white px-8 py-3.5 rounded-xl text-[10px] font-black uppercase tracking-widest hover:bg-blue-700 disabled:opacity-50 shadow-md transition-all flex items-center gap-2"><Plus size={14}/> Registrar Acción</button></div>
-                  </div>
-                  
-                  <div className="flex-1 space-y-4">
-                    <h4 className="text-[11px] font-black text-slate-400 uppercase tracking-widest border-b-2 border-slate-100 pb-3 pt-2">Evolución Cronológica</h4>
-                    {caseForm.bitacora.map(entry => (
-                      <div key={entry.id} className="p-6 bg-white border-2 border-slate-100 rounded-2xl shadow-sm flex gap-5 items-start group hover:border-blue-200 transition-all">
-                        <div className="p-3 bg-slate-50 rounded-xl text-slate-400 group-hover:bg-blue-50 group-hover:text-blue-500 transition-colors shrink-0">
-                          {entry.tipo === 'Intervención' ? <Activity size={18}/> : entry.tipo === 'Reunión' ? <Users size={18}/> : entry.tipo === 'Tarea' ? <CheckSquare size={18} className="text-amber-500"/> : <MessageSquare size={18}/>}
-                        </div>
-                        <div className="flex-1 min-w-0">
-                          <div className="flex justify-between items-center mb-2"><span className="text-[10px] font-black uppercase text-blue-600 bg-blue-50 px-2.5 py-1 rounded-lg tracking-widest">{entry.tipo}</span><span className="text-[10px] font-black text-slate-400 uppercase flex items-center gap-1.5"><Calendar size={12}/> {entry.fecha}</span></div>
-                          <p className="text-sm font-medium text-slate-700 leading-relaxed mb-3 whitespace-pre-wrap">{entry.descripcion}</p>
-                          <div className="flex gap-3 items-center">
-                            <p className="text-[10px] font-black text-slate-500 uppercase tracking-widest italic bg-slate-50 px-3 py-1.5 rounded-lg w-fit border border-slate-100">Resp: {entry.responsable || 'No indicado'}</p>
-                            {entry.tipo === 'Tarea' && entry.fechaCumplimiento && <p className="text-[10px] font-black text-amber-600 uppercase tracking-widest bg-amber-50 px-3 py-1.5 rounded-lg w-fit border border-amber-100 flex items-center gap-1.5"><Timer size={12}/> Vence: {entry.fechaCumplimiento}</p>}
-                          </div>
-                        </div>
-                        <button onClick={() => setCaseForm({ ...caseForm, bitacora: caseForm.bitacora.filter(b => b.id !== entry.id) })} className="opacity-0 group-hover:opacity-100 p-2.5 text-slate-400 hover:text-red-500 transition-all bg-slate-50 rounded-lg hover:bg-red-50"><Trash2 size={18}/></button>
-                      </div>
-                    ))}
-                    {caseForm.bitacora.length === 0 && (<div className="text-center py-16 border-2 border-dashed border-slate-100 rounded-2xl"><Activity size={28} className="text-slate-200 mx-auto mb-3"/><p className="text-slate-400 font-bold text-xs uppercase tracking-widest italic">Sin registros en bitácora</p></div>)}
-                  </div>
-                </div>
-              )}
-              {activeModalTab === 'archivos' && (
-                <div className="space-y-6 animate-in slide-in-from-right-4">
-                  <div className="bg-slate-50 p-6 rounded-2xl border-2 border-slate-200">
-                     <h4 className="text-[11px] font-black text-slate-600 uppercase tracking-widest mb-3 flex items-center gap-2"><FileText size={16}/> Resumen de Epicrisis (Para Análisis de IA)</h4>
-                     <p className="text-[10px] text-slate-500 mb-4 font-medium leading-relaxed">Pega aquí el texto de la epicrisis o antecedentes relevantes del paciente. La Inteligencia Artificial utilizará este texto, sumado a la bitácora, para generar el resumen clínico en la pestaña principal.</p>
-                     <textarea
-                       value={caseForm.epicrisis || ''}
-                       onChange={e=>setCaseForm({...caseForm, epicrisis: e.target.value})}
-                       className="w-full border-2 border-white p-4 rounded-xl text-xs font-medium text-slate-700 outline-none focus:border-blue-500 bg-white transition-colors resize-y min-h-[140px] shadow-sm"
-                       placeholder="Pega los antecedentes, diagnóstico, indicaciones al alta... (Presiona Enter para separar en párrafos)"
-                     />
-                  </div>
-
-                  <div className="bg-indigo-50/50 p-8 rounded-2xl border-2 border-indigo-100 flex flex-col text-center">
-                    <h4 className="text-sm font-black text-indigo-900 uppercase tracking-widest mb-2 flex items-center justify-center gap-2"><UploadCloud size={18}/> Subir Archivo Físico de Respaldo</h4>
-                    <p className="text-[10px] text-indigo-700/80 mb-4 font-medium leading-relaxed">Adjunta documentos Word o PDF de la epicrisis original o informes médicos para el archivo del paciente.</p>
-                    <label className="flex flex-col items-center justify-center w-full h-32 border-2 border-indigo-300 border-dashed rounded-xl cursor-pointer bg-white hover:bg-indigo-50 transition-colors shadow-sm">
-                      <div className="flex flex-col items-center justify-center pt-4 pb-5">
-                        <Paperclip className="w-8 h-8 text-indigo-400 mb-2" />
-                        <p className="text-[10px] text-indigo-900 font-black uppercase tracking-widest">Seleccionar Archivo</p>
-                      </div>
-                      <input type="file" className="hidden" onChange={handleCaseFileUpload} />
-                    </label>
-                  </div>
-                  <div className="space-y-4">
-                     <h4 className="text-[11px] font-black text-slate-400 uppercase tracking-widest border-b-2 border-slate-100 pb-3">Archivos Vinculados al Paciente</h4>
-                     <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                       {(caseForm.archivos || []).map(file => (
-                         <div key={file.id} className="flex items-center justify-between p-4 bg-white border-2 border-slate-100 rounded-xl shadow-sm group hover:border-blue-200 transition-all">
-                           <div className="flex items-center gap-3 min-w-0">
-                             <div className="p-2.5 bg-blue-50 text-blue-600 rounded-lg"><FileIcon size={18}/></div>
-                             <div className="min-w-0"><p className="text-sm font-bold text-slate-700 truncate">{file.nombre}</p><p className="text-[9px] font-bold text-slate-400 uppercase tracking-widest mt-1">{file.size} • Subido el {file.fecha}</p></div>
-                           </div>
-                           <button onClick={() => setCaseForm(prev => ({ ...prev, archivos: prev.archivos.filter(f => f.id !== file.id) }))} className="p-2 text-slate-400 hover:text-red-500 opacity-0 group-hover:opacity-100 transition-all bg-slate-50 hover:bg-red-50 rounded-lg"><Trash2 size={16}/></button>
-                         </div>
-                       ))}
-                     </div>
-                     {(!caseForm.archivos || caseForm.archivos.length === 0) && <p className="text-center py-10 text-slate-400 font-bold text-xs uppercase tracking-widest italic">No hay archivos adjuntos.</p>}
-                  </div>
-                </div>
-              )}
-            </div>
-            
-            <div className="bg-slate-50 p-6 border-t border-slate-200 flex justify-end gap-4 shrink-0">
-              <button onClick={() => setIsCaseModalOpen(false)} className="px-8 py-3.5 text-slate-500 font-bold text-xs uppercase tracking-widest hover:text-slate-700 transition-all">Cancelar</button>
-              <button onClick={handleSaveCase} className="px-10 py-3.5 bg-slate-900 text-white font-black text-xs uppercase tracking-widest rounded-xl shadow-lg hover:bg-black transition-all flex items-center gap-2"><CheckCircle size={18}/> Guardar Seguimiento</button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* 2. MODAL PROTOCOLOS */}
-      {isDocModalOpen && (
-        <div className="fixed inset-0 bg-[#0a2540]/90 backdrop-blur-sm flex items-center justify-center p-4 z-50 fade-in no-print">
-          <div className="bg-white rounded-3xl shadow-2xl w-full max-w-4xl max-h-[90vh] flex flex-col overflow-hidden border border-slate-200">
-            <div className="bg-blue-600 p-6 text-white flex justify-between items-center shrink-0 relative overflow-hidden">
-               <div className="absolute top-0 right-0 w-32 h-32 bg-white/10 rounded-full -mr-10 -mt-10 blur-xl"></div>
-               <div className="flex items-center gap-4 relative z-10"><div className="p-3 bg-white/20 rounded-xl backdrop-blur-sm border border-white/20"><FileText size={24}/></div><div><h3 className="font-black text-xl uppercase tracking-widest drop-shadow-md">{editingDocId ? 'Editar Protocolo' : 'Nuevo Protocolo'}</h3></div></div>
-               <button onClick={() => setIsDocModalOpen(false)} className="text-white/60 hover:text-white font-bold text-3xl transition-colors relative z-10">&times;</button>
-            </div>
-            
-            <div className="flex bg-slate-50 border-b border-slate-200 shrink-0 px-6">
-              <button onClick={() => setActiveDocModalTab('datos')} className={`px-6 py-4 text-[10px] font-black uppercase tracking-[0.2em] border-b-4 transition-all ${activeDocModalTab === 'datos' ? 'border-blue-600 text-blue-600 bg-white shadow-inner' : 'border-transparent text-slate-400 hover:text-slate-600'}`}>1. Datos y Observaciones</button>
-              <button onClick={() => setActiveDocModalTab('bitacora')} className={`px-6 py-4 text-[10px] font-black uppercase tracking-[0.2em] border-b-4 transition-all ${activeDocModalTab === 'bitacora' ? 'border-blue-600 text-blue-600 bg-white shadow-inner' : 'border-transparent text-slate-400 hover:text-slate-600'}`}>2. Tareas de Redacción</button>
-              <button onClick={() => setActiveDocModalTab('archivos')} className={`px-6 py-4 text-[10px] font-black uppercase tracking-[0.2em] border-b-4 transition-all ${activeDocModalTab === 'archivos' ? 'border-blue-600 text-blue-600 bg-white shadow-inner' : 'border-transparent text-slate-400 hover:text-slate-600'}`}>3. Archivos Anexos</button>
-            </div>
-
-            <div className="p-6 md:p-8 overflow-y-auto flex-1 bg-white">
-              {activeDocModalTab === 'datos' && (
-                <div className="space-y-6 animate-in slide-in-from-left-4">
-                  <div><label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-2">Nombre del Documento Normativo</label><input type="text" value={docForm.nombre} onChange={e=>setDocForm({...docForm, nombre: e.target.value})} className="w-full border-2 border-slate-100 p-4 rounded-xl text-sm font-bold text-slate-800 outline-none focus:border-blue-500 bg-slate-50 focus:bg-white transition-colors" placeholder="Ej: Vía Clínica Agitación Psicomotora..." /></div>
-                  
-                  <div className="grid grid-cols-2 gap-6">
-                    <div>
-                      <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-2">Ámbito / Dispositivo de Aplicación</label>
-                      <input type="text" list="ambitos-list" value={docForm.ambito} onChange={e=>setDocForm({...docForm, ambito: e.target.value})} className="w-full border-2 border-slate-100 p-4 rounded-xl text-sm font-bold text-slate-700 outline-none focus:border-blue-500 bg-slate-50 focus:bg-white transition-colors" placeholder="Escriba o seleccione..." />
-                      <datalist id="ambitos-list">
-                        <option value="Red Integral" />
-                        <option value="Hospitalario" />
-                        <option value="COSAM" />
-                        <option value="APS" />
-                        {centros.map(c => <option key={c} value={c} />)}
-                      </datalist>
-                    </div>
-                    <div><label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-2">Fase Actual</label><select value={docForm.fase} onChange={e=>setDocForm({...docForm, fase: e.target.value})} className="w-full border-2 border-slate-100 p-4 rounded-xl text-sm font-bold text-slate-700 outline-none focus:border-blue-500 bg-slate-50 focus:bg-white transition-colors cursor-pointer"><option>Levantamiento</option><option>Redacción</option><option>Validación Técnica</option><option>Revisión Jurídica</option><option>Resolución Exenta</option><option>Difusión</option></select></div>
-                  </div>
-
-                  <div className="mt-4">
-                    <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-2"><MessageSquare size={14} className="inline mr-1.5"/> Notas y Observaciones Generales</label>
-                    <textarea 
-                      value={docForm.notas || ''} 
-                      onChange={e=>setDocForm({...docForm, notas: e.target.value})} 
-                      className="w-full border-2 border-slate-100 p-4 rounded-xl text-sm font-medium text-slate-700 outline-none focus:border-blue-500 bg-slate-50 focus:bg-white transition-colors resize-y min-h-[140px]" 
-                      placeholder="Escribe aquí los apuntes, contexto o pensamientos sobre el proceso de creación de este protocolo. Puedes presionar Enter para crear párrafos..." 
-                    />
-                  </div>
-
-                  <div className="bg-blue-50/50 p-6 rounded-2xl border-2 border-blue-100 mt-2">
-                    <label className="flex justify-between items-end mb-3"><span className="block text-[10px] font-black text-blue-900 uppercase tracking-widest">Avance Estimado del Documento</span><span className="text-2xl font-black text-blue-600">{docForm.avance}%</span></label>
-                    <input type="range" min="0" max="100" step="5" value={docForm.avance} onChange={e=>setDocForm({...docForm, avance: e.target.value})} className="w-full accent-blue-600 h-2.5 bg-blue-200 rounded-lg appearance-none cursor-pointer" />
-                  </div>
-                </div>
-              )}
-
-              {activeDocModalTab === 'bitacora' && (
-                <div className="space-y-6 animate-in slide-in-from-right-4 h-full flex flex-col">
-                  <div className="bg-slate-50 p-6 rounded-2xl border-2 border-slate-200 shrink-0 shadow-inner">
-                    <h4 className="text-[11px] font-black text-slate-600 uppercase tracking-widest mb-4">Asignar Tarea de Desarrollo</h4>
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
-                      <div className="flex flex-col gap-1.5"><label className="text-[9px] font-black text-slate-400 uppercase tracking-widest">Responsable</label><input type="text" value={newDocBitacoraEntry.responsable} onChange={e=>setNewDocBitacoraEntry({...newDocBitacoraEntry, responsable: e.target.value})} className="border-2 border-white p-3.5 rounded-xl text-sm font-bold shadow-sm outline-none focus:border-blue-300" placeholder="Ej: Abogado SS" /></div>
-                      <div className="flex flex-col gap-1.5"><label className="text-[9px] font-black text-amber-500 uppercase tracking-widest">Fecha Límite</label><input type="date" value={newDocBitacoraEntry.fechaCumplimiento} onChange={e=>setNewDocBitacoraEntry({...newDocBitacoraEntry, fechaCumplimiento: e.target.value})} className="border-2 border-amber-200 p-3.5 rounded-xl text-sm font-bold shadow-sm outline-none focus:border-amber-400 text-amber-800 bg-amber-50/50" /></div>
-                      <div className="flex flex-col gap-1.5 md:col-span-2">
-                         <label className="text-[9px] font-black text-slate-400 uppercase tracking-widest">Descripción de la Tarea</label>
-                         <textarea rows="2" value={newDocBitacoraEntry.descripcion} onChange={e=>setNewDocBitacoraEntry({...newDocBitacoraEntry, descripcion: e.target.value})} className="border-2 border-white p-3.5 rounded-xl text-sm font-medium shadow-sm outline-none focus:border-blue-300 resize-y" placeholder="Detalle de la revisión o tarea..." />
-                      </div>
-                    </div>
-                    <div className="flex justify-end"><button onClick={handleAddDocBitacora} disabled={!newDocBitacoraEntry.descripcion} className="bg-blue-600 text-white px-8 py-3.5 rounded-xl text-[10px] font-black uppercase tracking-[0.2em] hover:bg-blue-700 disabled:opacity-50 shadow-md transition-all flex items-center gap-2"><Plus size={16}/> Asignar Tarea</button></div>
-                  </div>
-                  <div className="flex-1 space-y-4">
-                     <h4 className="text-[11px] font-black text-slate-400 uppercase tracking-widest border-b-2 border-slate-100 pb-3 pt-2">Historial y Tareas del Protocolo</h4>
-                     {(docForm.bitacora || []).map(entry => (
-                       <div key={entry.id} className="p-5 bg-white border-2 border-slate-100 rounded-2xl shadow-sm flex gap-5 items-start group hover:border-blue-200 transition-all">
-                         <div className="p-3 bg-slate-50 rounded-xl text-slate-400 shrink-0">{entry.tipo === 'Tarea' ? <CheckSquare size={18} className={entry.completada ? "text-emerald-500" : "text-amber-500"}/> : <MessageSquare size={18}/>}</div>
-                         <div className="flex-1 min-w-0">
-                           <div className="flex justify-between items-center mb-1.5"><span className="text-[10px] font-black uppercase text-blue-600 bg-blue-50 px-2.5 py-1 rounded-lg tracking-widest">{entry.tipo}</span><span className="text-[10px] font-bold text-slate-400 uppercase flex items-center gap-1.5"><Calendar size={12}/> Asignada: {entry.fecha}</span></div>
-                           <p className={`text-sm font-medium leading-relaxed mb-3 whitespace-pre-wrap ${entry.completada ? 'text-slate-400 line-through' : 'text-slate-700'}`}>{entry.descripcion}</p>
-                           <div className="flex gap-3 items-center">
-                             <p className="text-[10px] font-black text-slate-500 uppercase tracking-widest italic bg-slate-50 px-3 py-1.5 rounded-lg w-fit border border-slate-100">Resp: {entry.responsable || 'Equipo'}</p>
-                             {entry.fechaCumplimiento && <p className="text-[10px] font-black text-amber-600 uppercase tracking-widest bg-amber-50 px-3 py-1.5 rounded-lg w-fit border border-amber-100 flex items-center gap-1.5"><Timer size={12}/> Vence: {entry.fechaCumplimiento}</p>}
-                           </div>
-                         </div>
-                         <button onClick={() => setDocForm(prev => ({ ...prev, bitacora: prev.bitacora.filter(b => b.id !== entry.id) }))} className="opacity-0 group-hover:opacity-100 p-2.5 text-slate-400 hover:text-red-500 transition-all bg-slate-50 rounded-lg hover:bg-red-50"><Trash2 size={18}/></button>
-                       </div>
-                     ))}
-                     {(!docForm.bitacora || docForm.bitacora.length === 0) && (<div className="text-center py-16 border-2 border-dashed border-slate-100 rounded-2xl"><ListTodo size={28} className="text-slate-200 mx-auto mb-3"/><p className="text-slate-400 font-bold text-xs uppercase tracking-widest italic">Protocolo sin tareas</p></div>)}
-                  </div>
-                </div>
-              )}
-
-              {activeDocModalTab === 'archivos' && (
-                <div className="space-y-6 animate-in slide-in-from-right-4">
-                  <div className="bg-indigo-50/50 p-8 rounded-2xl border-2 border-indigo-100 flex flex-col text-center">
-                    <h4 className="text-sm font-black text-indigo-900 uppercase tracking-widest mb-2 flex items-center justify-center gap-2"><UploadCloud size={18}/> Subir Borrador o Anexo</h4>
-                    <p className="text-xs text-indigo-700/80 mb-4 font-medium leading-relaxed">Adjunta documentos Word o PDF de respaldo para este protocolo.</p>
-                    <label className="flex flex-col items-center justify-center w-full h-32 border-2 border-indigo-300 border-dashed rounded-xl cursor-pointer bg-white hover:bg-indigo-50 transition-colors shadow-sm">
-                      <div className="flex flex-col items-center justify-center pt-4 pb-5">
-                        <Paperclip className="w-8 h-8 text-indigo-400 mb-2" />
-                        <p className="text-[10px] text-indigo-900 font-black uppercase tracking-widest">Seleccionar Archivo</p>
-                      </div>
-                      <input type="file" className="hidden" onChange={handleFileUpload} />
-                    </label>
-                  </div>
-                  <div className="space-y-4">
-                     <h4 className="text-[11px] font-black text-slate-400 uppercase tracking-widest border-b-2 border-slate-100 pb-3">Archivos Vinculados</h4>
-                     <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                       {(docForm.archivos || []).map(file => (
-                         <div key={file.id} className="flex items-center justify-between p-4 bg-white border-2 border-slate-100 rounded-xl shadow-sm group hover:border-blue-200 transition-all">
-                           <div className="flex items-center gap-3 min-w-0">
-                             <div className="p-2.5 bg-blue-50 text-blue-600 rounded-lg"><FileIcon size={18}/></div>
-                             <div className="min-w-0"><p className="text-sm font-bold text-slate-700 truncate">{file.nombre}</p><p className="text-[9px] font-bold text-slate-400 uppercase tracking-widest mt-1">{file.size} • Subido el {file.fecha}</p></div>
-                           </div>
-                           <button onClick={() => setDocForm(prev => ({ ...prev, archivos: prev.archivos.filter(f => f.id !== file.id) }))} className="p-2 text-slate-400 hover:text-red-500 opacity-0 group-hover:opacity-100 transition-all bg-slate-50 hover:bg-red-50 rounded-lg"><Trash2 size={16}/></button>
-                         </div>
-                       ))}
-                     </div>
-                     {(!docForm.archivos || docForm.archivos.length === 0) && <p className="text-center py-10 text-slate-400 font-bold text-xs uppercase tracking-widest italic">No hay archivos adjuntos.</p>}
-                  </div>
-                </div>
-              )}
-            </div>
-            
-            <div className="bg-slate-50 p-6 border-t border-slate-200 flex justify-end gap-4 shrink-0"><button onClick={() => setIsDocModalOpen(false)} className="px-8 py-3 text-slate-500 font-bold text-xs uppercase hover:text-slate-700 transition-colors">Cancelar</button><button onClick={handleSaveDoc} className="px-10 py-3 bg-blue-600 text-white font-black text-[10px] uppercase tracking-[0.2em] rounded-xl shadow-md hover:bg-blue-700 transition-all hover:-translate-y-1 flex items-center gap-2"><CheckCircle size={16}/> Guardar Protocolo</button></div>
-          </div>
-        </div>
-      )}
-
-      {/* 3. MODAL GESTOR DE PAUTAS DINÁMICAS */}
+      {/* MODAL GESTOR DE PAUTAS DINÁMICAS */}
       {isTemplateModalOpen && (
         <div className="fixed inset-0 bg-[#0a2540]/90 backdrop-blur-sm flex items-center justify-center p-4 z-50 fade-in no-print">
           <div className="bg-white rounded-3xl shadow-2xl w-full max-w-5xl max-h-[90vh] flex flex-col overflow-hidden border border-slate-200">
@@ -1490,7 +1173,7 @@ export default function App() {
         </div>
       )}
 
-      {/* 4. MODAL REALIZAR AUDITORÍA / FORMULARIO DINÁMICO */}
+      {/* MODAL REALIZAR AUDITORÍA / FORMULARIO DINÁMICO */}
       {isAuditModalOpen && (
         <div className="fixed inset-0 bg-[#0a2540]/90 backdrop-blur-sm flex items-center justify-center p-4 z-50 fade-in no-print">
           <div className="bg-white rounded-3xl shadow-2xl w-full max-w-4xl overflow-hidden flex flex-col max-h-[90vh] border border-slate-200">
