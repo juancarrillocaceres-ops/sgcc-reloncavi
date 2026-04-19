@@ -24,6 +24,7 @@ const auth = getAuth(app);
 const db = getFirestore(app);
 const appId = typeof __app_id !== 'undefined' ? __app_id : "sgcc-reloncavi-v1";
 
+// --- UTILIDADES ---
 const diffInDays = (d1, d2) => {
   if (!d1 || !d2) return null;
   return Math.ceil(Math.abs(new Date(d2) - new Date(d1)) / (1000 * 60 * 60 * 24));
@@ -67,14 +68,36 @@ const generateTextWithRetry = async (apiKey, prompt, sys = "", inlineData = null
   }
 };
 
-// Componentes UI Reutilizables (Ayudan a no sobrepasar el límite de código)
-const clsInp = "w-full border-2 border-slate-200 p-3 rounded-xl text-sm font-bold outline-none focus:border-blue-500 bg-white shadow-sm";
+// --- COMPONENTES UI REUTILIZABLES ---
+const clsInp = "w-full border-2 border-slate-200 p-3 rounded-xl text-sm font-bold outline-none focus:border-blue-500 bg-white shadow-sm transition-colors";
 const clsLbl = "block text-[10px] font-black text-slate-500 uppercase tracking-widest mb-1.5";
-const clsBtnP = "bg-blue-600 text-white px-5 py-3 rounded-xl text-[10px] font-black uppercase tracking-widest hover:bg-blue-700 shadow-md transition-all disabled:opacity-50 flex items-center justify-center gap-2";
-const clsBtnS = "px-5 py-3 text-slate-500 font-bold text-xs uppercase tracking-widest hover:bg-slate-200 bg-slate-100 rounded-xl transition-colors";
+const clsBtnP = "bg-blue-600 text-white px-5 py-3 rounded-xl text-[10px] font-black uppercase tracking-widest hover:bg-blue-700 shadow-md transition-all disabled:opacity-50 flex items-center justify-center gap-2 cursor-pointer";
+const clsBtnS = "px-5 py-3 text-slate-500 font-bold text-xs uppercase tracking-widest hover:bg-slate-200 bg-slate-100 rounded-xl transition-colors cursor-pointer";
+
 const Inp = (p) => <input {...p} className={`${clsInp} ${p.className||''}`} />;
+const Txt = (p) => <textarea {...p} className={`${clsInp} resize-y ${p.className||''}`} />;
+const Sel = (p) => <select {...p} className={`${clsInp} ${p.className||''}`}>{p.children}</select>;
 const Lbl = (p) => <label className={`${clsLbl} ${p.className||''}`}>{p.children}</label>;
-const NavBtn = ({ act, icon: Icon, txt, onClick }) => <button onClick={onClick} className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl text-xs font-bold uppercase tracking-widest transition-all ${act ? 'bg-blue-600 shadow-lg' : 'hover:bg-white/5 opacity-80'}`}><Icon size={18}/> {txt}</button>;
+
+const ModalHdr = ({ t, onClose, icon: Icon }) => (
+  <div className="bg-slate-800 p-5 text-white flex justify-between items-center shrink-0">
+    <h3 className="font-black text-lg uppercase tracking-widest flex items-center gap-2">{Icon && <Icon size={20}/>} {t}</h3>
+    <button onClick={onClose} className="text-white/60 hover:text-white font-bold text-3xl cursor-pointer">&times;</button>
+  </div>
+);
+const ModalFtr = ({ onCancel, onSave, saveTxt, disableSave }) => (
+  <div className="bg-slate-50 p-5 border-t border-slate-200 flex justify-end gap-3 shrink-0">
+    <button onClick={onCancel} className={clsBtnS}>Cancelar</button>
+    <button onClick={onSave} disabled={disableSave} className={clsBtnP}>{saveTxt || 'Guardar'}</button>
+  </div>
+);
+const ModalWrap = ({ isOpen, children, mw }) => isOpen ? (
+  <div className="fixed inset-0 bg-[#0a2540]/90 backdrop-blur-sm flex items-center justify-center p-4 z-50 fade-in no-print">
+    <div className={`bg-white rounded-3xl shadow-2xl w-full flex flex-col overflow-hidden border border-slate-200 max-h-[90vh] ${mw || 'max-w-4xl'}`}>
+      {children}
+    </div>
+  </div>
+) : null;
 
 export default function App() {
   const [firebaseUser, setFirebaseUser] = useState(null);
@@ -113,6 +136,7 @@ export default function App() {
   const [isAuditModalOpen, setIsAuditModalOpen] = useState(false);
   const [isTemplateModalOpen, setIsTemplateModalOpen] = useState(false);
   const [editingTemplateId, setEditingTemplateId] = useState(null);
+  
   const [auditForm, setAuditForm] = useState({ centro: '', templateId: '', headerAnswers: {}, answers: {}, tipo: 'Auditoría', observaciones: '', fecha: new Date().toISOString().split('T')[0], estadoManual: '' });
   const [templateForm, setTemplateForm] = useState({ nombre: '', metodoCalculo: 'Suma Automática', instruccionesDiagnostico: '', encabezados: [{ id: 'enc_1', label: 'Centro Evaluado', type: 'text' }, { id: 'enc_2', label: 'Fecha', type: 'date' }], criterios: [{ id: 'crit_1', pregunta: '', opciones: 'SÍ=1, NO=0' }], rangos: [], tipo: 'Ambos' });
   
@@ -134,6 +158,7 @@ export default function App() {
   const [isProfileModalOpen, setIsProfileModalOpen] = useState(false);
   const [passwordForm, setPasswordForm] = useState({ current: '', new: '', confirm: '' });
   const [isNotificationsOpen, setIsNotificationsOpen] = useState(false);
+
   const [isGeneratingReport, setIsGeneratingReport] = useState(false);
   const [reportContent, setReportContent] = useState('');
   const [isGeneratingCaseSummary, setIsGeneratingCaseSummary] = useState(false);
@@ -144,7 +169,7 @@ export default function App() {
       try {
         if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) await signInWithCustomToken(auth, __initial_auth_token);
         else await signInAnonymously(auth);
-      } catch (e) { console.warn("Auth Error"); }
+      } catch (e) { console.warn("Auth", e.message); }
     };
     initAuth();
     const unsubscribe = onAuthStateChanged(auth, setFirebaseUser);
@@ -195,10 +220,16 @@ export default function App() {
   }, [visibleCases, docs]);
 
   const tareasCriticas = allPendingTasks.filter(t => getTaskStatus(t.fechaCumplimiento).status === 'upcoming' || getTaskStatus(t.fechaCumplimiento).status === 'overdue').length;
-  const notifications = useMemo(() => [
+
+  const notifications = useMemo(() => {
+    return [
       ...alertCases.map(c => ({ id: `alert-${c.id}`, type: 'alerta', title: 'Pérdida de Enlace', desc: `Paciente ${c.nombre} no se ha presentado.` })),
-      ...allPendingTasks.filter(t => getTaskStatus(t.fechaCumplimiento).status !== 'safe').map(t => ({ id: `task-${t.id}`, type: getTaskStatus(t.fechaCumplimiento).status, title: getTaskStatus(t.fechaCumplimiento).status === 'overdue' ? 'Tarea Vencida' : 'Pronta a Vencer', desc: `(${t.parentName}) ${t.descripcion}` }))
-  ], [alertCases, allPendingTasks]);
+      ...allPendingTasks.filter(t => getTaskStatus(t.fechaCumplimiento).status !== 'safe').map(t => {
+         const s = getTaskStatus(t.fechaCumplimiento);
+         return { id: `task-${t.id}`, type: s.status, title: s.status === 'overdue' ? 'Tarea Vencida' : 'Pronta a Vencer', desc: `(${t.parentName}) ${t.descripcion}` };
+      })
+    ];
+  }, [alertCases, allPendingTasks]);
 
   const redMetrics = useMemo(() => {
     let sumEnlace = 0, countEnlace = 0, sumIngreso = 0, countIngreso = 0, alertCount = 0;
@@ -220,7 +251,7 @@ export default function App() {
 
   const handleUpdateTarget = async (days) => {
     const newDays = parseInt(days);
-    if (!isNaN(newDays)) await saveToCloud('settings', 'config', { ...appConfig, targetDays: newDays });
+    if (!isNaN(newDays)) { await saveToCloud('settings', 'config', { ...appConfig, targetDays: newDays }); }
   };
 
   const handleAddPlazoCentro = async () => {
@@ -238,23 +269,29 @@ export default function App() {
   };
 
   const handleExportCSV = () => {
-    const headers = ['ID', 'RUT', 'Paciente', 'Origen', 'Destino', 'Estado', 'Fecha_Egreso', 'Fecha_Recepcion', 'Fecha_Ingreso_Efectivo', 'Plazo_Meta_Especifico'];
-    const rows = visibleCases.map(c => [c.id, c.paciente, c.nombre, c.origen, c.destino, c.estado, c.fechaEgreso||'', c.fechaRecepcionRed||'', c.fechaIngresoEfectivo||'', getTargetDaysForCase(c.destino)]);
+    const headers = ['ID_Seguimiento', 'RUT', 'Paciente', 'Origen', 'Destino', 'Estado', 'Fecha_Egreso', 'Fecha_Recepcion', 'Fecha_Ingreso_Efectivo', 'Plazo_Meta_Especifico'];
+    const rows = visibleCases.map(c => {
+       const target = getTargetDaysForCase(c.destino);
+       return [c.id, c.paciente, c.nombre, c.origen, c.destino, c.estado, c.fechaEgreso||'', c.fechaRecepcionRed||'', c.fechaIngresoEfectivo||'', target];
+    });
     const csvContent = [headers.join(','), ...rows.map(r => r.join(','))].join('\n');
     const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
-    const link = document.createElement("a"); link.href = URL.createObjectURL(blob); link.download = `Reporte.csv`; link.click();
+    const link = document.createElement("a");
+    link.href = URL.createObjectURL(blob); link.download = `Reporte.csv`; link.click();
   };
 
+  const copyToClipboard = (text) => { navigator.clipboard.writeText(text); alert("Copiado al portapapeles"); };
+
   const handleWipeDirectory = async () => {
-    if(window.confirm('⚠️ ¿Seguro de eliminar TODO el directorio?')) {
-       directory.forEach(async (d) => { if (d?.id) await deleteFromCloud('directory', d.id); });
+    if(window.confirm('⚠️ ¿Estás seguro de eliminar TODO el directorio para empezar de cero?')) {
+       directory.forEach(async (d) => { if (d && d.id) await deleteFromCloud('directory', d.id); });
        alert('Directorio limpiado.');
     }
   };
 
   // --- IA Y GENERACIÓN ---
   const extractFormFromAI = async (prompt, inlineData = null) => {
-    if (!appConfig.apiKey) return alert("Falta Clave API de IA.");
+    if (!appConfig.apiKey) return alert("Falta configurar la Clave API de IA en Configuración.");
     setIsDigitizing(true);
     const fullPrompt = `${prompt}\n\nERES UN ANALISTA CLÍNICO. Analiza el documento y devuelve ÚNICAMENTE un objeto JSON válido con este formato exacto:\n{ \n  "nombre": "TÍTULO COMPLETO DEL DOCUMENTO", \n  "metodoCalculo": "Elige 'Suma Automática' si se calcula sumando puntos, o 'Juicio Clínico' si requiere interpretación del profesional o es un árbol de decisión (Ej: Escala Columbia)", \n  "instruccionesDiagnostico": "Si elegiste Juicio Clínico, redacta cómo el evaluador debe interpretar las respuestas para dar el diagnóstico", \n  "encabezados": [ {"id": "enc_1", "label": "Nombre del campo (Ej: Servicio, Fecha)", "type": "text"} ], \n  "criterios": [ {"id": "crit_1", "pregunta": "Criterio", "opciones": "Estructura opciones con puntaje numérico. Ej: SÍ=1, NO=0. O escala: Siempre=3, A veces=2, Nunca=1"} ] \n}`;
     try {
@@ -270,9 +307,14 @@ export default function App() {
         encabezados: parsedData.encabezados || [],
         criterios: parsedData.criterios || []
       });
-      alert(`¡Pauta digitalizada!\nRevisa el Diseñador para ajustar detalles.`);
+      alert(`¡Pauta digitalizada!\nTítulo: ${parsedData.nombre}\nRevisa el Diseñador para ajustar detalles.`);
     } catch (err) { alert("Error IA. Revisa tu Llave API o copia fragmentos de texto."); } 
     finally { setIsDigitizing(false); setRawTextForAI(''); }
+  };
+
+  const handleProcessRawTextForAI = () => {
+    if (!rawTextForAI.trim()) return;
+    extractFormFromAI(`Analiza este texto correspondiente a un instrumento de evaluación: \n\n${rawTextForAI}`);
   };
 
   const handlePdfUploadForAI = (e) => {
@@ -285,7 +327,7 @@ export default function App() {
   };
 
   const handleGenerateReport = async (type) => { 
-    if (!appConfig.apiKey) return alert("Falta Clave API.");
+    if (!appConfig.apiKey) return alert("Falta Clave API de IA.");
     setIsGeneratingReport(true); setReportContent('');
     let prompt = "";
     if (type === 'stats') {
@@ -718,7 +760,6 @@ export default function App() {
                         </tr>
                       );
                     })}
-                    {visibleCases.length === 0 && (<tr><td colSpan="5" className="p-12 text-center"><p className="text-slate-400 font-bold text-sm uppercase tracking-widest">No hay registros de seguimiento en la red</p></td></tr>)}
                   </tbody>
                 </table>
               </div>
@@ -810,18 +851,15 @@ export default function App() {
               {(directory || []).filter(d => {
                  if (!d) return false;
                  const search = String(dirSearch || '').toLowerCase();
-                 const name = String(d.nombre || '').toLowerCase();
-                 const inst = String(d.institucion || '').toLowerCase();
-                 const cargo = String(d.cargo || '').toLowerCase();
-                 return name.includes(search) || inst.includes(search) || cargo.includes(search);
-              }).map((d, index) => (
-                <div key={d.id || `dir-${index}`} className="bg-white p-6 rounded-2xl shadow-sm border border-slate-100 relative group">
+                 return String(d.nombre||'').toLowerCase().includes(search) || String(d.institucion||'').toLowerCase().includes(search) || String(d.cargo||'').toLowerCase().includes(search);
+              }).map((d, i) => (
+                <div key={d.id || `dir-${i}`} className="bg-white p-6 rounded-2xl shadow-sm border border-slate-100 relative group">
                    <div className="absolute top-3 right-3 opacity-0 group-hover:opacity-100 transition-opacity flex gap-1.5">
                      <button onClick={() => { setEditingDirId(d.id); setDirForm(d); setIsDirModalOpen(true); }} className="p-1.5 bg-slate-50 hover:text-blue-600 rounded-lg"><Edit2 size={14}/></button>
                      <button onClick={() => deleteFromCloud('directory', d.id)} className="p-1.5 bg-slate-50 hover:text-red-600 rounded-lg"><Trash2 size={14}/></button>
                    </div>
                    <h3 className="font-black text-slate-800 text-base mb-1"><User size={16} className="inline text-blue-600 mr-1"/>{String(d.nombre || 'Sin nombre')}</h3>
-                   <p className="text-[10px] text-indigo-600 font-black uppercase mb-3 ml-6">{String(d.cargo || 'Sin cargo')} • {String(d.institucion || 'Sin institución')}</p>
+                   <p className="text-[10px] text-indigo-600 font-black uppercase mb-3 ml-6">{String(d.cargo || '---')} • {String(d.institucion || '---')}</p>
                    <div className="space-y-0.5 ml-6"><p className="text-[10px] font-bold text-slate-500">{String(d.telefono || '')}</p><p className="text-[10px] font-bold text-slate-500">{String(d.correo || '')}</p></div>
                 </div>
               ))}
@@ -830,7 +868,7 @@ export default function App() {
         )}
 
         {/* PESTAÑA 8: USUARIOS */}
-        {activeTab === 'users' && currentUser.rol === 'Admin' && (
+        {activeTab === 'users' && currentUser?.rol === 'Admin' && (
           <div className="space-y-6 animate-in fade-in mt-12 md:mt-0">
             <div className="flex justify-between items-end"><div><h2 className="text-2xl font-black text-slate-800">Gestión de Usuarios</h2></div><button onClick={() => { setEditingUserId(null); setUserForm({ rut: '', nombre: '', iniciales: '', cargo: '', password: '', rol: 'Usuario', centrosAsignados: [] }); setIsUserModalOpen(true); }} className={clsBtnP}><UserPlus size={16} /> Crear Credencial</button></div>
             <div className="bg-white rounded-2xl shadow-sm border overflow-hidden">
@@ -852,7 +890,7 @@ export default function App() {
         )}
 
         {/* PESTAÑA 9: CONFIGURACIÓN */}
-        {activeTab === 'config' && currentUser.rol === 'Admin' && (
+        {activeTab === 'config' && currentUser?.rol === 'Admin' && (
           <div className="space-y-6 animate-in fade-in mt-12 md:mt-0">
             <h2 className="text-2xl font-black text-slate-800">Configuración del Sistema</h2>
             <div className="bg-white p-8 rounded-2xl shadow-sm border max-w-3xl">
@@ -865,454 +903,256 @@ export default function App() {
                <div className="space-y-3">
                  {auditTemplates.map(t => (
                    <div key={t.id} className="flex justify-between items-center bg-slate-50 p-4 rounded-xl border">
-                     <div><span className="text-xs font-black text-slate-700 uppercase block">{t.nombre}</span><span className="text-[9px] font-bold text-slate-400 uppercase mt-1">{t.metodoCalculo || 'Suma Automática'} • {t.criterios.length} Criterios</span></div>
+                     <div><span className="text-xs font-black text-slate-700 uppercase block">{t.nombre}</span><span className="text-[9px] font-bold text-slate-400 uppercase mt-1">{t.metodoCalculo || 'Suma Automática'} • {t.criterios?.length||0} Criterios</span></div>
                      <div className="flex gap-2"><button onClick={() => openTemplateEditor(t)} className="text-slate-400 hover:text-blue-600 p-2 bg-white rounded-lg"><Edit2 size={14}/></button><button onClick={async ()=>{ if(window.confirm(`¿Eliminar pauta ${t.nombre}?`)) await deleteFromCloud('auditTemplates', t.id); }} className="text-slate-400 hover:text-red-600 p-2 bg-white rounded-lg"><Trash2 size={14}/></button></div>
                    </div>
                  ))}
                </div>
-               <button onClick={() => { setEditingTemplateId(null); setTemplateForm({nombre: '', metodoCalculo: 'Suma Automática', instruccionesDiagnostico: '', encabezados: [{ id: 'enc_1', label: 'Centro Evaluado', type: 'text' }, { id: 'enc_2', label: 'Fecha', type: 'date' }], criterios: [{ id: 'crit_1', pregunta: '', opciones: 'SÍ=1, NO=0' }], rangos: [], tipo: 'Ambos'}); setIsTemplateModalOpen(true); }} className="mt-6 bg-slate-900 text-white px-6 py-3 rounded-xl text-[9px] font-black uppercase flex items-center gap-2"><Plus size={14}/> Crear Nueva Pauta</button>
+               <button onClick={() => { setEditingTemplateId(null); setTemplateForm({nombre: '', metodoCalculo: 'Suma Automática', instruccionesDiagnostico: '', encabezados: [{ id: 'e1', label: 'Centro Evaluado', type: 'text' }, { id: 'e2', label: 'Fecha', type: 'date' }], criterios: [{ id: 'c1', pregunta: '', opciones: 'SÍ=1, NO=0' }], rangos: [], tipo: 'Ambos'}); setIsTemplateModalOpen(true); }} className={clsBtnP + " mt-4"}><Plus size={14}/> Crear Nueva Pauta</button>
             </div>
             <div className="mt-8 bg-indigo-50 p-8 rounded-2xl border border-indigo-100 max-w-3xl">
-               <h3 className="font-bold text-indigo-900 text-sm mb-4"><Wand2 size={18} className="inline"/> Motor Inteligencia Artificial (Gemini)</h3>
-               <div className="flex gap-4 items-center"><input type="password" value={apiConfigKey} onChange={e=>setApiConfigKey(e.target.value)} className={clsInp}/><button onClick={async ()=>{ await saveToCloud('settings', 'config', { ...appConfig, apiKey: apiConfigKey.trim() }); alert("¡Llave IA guardada!"); }} className="bg-indigo-600 text-white px-8 py-3 rounded-xl text-[10px] font-black uppercase"><Key size={16}/> Guardar</button></div>
+               <h3 className="font-bold text-indigo-900 text-sm mb-4"><Wand2 size={18} className="inline"/> Llave API de Google IA</h3>
+               <div className="flex gap-4 items-center"><input type="password" value={apiConfigKey} onChange={e=>setApiConfigKey(e.target.value)} className={clsInp} placeholder="AIzaSyB..."/><button onClick={async ()=>{ await saveToCloud('settings', 'config', { ...appConfig, apiKey: apiConfigKey.trim() }); alert("Guardado!"); }} className={clsBtnP}>Guardar</button></div>
             </div>
           </div>
         )}
       </main>
 
       {/* ================= MODALES COMPLETOS ================= */}
-
-      {/* 1. MODAL CASOS */}
-      {isCaseModalOpen && (
-        <div className={clsModBg}>
-          <div className={clsModBx}>
-            <div className="bg-blue-600 p-6 text-white flex justify-between items-center shrink-0">
-              <h3 className="font-black text-xl uppercase tracking-widest">{editingCaseId ? `Editar: ${caseForm.nombre}` : 'Nuevo Seguimiento'}</h3>
-              <button onClick={() => setIsCaseModalOpen(false)} className="text-white/60 hover:text-white font-bold text-2xl">&times;</button>
-            </div>
-            <div className="flex bg-slate-50 border-b shrink-0 px-6">
-              <button onClick={() => setActiveModalTab('datos')} className={`px-6 py-4 text-[10px] font-black uppercase tracking-[0.2em] border-b-4 ${activeModalTab === 'datos' ? 'border-blue-600 text-blue-600 bg-white shadow-inner' : 'border-transparent text-slate-400'}`}>1. Hitos y Red</button>
-              <button onClick={() => setActiveModalTab('bitacora')} className={`px-6 py-4 text-[10px] font-black uppercase tracking-[0.2em] border-b-4 ${activeModalTab === 'bitacora' ? 'border-blue-600 text-blue-600 bg-white shadow-inner' : 'border-transparent text-slate-400'}`}>2. Bitácora</button>
-              <button onClick={() => setActiveModalTab('archivos')} className={`px-6 py-4 text-[10px] font-black uppercase tracking-[0.2em] border-b-4 ${activeModalTab === 'archivos' ? 'border-blue-600 text-blue-600 bg-white shadow-inner' : 'border-transparent text-slate-400'}`}>3. Epicrisis</button>
-            </div>
-            <div className="p-6 md:p-8 overflow-y-auto flex-1 bg-white">
-              {activeModalTab === 'datos' && (
-                <div className="space-y-6 animate-in slide-in-from-left-4">
-                  <div className="bg-blue-50/50 p-6 rounded-2xl border-2 border-blue-100">
-                    <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-                      <div><label className={clsLbl}>A. EGRESO UHCIP</label><input type="date" value={caseForm.fechaEgreso} onChange={e=>setCaseForm({...caseForm, fechaEgreso: e.target.value})} className={clsInp} /></div>
-                      <div><label className={clsLbl}>B. RECEPCIÓN EN RED</label><input type="date" value={caseForm.fechaRecepcionRed} onChange={e=>setCaseForm({...caseForm, fechaRecepcionRed: e.target.value})} className={clsInp} /></div>
-                      <div><label className={clsLbl}>C. INGRESO EFECTIVO</label><input type="date" value={caseForm.fechaIngresoEfectivo} onChange={e=>setCaseForm({...caseForm, fechaIngresoEfectivo: e.target.value})} className={clsInp} /></div>
-                    </div>
-                  </div>
-                  <div className="grid grid-cols-2 gap-8">
-                    <div>
-                      <h4 className={clsLbl}>Identificación Paciente</h4>
-                      <div className="space-y-3">
-                        <input type="text" value={caseForm.nombre} onChange={e=>setCaseForm({...caseForm, nombre: e.target.value})} className={clsInp} placeholder="Nombre Paciente" />
-                        <input type="text" value={caseForm.rut} onChange={e=>setCaseForm({...caseForm, rut: e.target.value})} className={clsInp} placeholder="RUT" />
-                        <select value={caseForm.estado} onChange={e=>setCaseForm({...caseForm, estado: e.target.value})} className={clsInp}><option>Pendiente</option><option>Concretado</option><option>Alerta</option></select>
-                      </div>
-                    </div>
-                    <div>
-                      <h4 className={clsLbl}>Ruta Institucional</h4>
-                      <div className="space-y-3">
-                        <select value={caseForm.origen} onChange={e=>setCaseForm({...caseForm, origen: e.target.value})} className={clsInp}><option value="">Origen...</option>{centros.map(c => <option key={c} value={c}>{c}</option>)}</select>
-                        <select value={caseForm.destino} onChange={e=>setCaseForm({...caseForm, destino: e.target.value})} className={clsInp}><option value="">Destino...</option>{centros.map(c => <option key={c} value={c}>{c}</option>)}</select>
-                      </div>
-                    </div>
-                  </div>
-                </div>
-              )}
-              {activeModalTab === 'bitacora' && (
-                <div className="space-y-6 animate-in slide-in-from-right-4 flex flex-col h-full">
-                  <div className="bg-slate-50 p-6 rounded-2xl border">
-                    <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-4">
-                      <select value={newBitacoraEntry.tipo} onChange={e=>setNewBitacoraEntry({...newBitacoraEntry, tipo: e.target.value})} className={clsInp}><option value="Nota Adm.">Nota Adm.</option><option value="Intervención">Intervención</option><option value="Tarea">Tarea</option></select>
-                      <input type="text" value={newBitacoraEntry.responsable} onChange={e=>setNewBitacoraEntry({...newBitacoraEntry, responsable: e.target.value})} className={clsInp} placeholder="Responsable" />
-                      <textarea rows="1" value={newBitacoraEntry.descripcion} onChange={e=>setNewBitacoraEntry({...newBitacoraEntry, descripcion: e.target.value})} className={clsInp + " md:col-span-2"} placeholder="Detalle..." />
-                      {newBitacoraEntry.tipo === 'Tarea' && <input type="date" value={newBitacoraEntry.fechaCumplimiento} onChange={e=>setNewBitacoraEntry({...newBitacoraEntry, fechaCumplimiento: e.target.value})} className={clsInp + " md:col-span-4 bg-amber-50"} />}
-                    </div>
-                    <div className="flex justify-end"><button onClick={handleAddBitacora} disabled={!newBitacoraEntry.descripcion} className={clsBtnP}>Registrar Acción</button></div>
-                  </div>
-                  <div className="flex-1 overflow-y-auto space-y-3">
-                    {caseForm.bitacora.map(entry => (
-                      <div key={entry.id} className="p-4 bg-white border rounded-xl flex justify-between items-start group">
-                        <div>
-                          <p className="text-[9px] font-black uppercase text-blue-600 mb-1">{entry.tipo} | {entry.fecha}</p>
-                          <p className="text-sm font-medium text-slate-700 whitespace-pre-wrap">{entry.descripcion}</p>
-                          <p className="text-[10px] font-black text-slate-400 mt-2">Resp: {entry.responsable || 'No indicado'}</p>
-                        </div>
-                        <button onClick={() => setCaseForm({ ...caseForm, bitacora: caseForm.bitacora.filter(b => b.id !== entry.id) })} className="opacity-0 group-hover:opacity-100 text-red-400 hover:text-red-600"><Trash2 size={16}/></button>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              )}
-              {activeModalTab === 'archivos' && (
-                <div className="space-y-6 animate-in slide-in-from-right-4">
-                  <div className="bg-slate-50 p-6 rounded-2xl border">
-                     <label className={clsLbl}>Resumen de Epicrisis (Para Análisis de IA)</label>
-                     <textarea value={caseForm.epicrisis || ''} onChange={e=>setCaseForm({...caseForm, epicrisis: e.target.value})} className={clsInp + " resize-y min-h-[140px]"} placeholder="Pega los antecedentes..." />
-                  </div>
-                  <div className="flex justify-between">
-                      <div className="flex flex-col">
-                        <label className={clsLbl}><Wand2 size={14} className="inline mr-1"/> Resumen Clínico Inteligente</label>
-                        <p className="text-[9px] text-slate-400 italic">Analiza Bitácora y Epicrisis.</p>
-                      </div>
-                      {currentUser?.rol === 'Admin' && (<button onClick={handleGenerateCaseSummary} disabled={isGeneratingCaseSummary} className={clsBtnP}>{isGeneratingCaseSummary ? <Loader2 size={14} className="animate-spin"/> : <FileText size={14}/>} Generar Resumen</button>)}
-                  </div>
-                  {caseSummary && (<div className="bg-indigo-50 p-5 rounded-xl border border-indigo-100 relative"><button onClick={() => copyToClipboard(caseSummary)} className="absolute top-3 right-3 text-indigo-400 hover:text-indigo-600"><Copy size={16}/></button><p className="whitespace-pre-wrap text-xs text-indigo-900">{caseSummary}</p></div>)}
-                </div>
-              )}
-            </div>
-            <div className="bg-slate-50 p-6 border-t flex justify-end gap-4 shrink-0"><button onClick={() => setIsCaseModalOpen(false)} className={clsBtnS}>Cancelar</button><button onClick={handleSaveCase} className={clsBtnP}>Guardar Seguimiento</button></div>
-          </div>
+      <ModalWrap isOpen={isCaseModalOpen}>
+        <ModalHdr t={editingCaseId ? `Editar: ${caseForm.nombre}` : 'Nuevo Seguimiento'} onClose={()=>setIsCaseModalOpen(false)} icon={Users} />
+        <div className="flex bg-slate-50 border-b shrink-0 px-6">
+          <button onClick={() => setActiveModalTab('datos')} className={`px-6 py-4 text-[10px] font-black uppercase tracking-[0.2em] border-b-4 ${activeModalTab === 'datos' ? 'border-blue-600 text-blue-600 bg-white' : 'border-transparent text-slate-400'}`}>Datos Básicos</button>
+          <button onClick={() => setActiveModalTab('bitacora')} className={`px-6 py-4 text-[10px] font-black uppercase tracking-[0.2em] border-b-4 ${activeModalTab === 'bitacora' ? 'border-blue-600 text-blue-600 bg-white' : 'border-transparent text-slate-400'}`}>Bitácora</button>
+          <button onClick={() => setActiveModalTab('archivos')} className={`px-6 py-4 text-[10px] font-black uppercase tracking-[0.2em] border-b-4 ${activeModalTab === 'archivos' ? 'border-blue-600 text-blue-600 bg-white' : 'border-transparent text-slate-400'}`}>Epicrisis</button>
         </div>
-      )}
-
-      {/* 2. MODAL PROTOCOLOS */}
-      {isDocModalOpen && (
-        <div className={clsModBg}>
-          <div className={clsModBx}>
-            <div className="bg-blue-600 p-6 text-white flex justify-between items-center shrink-0">
-               <h3 className="font-black text-xl uppercase tracking-widest">{editingDocId ? 'Editar Protocolo' : 'Nuevo Protocolo'}</h3>
-               <button onClick={() => setIsDocModalOpen(false)} className="text-white/60 hover:text-white font-bold text-2xl">&times;</button>
-            </div>
-            <div className="flex bg-slate-50 border-b shrink-0 px-6">
-              <button onClick={() => setActiveDocModalTab('datos')} className={`px-6 py-4 text-[10px] font-black uppercase tracking-[0.2em] border-b-4 ${activeDocModalTab === 'datos' ? 'border-blue-600 text-blue-600 bg-white shadow-inner' : 'border-transparent text-slate-400'}`}>Datos</button>
-              <button onClick={() => setActiveDocModalTab('bitacora')} className={`px-6 py-4 text-[10px] font-black uppercase tracking-[0.2em] border-b-4 ${activeDocModalTab === 'bitacora' ? 'border-blue-600 text-blue-600 bg-white shadow-inner' : 'border-transparent text-slate-400'}`}>Tareas</button>
-            </div>
-            <div className="p-6 md:p-8 overflow-y-auto flex-1 bg-white">
-              {activeDocModalTab === 'datos' && (
-                <div className="space-y-6">
-                  <div><label className={clsLbl}>Nombre del Documento Normativo</label><input type="text" value={docForm.nombre} onChange={e=>setDocForm({...docForm, nombre: e.target.value})} className={clsInp} /></div>
-                  <div className="grid grid-cols-2 gap-6">
-                    <div>
-                      <label className={clsLbl}>Ámbito / Dispositivo de Aplicación</label>
-                      <input type="text" list="ambitos-list" value={docForm.ambito} onChange={e=>setDocForm({...docForm, ambito: e.target.value})} className={clsInp} placeholder="Escriba o seleccione..." />
-                      <datalist id="ambitos-list"><option value="Red Integral"/><option value="Hospitalario"/><option value="COSAM"/><option value="APS"/>{centros.map(c => <option key={c} value={c} />)}</datalist>
-                    </div>
-                    <div><label className={clsLbl}>Fase Actual</label><select value={docForm.fase} onChange={e=>setDocForm({...docForm, fase: e.target.value})} className={clsInp}><option>Levantamiento</option><option>Redacción</option><option>Validación Técnica</option><option>Resolución Exenta</option><option>Difusión</option></select></div>
-                  </div>
-                  <div><label className={clsLbl}>Notas</label><textarea value={docForm.notas || ''} onChange={e=>setDocForm({...docForm, notas: e.target.value})} className={clsInp + " min-h-[100px]"} /></div>
-                  <div className="bg-blue-50/50 p-6 rounded-2xl border-2 border-blue-100"><label className="flex justify-between items-end mb-3"><span className="block text-[10px] font-black text-blue-900 uppercase">Avance Estimado</span><span className="text-2xl font-black text-blue-600">{docForm.avance}%</span></label><input type="range" min="0" max="100" step="5" value={docForm.avance} onChange={e=>setDocForm({...docForm, avance: e.target.value})} className="w-full" /></div>
-                </div>
-              )}
-              {activeDocModalTab === 'bitacora' && (
-                <div className="space-y-6 flex flex-col h-full">
-                  <div className="bg-slate-50 p-6 rounded-2xl border">
-                    <div className="grid grid-cols-2 gap-4 mb-4">
-                      <input type="text" value={newDocBitacoraEntry.responsable} onChange={e=>setNewDocBitacoraEntry({...newDocBitacoraEntry, responsable: e.target.value})} className={clsInp} placeholder="Responsable" />
-                      <input type="date" value={newDocBitacoraEntry.fechaCumplimiento} onChange={e=>setNewDocBitacoraEntry({...newDocBitacoraEntry, fechaCumplimiento: e.target.value})} className={clsInp} />
-                      <textarea rows="1" value={newDocBitacoraEntry.descripcion} onChange={e=>setNewDocBitacoraEntry({...newDocBitacoraEntry, descripcion: e.target.value})} className={clsInp + " col-span-2"} placeholder="Descripción de la tarea..." />
-                    </div>
-                    <div className="flex justify-end"><button onClick={handleAddDocBitacora} disabled={!newDocBitacoraEntry.descripcion} className={clsBtnP}>Asignar Tarea</button></div>
-                  </div>
-                  <div className="flex-1 space-y-3">
-                     {(docForm.bitacora || []).map(entry => (
-                       <div key={entry.id} className="p-4 bg-white border rounded-xl flex justify-between items-center group">
-                         <div className="flex items-center gap-4">
-                            <button onClick={() => toggleDocTaskCompletion(docForm.id, entry.id)} className={entry.completada ? "text-green-500" : "text-amber-500"}><CheckSquare size={18}/></button>
-                            <p className={`text-sm font-medium ${entry.completada ? 'line-through text-slate-400' : 'text-slate-800'}`}>{entry.descripcion} <span className="text-[9px] font-black uppercase text-slate-400 ml-2">Resp: {entry.responsable}</span></p>
-                         </div>
-                         <button onClick={() => setDocForm(prev => ({ ...prev, bitacora: prev.bitacora.filter(b => b.id !== entry.id) }))} className="opacity-0 group-hover:opacity-100 text-red-400 hover:text-red-600"><Trash2 size={16}/></button>
-                       </div>
-                     ))}
-                  </div>
-                </div>
-              )}
-            </div>
-            <div className="bg-slate-50 p-6 border-t flex justify-end gap-4 shrink-0"><button onClick={() => setIsDocModalOpen(false)} className={clsBtnS}>Cancelar</button><button onClick={handleSaveDoc} className={clsBtnP}>Guardar Protocolo</button></div>
-          </div>
-        </div>
-      )}
-
-      {/* 3. MODAL GESTOR DE PAUTAS IA */}
-      {isTemplateModalOpen && (
-        <div className={clsModBg}>
-          <div className="bg-white rounded-3xl shadow-2xl w-full max-w-5xl max-h-[90vh] flex flex-col overflow-hidden border border-slate-200">
-            <div className="bg-slate-800 p-6 text-white flex justify-between items-center shrink-0">
-               <h3 className="font-black text-xl uppercase tracking-widest flex items-center gap-2"><Settings size={20}/> {editingTemplateId ? 'Editar Formulario' : 'Diseñador de Pautas IA'}</h3>
-               <button onClick={() => setIsTemplateModalOpen(false)} className="text-white/60 hover:text-white font-bold text-2xl">&times;</button>
-            </div>
-            <div className="p-6 md:p-8 overflow-y-auto flex-1 bg-slate-50 grid grid-cols-1 lg:grid-cols-5 gap-8">
-                {/* PANEL IZQUIERDO */}
-                <div className="lg:col-span-2 space-y-6">
-                  <div className="bg-indigo-50 p-6 rounded-2xl border border-indigo-100 text-center">
-                    <h4 className="text-[11px] font-black text-indigo-900 uppercase tracking-widest mb-3 flex items-center justify-center gap-2"><Wand2 size={16}/> Constructor Dinámico por IA</h4>
-                    <label className="flex flex-col items-center justify-center w-full h-16 border-2 border-indigo-300 border-dashed rounded-xl cursor-pointer bg-white hover:bg-indigo-100 transition-colors mb-3">
-                        <span className="text-[9px] text-indigo-900 font-black uppercase tracking-widest">1. Cargar PDF</span>
-                        <input type="file" className="hidden" accept=".pdf" onChange={handlePdfUploadForAI} />
-                    </label>
-                    <textarea value={rawTextForAI} onChange={e=>setRawTextForAI(e.target.value)} className={clsInp + " mb-3 text-xs"} placeholder="2. O Pega el texto aquí..."/>
-                    <button onClick={handleProcessRawTextForAI} disabled={!rawTextForAI.trim() || isDigitizing} className="w-full bg-indigo-600 text-white px-4 py-3 rounded-xl text-[10px] font-black uppercase tracking-widest hover:bg-indigo-700 disabled:opacity-50 transition-colors flex justify-center items-center gap-2">
-                        {isDigitizing ? <Loader2 size={14} className="animate-spin"/> : <Wand2 size={14}/>} Generar Formato
-                    </button>
-                  </div>
-                  <div className="bg-white p-5 border border-slate-200 rounded-2xl">
-                    <label className={clsLbl}>Nombre del Instrumento</label><input type="text" value={templateForm.nombre} onChange={e=>setTemplateForm({...templateForm, nombre: e.target.value})} className={clsInp}/>
-                    <label className={clsLbl + " mt-4"}>Método de Evaluación</label>
-                    <select value={templateForm.metodoCalculo || 'Suma Automática'} onChange={e=>setTemplateForm({...templateForm, metodoCalculo: e.target.value})} className={clsInp}>
-                      <option value="Suma Automática">Suma Automática de Puntajes</option>
-                      <option value="Juicio Clínico">Juicio Clínico (Árbol de Decisión)</option>
-                    </select>
-                    {templateForm.metodoCalculo === 'Juicio Clínico' && (
-                      <div className="mt-3">
-                        <label className="text-[10px] font-black text-amber-600 uppercase mb-1.5 block">Instrucciones de Diagnóstico</label>
-                        <textarea rows="3" value={templateForm.instruccionesDiagnostico || ''} onChange={e=>setTemplateForm({...templateForm, instruccionesDiagnostico: e.target.value})} className="w-full border-2 border-amber-200 p-3 rounded-xl text-xs font-medium resize-y bg-amber-50 outline-none" placeholder="Ej: Si responde SÍ a la pregunta 3, clasificar como Riesgo Alto..."/>
-                      </div>
-                    )}
-                  </div>
-                </div>
-                {/* PANEL DERECHO */}
-                <div className="lg:col-span-3 flex flex-col gap-6">
-                  <div className="bg-white p-5 border border-slate-200 rounded-2xl">
-                    <label className="block text-[10px] font-black text-slate-500 uppercase tracking-widest mb-3 bg-slate-50 p-2 rounded-lg">1. Encabezados (Identificación)</label>
-                    {templateForm.encabezados.map((h, i) => (
-                      <div key={i} className="flex gap-2 items-center mb-2">
-                        <input type="text" value={h.label} onChange={e=>{const n=[...templateForm.encabezados]; n[i].label=e.target.value; setTemplateForm({...templateForm, encabezados: n});}} className={clsInp} placeholder="Ej: Evaluador"/>
-                        <button onClick={()=>{const n=[...templateForm.encabezados]; n.splice(i,1); setTemplateForm({...templateForm, encabezados: n});}} className="p-3 bg-red-50 text-red-500 rounded-xl"><Trash2 size={16}/></button>
-                      </div>
-                    ))}
-                    <button onClick={()=>setTemplateForm({...templateForm, encabezados: [...templateForm.encabezados, {id: `enc_${Date.now()}`, label: '', type: 'text'}]})} className="text-[9px] text-slate-500 font-black uppercase mt-2"><Plus size={12} className="inline"/> Agregar Campo</button>
-                  </div>
-                  <div className="bg-white p-5 border border-slate-200 rounded-2xl flex-1">
-                    <label className="block text-[10px] font-black text-slate-500 uppercase tracking-widest mb-3 bg-slate-50 p-2 rounded-lg">2. Criterios a Evaluar</label>
-                    <div className="max-h-[300px] overflow-y-auto pr-2 space-y-3">
-                      {templateForm.criterios.map((c, i) => (
-                        <div key={i} className="p-4 border-2 border-slate-100 rounded-xl bg-slate-50 relative group">
-                          <button onClick={()=>{const newC=[...templateForm.criterios]; newC.splice(i,1); setTemplateForm({...templateForm, criterios: newC});}} className="absolute top-2 right-2 text-slate-300 hover:text-red-500"><Trash2 size={14}/></button>
-                          <textarea rows="2" value={c.pregunta} onChange={e=>{const newC=[...templateForm.criterios]; newC[i].pregunta=e.target.value; setTemplateForm({...templateForm, criterios: newC});}} className="w-full border-2 border-white p-2 rounded-lg text-sm font-medium resize-y mb-2" placeholder="Criterio a evaluar..."/>
-                          <input type="text" value={c.opciones} onChange={e=>{const newC=[...templateForm.criterios]; newC[i].opciones=e.target.value; setTemplateForm({...templateForm, criterios: newC});}} className="w-full border-2 border-white p-2 rounded-lg text-xs font-bold text-indigo-700" placeholder="Opciones (Ej: SÍ=1, NO=0)"/>
-                        </div>
-                      ))}
-                    </div>
-                    <button onClick={()=>setTemplateForm({...templateForm, criterios: [...templateForm.criterios, {id: `crit_${Date.now()}`, pregunta: '', opciones: 'SÍ=1, NO=0'}]})} className="text-[10px] text-indigo-600 font-black uppercase mt-4"><Plus size={14} className="inline"/> Agregar Pregunta Manual</button>
-                  </div>
+        <div className="p-6 overflow-y-auto flex-1 bg-white">
+            {activeModalTab === 'datos' && (
+              <div className="space-y-6">
+                <div className="grid grid-cols-2 gap-4">
+                  <div><Lbl>RUT</Lbl><Inp type="text" value={caseForm.rut} onChange={e=>setCaseForm({...caseForm, rut: e.target.value})}/></div>
+                  <div><Lbl>Nombre Paciente</Lbl><Inp type="text" value={caseForm.nombre} onChange={e=>setCaseForm({...caseForm, nombre: e.target.value})}/></div>
+                  <div><Lbl>Fecha Egreso</Lbl><Inp type="date" value={caseForm.fechaEgreso} onChange={e=>setCaseForm({...caseForm, fechaEgreso: e.target.value})}/></div>
+                  <div><Lbl>Ingreso Efectivo</Lbl><Inp type="date" value={caseForm.fechaIngresoEfectivo} onChange={e=>setCaseForm({...caseForm, fechaIngresoEfectivo: e.target.value})}/></div>
+                  <div><Lbl>Origen</Lbl><Sel value={caseForm.origen} onChange={e=>setCaseForm({...caseForm, origen: e.target.value})}><option value="">Origen...</option>{centros.map(c => <option key={c} value={c}>{c}</option>)}</Sel></div>
+                  <div><Lbl>Destino</Lbl><Sel value={caseForm.destino} onChange={e=>setCaseForm({...caseForm, destino: e.target.value})}><option value="">Destino...</option>{centros.map(c => <option key={c} value={c}>{c}</option>)}</Sel></div>
+                  <div><Lbl>Estado</Lbl><Sel value={caseForm.estado} onChange={e=>setCaseForm({...caseForm, estado: e.target.value})}><option>Pendiente</option><option>Concretado</option><option>Alerta</option></Sel></div>
                 </div>
               </div>
-            </div>
-            <div className="bg-slate-50 p-6 border-t flex justify-end gap-4"><button onClick={() => setIsTemplateModalOpen(false)} className={clsBtnSecondary}>Cancelar</button><button onClick={handleSaveTemplate} className={clsBtnPrimary}>Guardar Formulario</button></div>
-          </div>
-        </div>
-      )}
-
-      {/* 4. MODAL REALIZAR AUDITORÍA / FORMULARIO */}
-      {isAuditModalOpen && (
-        <div className={clsModBg}>
-          <div className={clsModBx}>
-             <div className="bg-blue-600 p-6 text-white flex justify-between items-center shrink-0">
-               <h3 className="font-black text-xl uppercase tracking-widest"><ClipboardCheck size={20} className="inline mr-2"/> Aplicar Pauta</h3>
-               <button onClick={() => setIsAuditModalOpen(false)} className="text-white/60 hover:text-white font-bold text-3xl">&times;</button>
-             </div>
-             <div className="p-6 md:p-8 overflow-y-auto space-y-6 flex-1 bg-slate-50">
-                <div className="bg-white p-5 rounded-2xl border">
-                  <label className={clsLbl}>Instrumento a Evaluar</label>
-                  <select value={auditForm.templateId} onChange={e=>setAuditForm({...auditForm, templateId: e.target.value, answers: {}, headerAnswers: {}})} className={clsInp}>
-                    <option value="">Seleccione formulario del catálogo...</option>
-                    {auditTemplates.map(t => <option key={t.id} value={t.id}>{t.nombre}</option>)}
-                  </select>
+            )}
+            {activeModalTab === 'bitacora' && (
+              <div className="space-y-4">
+                <div className="bg-slate-50 p-4 rounded-xl grid grid-cols-4 gap-3">
+                   <Sel value={newBitacoraEntry.tipo} onChange={e=>setNewBitacoraEntry({...newBitacoraEntry, tipo: e.target.value})}><option value="Nota Adm.">Nota</option><option value="Intervención">Intervención</option><option value="Tarea">Tarea</option></Sel>
+                   <Inp value={newBitacoraEntry.responsable} onChange={e=>setNewBitacoraEntry({...newBitacoraEntry, responsable: e.target.value})} placeholder="Resp..." />
+                   <Inp value={newBitacoraEntry.descripcion} onChange={e=>setNewBitacoraEntry({...newBitacoraEntry, descripcion: e.target.value})} placeholder="Detalle..." className="col-span-2" />
+                   {newBitacoraEntry.tipo === 'Tarea' && <Inp type="date" value={newBitacoraEntry.fechaCumplimiento} onChange={e=>setNewBitacoraEntry({...newBitacoraEntry, fechaCumplimiento: e.target.value})} className="col-span-4" />}
+                   <button onClick={handleAddBitacora} className={clsBtnP + " col-span-4"}>Añadir Registro</button>
                 </div>
-                {auditForm.templateId && (() => {
-                  const template = auditTemplates.find(t => t.id === auditForm.templateId);
-                  if (!template) return null;
-                  return (
-                    <div className="space-y-6 animate-in fade-in">
-                       {template.encabezados && template.encabezados.length > 0 && (
-                         <div className="bg-white p-6 rounded-2xl border shadow-sm">
-                           <h4 className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-4 border-b pb-2">Identificación</h4>
-                           <div className="grid grid-cols-2 gap-4">
-                             {template.encabezados.map(h => (
-                               <div key={h.id}>
-                                  <label className="block text-[10px] font-black text-slate-600 uppercase mb-1.5">{h.label}</label>
-                                  {h.label.toLowerCase().includes('centro') || h.label.toLowerCase().includes('dispositivo') ? (
-                                     <select value={auditForm.headerAnswers[h.id] || ''} onChange={e=>setAuditForm({...auditForm, centro: e.target.value, headerAnswers: {...auditForm.headerAnswers, [h.id]: e.target.value}})} className={clsInp}><option value="">Seleccione Centro...</option>{centros.map(c=><option key={c} value={c}>{c}</option>)}</select>
-                                  ) : (
-                                     <input type={h.type} value={auditForm.headerAnswers[h.id] || ''} onChange={e=>setAuditForm({...auditForm, headerAnswers: {...auditForm.headerAnswers, [h.id]: e.target.value}})} className={clsInp}/>
-                                  )}
-                               </div>
-                             ))}
-                           </div>
-                         </div>
-                       )}
-                       <div className="bg-white p-6 rounded-2xl border shadow-sm">
-                         <h4 className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-4 border-b pb-2">Desarrollo de Pauta</h4>
-                         <div className="space-y-4">
-                           {template.criterios.map((c, idx) => {
-                             const isOldFormat = typeof c === 'string';
-                             const pregunta = isOldFormat ? c : c.pregunta;
-                             const critId = isOldFormat ? idx : c.id;
-                             const opciones = parseOpciones(isOldFormat ? 'SÍ=1, NO=0' : c.opciones);
-                             const currentAns = auditForm.answers[critId];
-                             return (
-                               <div key={critId} className="flex flex-col gap-2 p-4 bg-slate-50 rounded-xl border">
-                                 <span className="text-slate-800 font-bold text-sm leading-snug">{idx + 1}. {pregunta}</span>
-                                 <div className="flex flex-wrap gap-2 mt-1">
-                                   {opciones.map((opt, i) => {
-                                     const isSelected = currentAns?.label === opt.label;
-                                     return (
-                                       <label key={i} className={`flex px-4 py-2 rounded-xl cursor-pointer font-black text-[10px] uppercase border-2 ${isSelected ? 'bg-indigo-100 text-indigo-700 border-indigo-300' : 'bg-white text-slate-500 border-transparent hover:bg-slate-100'}`}>
-                                         <input type="radio" checked={isSelected} onChange={() => setAuditForm({...auditForm, answers: {...auditForm.answers, [critId]: opt}})} className="hidden" />{opt.label} ({opt.value})
-                                       </label>
-                                     )
-                                   })}
-                                 </div>
-                               </div>
-                             );
-                           })}
-                         </div>
-                       </div>
-                       {template.metodoCalculo === 'Juicio Clínico' && (
-                         <div className="bg-amber-50 p-6 rounded-2xl border border-amber-200">
-                           <h4 className="text-[10px] font-black text-amber-800 uppercase mb-2"><AlertTriangle size={14} className="inline mr-1"/> Instrucciones Clínicas</h4>
-                           <p className="text-xs text-amber-700 mb-4 font-medium">{template.instruccionesDiagnostico || 'Evalúe las respuestas y determine el nivel de riesgo.'}</p>
-                           <label className="block text-[10px] font-black text-amber-900 uppercase mb-1">Resultado Final (Obligatorio)</label>
-                           <select value={auditForm.estadoManual || ''} onChange={e=>setAuditForm({...auditForm, estadoManual: e.target.value})} className="w-full p-4 border-2 border-amber-300 rounded-xl bg-white text-amber-900 font-black text-sm outline-none">
-                              <option value="">Seleccione el diagnóstico...</option><option value="Riesgo Bajo">Riesgo Bajo</option><option value="Riesgo Medio">Riesgo Medio</option><option value="Riesgo Alto">Riesgo Alto</option><option value="Óptimo">Óptimo</option><option value="Requiere Observación">Requiere Observación</option>
-                           </select>
-                         </div>
-                       )}
-                       <div className="bg-white p-6 rounded-2xl border shadow-sm">
-                         <label className={clsLbl}>Observaciones Clínicas (Opcional)</label>
-                         <textarea rows="3" value={auditForm.observaciones || ''} onChange={e=>setAuditForm({...auditForm, observaciones: e.target.value})} className={clsInp} placeholder="Anotaciones para el documento final..."/>
-                       </div>
-                    </div>
-                  );
-                })()}
-             </div>
-             <div className="bg-white p-6 border-t flex justify-end gap-3 shrink-0"><button onClick={() => setIsAuditModalOpen(false)} className={clsBtnSecondary}>Cancelar</button><button onClick={handleSaveAudit} disabled={!auditForm.templateId} className={clsBtnPrimary}>Guardar Evaluación</button></div>
-          </div>
+                {caseForm.bitacora.map(b => <div key={b.id} className="p-4 border rounded-xl flex justify-between"><div className="flex-1"><p className="text-sm font-bold">{b.descripcion}</p><p className="text-[10px] text-slate-400 mt-1 uppercase">{b.tipo} | {b.fecha}</p></div><button onClick={() => setCaseForm({ ...caseForm, bitacora: caseForm.bitacora.filter(x => x.id !== b.id) })} className="text-red-400"><Trash2 size={16}/></button></div>)}
+              </div>
+            )}
+            {activeModalTab === 'archivos' && (
+              <div className="space-y-4">
+                 <Lbl>Epicrisis</Lbl><Txt value={caseForm.epicrisis || ''} onChange={e=>setCaseForm({...caseForm, epicrisis: e.target.value})} className="min-h-[140px]"/>
+                 <div className="flex justify-between items-center"><Lbl>Resumen Inteligente</Lbl><button onClick={handleGenerateCaseSummary} disabled={isGeneratingCaseSummary} className={clsBtnP}>Generar</button></div>
+                 {caseSummary && <div className="p-4 bg-indigo-50 rounded-xl whitespace-pre-wrap text-sm">{caseSummary}</div>}
+              </div>
+            )}
         </div>
-      )}
+        <ModalFtr onCancel={()=>setIsCaseModalOpen(false)} onSave={handleSaveCase} />
+      </ModalWrap>
 
-      {/* MODAL DE IMPRESIÓN (FULL SCREEN) */}
-      {printingAudit && (() => {
-        const template = auditTemplates.find(t => t.id === printingAudit.templateId);
-        if (!template) return <div className="p-10 text-red-500">Error: La pauta base original no existe.</div>;
-        const isOldFormat = typeof template.criterios[0] === 'string';
-        const criterios = isOldFormat ? template.criterios.map((c,i) => ({id: i, pregunta: c, opciones: 'SÍ=1, NO=0'})) : template.criterios;
-
-        return (
-          <div className="bg-white text-black min-h-screen w-full font-sans absolute inset-0 z-[100] print:static">
-            <div className="max-w-4xl mx-auto p-12 print:p-0 print:w-full print:max-w-full text-[11px] print:text-[10px]">
-               <div className="flex justify-end gap-3 mb-4 print:hidden">
-                 <button onClick={() => window.print()} className={clsBtnP}><Printer size={14}/> Imprimir Documento</button>
-                 <button onClick={() => setPrintingAudit(null)} className={clsBtnS}>Volver</button>
-               </div>
-               <div className="border-b-2 border-black pb-2 mb-4 text-center">
-                 <h1 className="text-lg font-black uppercase tracking-widest">{template.nombre}</h1>
-                 <p className="text-[9px] font-bold text-gray-500 uppercase tracking-widest mt-1">UHCIP INFANTO JUVENIL - Hospital Puerto Montt</p>
-               </div>
-               <div className="grid grid-cols-2 gap-2 mb-4 border border-gray-300 p-3 rounded-lg">
-                 <div className="flex flex-col"><span className="text-[8px] font-black text-gray-500 uppercase tracking-widest">Dispositivo Evaluado</span><span className="font-bold text-black">{printingAudit.centro || '---'}</span></div>
-                 <div className="flex flex-col"><span className="text-[8px] font-black text-gray-500 uppercase tracking-widest">Fecha Evaluación</span><span className="font-bold text-black">{printingAudit.fecha}</span></div>
-                 {(template.encabezados || []).map(h => (
-                    <div key={h.id} className="flex flex-col"><span className="text-[8px] font-black text-gray-500 uppercase tracking-widest">{h.label}</span><span className="font-bold text-black">{printingAudit.headerAnswers?.[h.id] || '---'}</span></div>
-                 ))}
-               </div>
-               <table className="w-full text-left border-collapse border border-gray-300 mb-4">
-                 <thead>
-                   <tr className="bg-gray-100 border-b border-gray-300">
-                     <th className="p-2 w-8 text-center border-r border-gray-300">Nº</th>
-                     <th className="p-2 border-r border-gray-300">Criterio Evaluado</th>
-                     <th className="p-2 w-24 text-center border-r border-gray-300">Respuesta</th>
-                     <th className="p-2 w-12 text-center">Pts</th>
-                   </tr>
-                 </thead>
-                 <tbody>
-                   {criterios.map((c, i) => {
-                     const rawAns = printingAudit.answers[c.id || i];
-                     let label = '---'; let val = 0;
-                     if (typeof rawAns === 'object') { label = rawAns.label; val = rawAns.value; }
-                     else if (rawAns === 'si') { label = 'SÍ'; val = 1; }
-                     else if (rawAns === 'no') { label = 'NO'; val = 0; }
-                     return (
-                     <tr key={i} className="border-b border-gray-200">
-                       <td className="p-2 text-center border-r border-gray-200">{i+1}</td>
-                       <td className="p-2 border-r border-gray-200 leading-tight">{c.pregunta}</td>
-                       <td className="p-2 text-center font-bold border-r border-gray-200">{label}</td>
-                       <td className="p-2 text-center">{template.metodoCalculo === 'Juicio Clínico' ? '-' : val}</td>
-                     </tr>
-                     )
-                   })}
-                 </tbody>
-               </table>
-
-               {/* BLOQUE INQUEBRANTABLE IMPRESIÓN */}
-               <div className="print:break-inside-avoid w-full border border-gray-300 p-4 rounded-lg bg-gray-50 mt-4">
-                  <div className="flex justify-between items-start mb-4">
-                      <div className="flex-1 pr-4">
-                        <h3 className="text-[8px] font-black text-gray-500 uppercase tracking-widest mb-1 border-b border-gray-300 pb-1">Observaciones</h3>
-                        <p className="text-[10px] font-medium text-black whitespace-pre-wrap leading-tight">{printingAudit.observaciones || 'Sin observaciones.'}</p>
-                      </div>
-                      <div className="w-40 text-right border-l border-gray-300 pl-4">
-                        <p className="text-[8px] font-black text-gray-500 uppercase tracking-widest mb-1">{template.metodoCalculo === 'Juicio Clínico' ? 'Diagnóstico' : 'Puntaje Total'}</p>
-                        <p className="text-xl font-black text-black leading-none">{printingAudit.puntaje} {template.metodoCalculo !== 'Juicio Clínico' && <span className="text-[10px]">({printingAudit.cumplimiento}%)</span>}</p>
-                        <p className="text-[9px] font-black text-gray-700 uppercase tracking-widest mt-1">{printingAudit.estado}</p>
-                      </div>
-                  </div>
-                  <div className="pt-6 flex justify-between px-8">
-                      <div className="text-center"><div className="w-32 border-b border-black mb-1"></div><p className="text-[9px] font-black uppercase text-black">{printingAudit.evaluador}</p><p className="text-[7px] font-bold text-gray-500 uppercase">Evaluador SGCC-SM</p></div>
-                      <div className="text-center"><div className="w-32 border-b border-black mb-1"></div><p className="text-[9px] font-black uppercase text-black">Firma Recepción</p><p className="text-[7px] font-bold text-gray-500 uppercase">{printingAudit.centro || 'Dispositivo'}</p></div>
-                  </div>
-               </div>
-            </div>
-          </div>
-        );
-      })()}
-
-      {/* MODAL DE DIRECTORIO */}
-      {isDirModalOpen && (
-        <div className={clsModBg}>
-          <div className="bg-white rounded-3xl shadow-2xl w-full max-w-sm flex flex-col overflow-hidden">
-            <div className="bg-blue-600 p-6 text-white flex justify-between items-center"><h3 className="font-black text-lg uppercase tracking-widest">{editingDirId ? 'Editar Contacto' : 'Nuevo Contacto'}</h3><button onClick={() => setIsDirModalOpen(false)} className="text-white/60 hover:text-white font-bold text-2xl">&times;</button></div>
-            <div className="p-6 space-y-4">
-              <div><label className={clsLbl}>Nombre</label><input type="text" value={dirForm.nombre || ''} onChange={e=>setDirForm({...dirForm, nombre: e.target.value})} className={clsInp} /></div>
-              <div><label className={clsLbl}>Institución</label><input type="text" value={dirForm.institucion || ''} onChange={e=>setDirForm({...dirForm, institucion: e.target.value})} className={clsInp} /></div>
-              <div><label className={clsLbl}>Cargo</label><input type="text" value={dirForm.cargo || ''} onChange={e=>setDirForm({...dirForm, cargo: e.target.value})} className={clsInp} /></div>
-              <div><label className={clsLbl}>Teléfono</label><input type="text" value={dirForm.telefono || ''} onChange={e=>setDirForm({...dirForm, telefono: e.target.value})} className={clsInp} /></div>
-              <div><label className={clsLbl}>Correo</label><input type="email" value={dirForm.correo || ''} onChange={e=>setDirForm({...dirForm, correo: e.target.value})} className={clsInp} /></div>
-            </div>
-            <div className="bg-slate-50 p-6 flex justify-end gap-3"><button onClick={() => setIsDirModalOpen(false)} className={clsBtnS}>Cancelar</button><button onClick={handleSaveDir} className={clsBtnP}>Guardar</button></div>
-          </div>
+      <ModalWrap isOpen={isDocModalOpen}>
+        <ModalHdr t={editingDocId ? 'Editar Protocolo' : 'Nuevo Protocolo'} onClose={()=>setIsDocModalOpen(false)} icon={FileText} />
+        <div className="flex bg-slate-50 border-b shrink-0 px-6">
+          <button onClick={() => setActiveDocModalTab('datos')} className={`px-6 py-4 text-[10px] font-black uppercase tracking-[0.2em] border-b-4 ${activeDocModalTab === 'datos' ? 'border-blue-600 text-blue-600 bg-white' : 'border-transparent text-slate-400'}`}>Datos</button>
+          <button onClick={() => setActiveDocModalTab('bitacora')} className={`px-6 py-4 text-[10px] font-black uppercase tracking-[0.2em] border-b-4 ${activeDocModalTab === 'bitacora' ? 'border-blue-600 text-blue-600 bg-white' : 'border-transparent text-slate-400'}`}>Tareas</button>
         </div>
-      )}
-
-      {/* MODAL DE USUARIOS */}
-      {isUserModalOpen && (
-        <div className={clsModBg}>
-          <div className="bg-white rounded-3xl shadow-2xl w-full max-w-lg flex flex-col overflow-hidden">
-            <div className="bg-slate-900 p-6 text-white flex justify-between items-center"><h3 className="font-black text-lg uppercase tracking-widest flex items-center gap-3"><UserPlus size={20}/> Credencial</h3><button onClick={() => setIsUserModalOpen(false)} className="text-slate-400 hover:text-white font-bold text-2xl">&times;</button></div>
-            <div className="p-6 space-y-4">
+        <div className="p-6 overflow-y-auto flex-1 bg-white space-y-6">
+          {activeDocModalTab === 'datos' && (
+            <div className="space-y-4">
+              <div><Lbl>Nombre</Lbl><Inp value={docForm.nombre} onChange={e=>setDocForm({...docForm, nombre: e.target.value})}/></div>
               <div className="grid grid-cols-2 gap-4">
-                <div><label className={clsLbl}>RUT</label><input type="text" value={userForm.rut} onChange={e=>setUserForm({...userForm, rut: e.target.value})} className={clsInp}/></div>
-                <div><label className={clsLbl}>Clave</label><input type="text" value={userForm.password} onChange={e=>setUserForm({...userForm, password: e.target.value})} className={clsInp}/></div>
+                <div><Lbl>Ámbito</Lbl><Inp list="ambitos" value={docForm.ambito} onChange={e=>setDocForm({...docForm, ambito: e.target.value})}/><datalist id="ambitos"><option value="Red Integral"/><option value="Hospitalario"/>{centros.map(c=><option key={c} value={c}/>)}</datalist></div>
+                <div><Lbl>Fase</Lbl><Sel value={docForm.fase} onChange={e=>setDocForm({...docForm, fase: e.target.value})}><option>Levantamiento</option><option>Validación Técnica</option><option>Difusión</option></Sel></div>
               </div>
-              <div><label className={clsLbl}>Nombre Completo</label><input type="text" value={userForm.nombre} onChange={e=>setUserForm({...userForm, nombre: e.target.value})} className={clsInp}/></div>
-              <div className="mt-4"><label className={clsLbl}>Rol</label><select value={userForm.rol} onChange={e=>setUserForm({...userForm, rol: e.target.value})} className={clsInp}><option>Usuario</option><option>Admin</option></select></div>
+              <div><Lbl>Avance: {docForm.avance}%</Lbl><input type="range" min="0" max="100" step="5" value={docForm.avance} onChange={e=>setDocForm({...docForm, avance: e.target.value})} className="w-full" /></div>
             </div>
-            <div className="bg-slate-50 p-6 flex justify-end gap-3"><button onClick={() => setIsUserModalOpen(false)} className={clsBtnS}>Cancelar</button><button onClick={handleSaveUser} className="bg-indigo-600 text-white px-6 py-3 rounded-xl text-[10px] font-black uppercase tracking-widest hover:bg-indigo-700">Guardar</button></div>
-          </div>
+          )}
+          {activeDocModalTab === 'bitacora' && (
+             <div className="space-y-4">
+                <div className="bg-slate-50 p-4 rounded-xl grid grid-cols-2 gap-3"><Inp value={newDocBitacoraEntry.responsable} onChange={e=>setNewDocBitacoraEntry({...newDocBitacoraEntry, responsable: e.target.value})} placeholder="Responsable" /><Inp type="date" value={newDocBitacoraEntry.fechaCumplimiento} onChange={e=>setNewDocBitacoraEntry({...newDocBitacoraEntry, fechaCumplimiento: e.target.value})} /><Inp value={newDocBitacoraEntry.descripcion} onChange={e=>setNewDocBitacoraEntry({...newDocBitacoraEntry, descripcion: e.target.value})} placeholder="Tarea..." className="col-span-2"/><button onClick={handleAddDocBitacora} className={clsBtnP + " col-span-2"}>Añadir Tarea</button></div>
+                {docForm.bitacora.map(b => <div key={b.id} className="p-4 border rounded-xl flex justify-between"><p className="text-sm font-bold">{b.descripcion}</p><button onClick={() => setDocForm({ ...docForm, bitacora: docForm.bitacora.filter(x => x.id !== b.id) })} className="text-red-400"><Trash2 size={16}/></button></div>)}
+             </div>
+          )}
         </div>
-      )}
-      
-      {/* MODAL CLAVE */}
-      {isProfileModalOpen && (
-        <div className={clsModBg}>
-          <div className="bg-white rounded-3xl shadow-2xl w-full max-w-sm flex flex-col overflow-hidden">
-            <div className="bg-blue-600 p-6 text-white flex justify-between items-center"><h3 className="font-black text-lg uppercase"><Key size={20} className="inline mr-2"/> Seguridad</h3><button onClick={() => setIsProfileModalOpen(false)} className="text-white/60 hover:text-white font-bold text-2xl">&times;</button></div>
-            <div className="p-6 space-y-4">
-              <div><label className={clsLbl}>Clave Actual</label><input type="password" value={passwordForm.current} onChange={e=>setPasswordForm({...passwordForm, current: e.target.value})} className={clsInp}/></div>
-              <div><label className={clsLbl}>Nueva Clave</label><input type="password" value={passwordForm.new} onChange={e=>setPasswordForm({...passwordForm, new: e.target.value})} className={clsInp}/></div>
-              <div><label className={clsLbl}>Repetir Clave</label><input type="password" value={passwordForm.confirm} onChange={e=>setPasswordForm({...passwordForm, confirm: e.target.value})} className={clsInp}/></div>
-            </div>
-            <div className="bg-slate-50 p-6 flex justify-end gap-3"><button onClick={() => setIsProfileModalOpen(false)} className={clsBtnS}>Cancelar</button><button onClick={handleUpdatePassword} className={clsBtnP}>Actualizar</button></div>
-          </div>
-        </div>
-      )}
+        <ModalFtr onCancel={()=>setIsDocModalOpen(false)} onSave={handleSaveDoc} />
+      </ModalWrap>
 
-      {/* Estilos Globales, Scrollbars y CSS de Impresión Extrema */}
+      <ModalWrap isOpen={isTemplateModalOpen} mw="max-w-5xl">
+        <ModalHdr t={editingTemplateId ? 'Editar Formulario' : 'Diseñador de Pautas'} onClose={()=>setIsTemplateModalOpen(false)} icon={Settings} />
+        <div className="p-6 md:p-8 overflow-y-auto flex-1 bg-slate-50 grid grid-cols-1 lg:grid-cols-5 gap-8">
+            <div className="lg:col-span-2 space-y-6">
+              <div className="bg-indigo-50 p-6 rounded-2xl border border-indigo-100 text-center">
+                <h4 className="text-[11px] font-black text-indigo-900 uppercase tracking-widest mb-3"><Wand2 size={16} className="inline mr-2"/> Carga Automática IA</h4>
+                <label className="flex items-center justify-center w-full h-12 border-2 border-indigo-300 border-dashed rounded-xl cursor-pointer bg-white mb-2"><span className="text-[9px] font-black uppercase text-indigo-700">Subir PDF</span><input type="file" className="hidden" accept=".pdf" onChange={handlePdfUploadForAI} /></label>
+                <Txt value={rawTextForAI} onChange={e=>setRawTextForAI(e.target.value)} className="mb-2 text-xs min-h-[60px]" placeholder="O pega el texto..."/>
+                <button onClick={handleProcessRawTextForAI} disabled={!rawTextForAI.trim() || isDigitizing} className="w-full bg-indigo-600 text-white py-3 rounded-xl text-[10px] font-black uppercase">{isDigitizing ? 'Procesando...' : 'Generar'}</button>
+              </div>
+              <div className="bg-white p-5 border border-slate-200 rounded-2xl">
+                <Lbl>Nombre del Instrumento</Lbl><Inp value={templateForm.nombre} onChange={e=>setTemplateForm({...templateForm, nombre: e.target.value})}/>
+                <Lbl className="mt-4">Método de Evaluación</Lbl>
+                <Sel value={templateForm.metodoCalculo || 'Suma Automática'} onChange={e=>setTemplateForm({...templateForm, metodoCalculo: e.target.value})}>
+                  <option value="Suma Automática">Suma Automática</option><option value="Juicio Clínico">Juicio Clínico</option>
+                </Sel>
+                {templateForm.metodoCalculo === 'Juicio Clínico' && (
+                  <div className="mt-3"><Lbl className="text-amber-600">Instrucciones</Lbl><Txt value={templateForm.instruccionesDiagnostico || ''} onChange={e=>setTemplateForm({...templateForm, instruccionesDiagnostico: e.target.value})} className="bg-amber-50 border-amber-200"/></div>
+                )}
+              </div>
+            </div>
+            <div className="lg:col-span-3 flex flex-col gap-6">
+              <div className="bg-white p-5 border border-slate-200 rounded-2xl">
+                <Lbl className="bg-slate-50 p-2 rounded-lg">1. Encabezados</Lbl>
+                {templateForm.encabezados.map((h, i) => (
+                  <div key={i} className="flex gap-2 items-center mb-2">
+                    <Inp value={h.label} onChange={e=>{const n=[...templateForm.encabezados]; n[i].label=e.target.value; setTemplateForm({...templateForm, encabezados: n});}} placeholder="Nombre Campo"/>
+                    <Sel value={h.type} onChange={e=>{const n=[...templateForm.encabezados]; n[i].type=e.target.value; setTemplateForm({...templateForm, encabezados: n});}}><option value="text">Texto</option><option value="date">Fecha</option></Sel>
+                    <button onClick={()=>{const n=[...templateForm.encabezados]; n.splice(i,1); setTemplateForm({...templateForm, encabezados: n});}} className="p-3 bg-red-50 text-red-500 rounded-xl"><Trash2 size={16}/></button>
+                  </div>
+                ))}
+                <button onClick={()=>setTemplateForm({...templateForm, encabezados: [...templateForm.encabezados, {id: `enc_${Date.now()}`, label: '', type: 'text'}]})} className="text-[9px] text-slate-500 font-black uppercase mt-2"><Plus size={12} className="inline"/> Campo Extra</button>
+              </div>
+              <div className="bg-white p-5 border border-slate-200 rounded-2xl flex-1">
+                <Lbl className="bg-slate-50 p-2 rounded-lg">2. Criterios</Lbl>
+                <div className="max-h-[300px] overflow-y-auto pr-2 space-y-3">
+                  {templateForm.criterios.map((c, i) => (
+                    <div key={i} className="p-4 border-2 border-slate-100 rounded-xl bg-slate-50 relative group">
+                      <button onClick={()=>{const newC=[...templateForm.criterios]; newC.splice(i,1); setTemplateForm({...templateForm, criterios: newC});}} className="absolute top-2 right-2 text-slate-300 hover:text-red-500"><Trash2 size={14}/></button>
+                      <Txt rows="2" value={c.pregunta} onChange={e=>{const newC=[...templateForm.criterios]; newC[i].pregunta=e.target.value; setTemplateForm({...templateForm, criterios: newC});}} className="mb-2" placeholder="Criterio a evaluar..."/>
+                      <Inp value={c.opciones} onChange={e=>{const newC=[...templateForm.criterios]; newC[i].opciones=e.target.value; setTemplateForm({...templateForm, criterios: newC});}} placeholder="Ej: SÍ=1, NO=0"/>
+                    </div>
+                  ))}
+                </div>
+                <button onClick={()=>setTemplateForm({...templateForm, criterios: [...templateForm.criterios, {id: `crit_${Date.now()}`, pregunta: '', opciones: 'SÍ=1, NO=0'}]})} className="text-[10px] text-indigo-600 font-black uppercase mt-4"><Plus size={14} className="inline"/> Fila Manual</button>
+              </div>
+            </div>
+        </div>
+        <ModalFtr onCancel={()=>setIsTemplateModalOpen(false)} onSave={handleSaveTemplate} />
+      </ModalWrap>
+
+      <ModalWrap isOpen={isAuditModalOpen}>
+         <ModalHdr t="Aplicar Pauta" onClose={()=>setIsAuditModalOpen(false)} icon={ClipboardCheck} />
+         <div className="p-6 md:p-8 overflow-y-auto space-y-6 flex-1 bg-slate-50">
+            <div className="bg-white p-5 rounded-2xl border">
+              <Lbl>Instrumento a Evaluar</Lbl>
+              <Sel value={auditForm.templateId} onChange={e=>setAuditForm({...auditForm, templateId: e.target.value, answers: {}, headerAnswers: {}})}>
+                <option value="">Seleccione formulario...</option>
+                {auditTemplates.map(t => <option key={t.id} value={t.id}>{t.nombre}</option>)}
+              </Sel>
+            </div>
+            {auditForm.templateId && (() => {
+              const template = auditTemplates.find(t => t.id === auditForm.templateId);
+              if (!template) return null;
+              return (
+                <div className="space-y-6">
+                   {template.encabezados?.length > 0 && (
+                     <div className="bg-white p-6 rounded-2xl border shadow-sm">
+                       <h4 className={clsLbl + " border-b pb-2"}>Identificación</h4>
+                       <div className="grid grid-cols-2 gap-4">
+                         {template.encabezados.map(h => (
+                           <div key={h.id}>
+                              <Lbl>{h.label}</Lbl>
+                              {h.label.toLowerCase().includes('centro') || h.label.toLowerCase().includes('dispositivo') ? (
+                                 <Sel value={auditForm.headerAnswers[h.id] || ''} onChange={e=>setAuditForm({...auditForm, centro: e.target.value, headerAnswers: {...auditForm.headerAnswers, [h.id]: e.target.value}})}><option value="">Centro...</option>{centros.map(c=><option key={c} value={c}>{c}</option>)}</Sel>
+                              ) : (
+                                 <Inp type={h.type} value={auditForm.headerAnswers[h.id] || ''} onChange={e=>setAuditForm({...auditForm, headerAnswers: {...auditForm.headerAnswers, [h.id]: e.target.value}})} />
+                              )}
+                           </div>
+                         ))}
+                       </div>
+                     </div>
+                   )}
+                   <div className="bg-white p-6 rounded-2xl border shadow-sm">
+                     <h4 className={clsLbl + " border-b pb-2"}>Desarrollo</h4>
+                     <div className="space-y-3">
+                       {template.criterios.map((c, idx) => {
+                         const preg = typeof c === 'string' ? c : c.pregunta;
+                         const cId = typeof c === 'string' ? idx : c.id;
+                         const ops = parseOpciones(typeof c === 'string' ? 'SÍ=1, NO=0' : c.opciones);
+                         const cur = auditForm.answers[cId];
+                         return (
+                           <div key={cId} className="p-4 bg-slate-50 rounded-xl border">
+                             <span className="font-bold text-sm">{idx + 1}. {preg}</span>
+                             <div className="flex flex-wrap gap-2 mt-2">
+                               {ops.map((opt, i) => {
+                                 const sel = cur?.label === opt.label;
+                                 return (
+                                   <label key={i} className={`px-4 py-2 rounded-xl cursor-pointer font-black text-[10px] uppercase border-2 ${sel ? 'bg-indigo-100 text-indigo-700 border-indigo-300' : 'bg-white text-slate-500 border-transparent hover:bg-slate-100'}`}>
+                                     <input type="radio" checked={sel} onChange={() => setAuditForm({...auditForm, answers: {...auditForm.answers, [cId]: opt}})} className="hidden" />{opt.label}
+                                   </label>
+                                 )
+                               })}
+                             </div>
+                           </div>
+                         );
+                       })}
+                     </div>
+                   </div>
+                   {template.metodoCalculo === 'Juicio Clínico' && (
+                     <div className="bg-amber-50 p-6 rounded-2xl border border-amber-200">
+                       <Lbl className="text-amber-800">Resultado Final</Lbl>
+                       <p className="text-xs text-amber-700 mb-4">{template.instruccionesDiagnostico}</p>
+                       <Sel value={auditForm.estadoManual || ''} onChange={e=>setAuditForm({...auditForm, estadoManual: e.target.value})} className="border-amber-300 text-amber-900">
+                          <option value="">Seleccione diagnóstico...</option><option value="Riesgo Bajo">Riesgo Bajo</option><option value="Riesgo Medio">Riesgo Medio</option><option value="Riesgo Alto">Riesgo Alto</option><option value="Óptimo">Óptimo</option><option value="Requiere Observación">Requiere Observación</option>
+                       </Sel>
+                     </div>
+                   )}
+                </div>
+              );
+            })()}
+         </div>
+         <ModalFtr onCancel={()=>setIsAuditModalOpen(false)} onSave={handleSaveAudit} />
+      </ModalWrap>
+
+      <ModalWrap isOpen={isDirModalOpen} mw="max-w-sm">
+        <ModalHdr t={editingDirId ? 'Editar Contacto' : 'Nuevo Contacto'} onClose={()=>setIsDirModalOpen(false)} />
+        <div className="p-6 space-y-4">
+          <div><Lbl>Nombre</Lbl><Inp value={dirForm.nombre || ''} onChange={e=>setDirForm({...dirForm, nombre: e.target.value})} /></div>
+          <div><Lbl>Institución</Lbl><Inp value={dirForm.institucion || ''} onChange={e=>setDirForm({...dirForm, institucion: e.target.value})} /></div>
+          <div><Lbl>Cargo</Lbl><Inp value={dirForm.cargo || ''} onChange={e=>setDirForm({...dirForm, cargo: e.target.value})} /></div>
+          <div><Lbl>Teléfono</Lbl><Inp value={dirForm.telefono || ''} onChange={e=>setDirForm({...dirForm, telefono: e.target.value})} /></div>
+          <div><Lbl>Correo</Lbl><Inp type="email" value={dirForm.correo || ''} onChange={e=>setDirForm({...dirForm, correo: e.target.value})} /></div>
+        </div>
+        <ModalFtr onCancel={()=>setIsDirModalOpen(false)} onSave={handleSaveDir} />
+      </ModalWrap>
+
+      <ModalWrap isOpen={isUserModalOpen} mw="max-w-lg">
+        <ModalHdr t={editingUserId ? 'Editar Credencial' : 'Nueva Credencial'} onClose={()=>setIsUserModalOpen(false)} icon={UserPlus}/>
+        <div className="p-6 space-y-4">
+          <div className="grid grid-cols-2 gap-4">
+            <div><Lbl>RUT</Lbl><Inp value={userForm.rut} onChange={e=>setUserForm({...userForm, rut: e.target.value})}/></div>
+            <div><Lbl>Clave</Lbl><Inp value={userForm.password} onChange={e=>setUserForm({...userForm, password: e.target.value})}/></div>
+          </div>
+          <div className="grid grid-cols-4 gap-4">
+             <div className="col-span-3"><Lbl>Nombre</Lbl><Inp value={userForm.nombre} onChange={e=>setUserForm({...userForm, nombre: e.target.value})}/></div>
+             <div className="col-span-1"><Lbl>Ini</Lbl><Inp value={userForm.iniciales} onChange={e=>setUserForm({...userForm, iniciales: e.target.value.toUpperCase()})} maxLength={3}/></div>
+          </div>
+          <div><Lbl>Rol</Lbl><Sel value={userForm.rol} onChange={e=>setUserForm({...userForm, rol: e.target.value})}><option>Usuario</option><option>Admin</option></Sel></div>
+        </div>
+        <ModalFtr onCancel={()=>setIsUserModalOpen(false)} onSave={handleSaveUser} />
+      </ModalWrap>
+      
+      <ModalWrap isOpen={isProfileModalOpen} mw="max-w-sm">
+        <ModalHdr t="Seguridad" onClose={()=>setIsProfileModalOpen(false)} icon={Key}/>
+        <div className="p-6 space-y-4">
+          <div><Lbl>Clave Actual</Lbl><Inp type="password" value={passwordForm.current} onChange={e=>setPasswordForm({...passwordForm, current: e.target.value})}/></div>
+          <div><Lbl>Nueva Clave</Lbl><Inp type="password" value={passwordForm.new} onChange={e=>setPasswordForm({...passwordForm, new: e.target.value})}/></div>
+          <div><Lbl>Repetir Clave</Lbl><Inp type="password" value={passwordForm.confirm} onChange={e=>setPasswordForm({...passwordForm, confirm: e.target.value})}/></div>
+        </div>
+        <ModalFtr onCancel={()=>setIsProfileModalOpen(false)} onSave={handleUpdatePassword} saveTxt="Actualizar" />
+      </ModalWrap>
+
       <style dangerouslySetInnerHTML={{__html: `
         .fade-in { animation: fadeIn 0.4s ease-out; }
         .animate-in { animation: slideUp 0.5s cubic-bezier(0.16, 1, 0.3, 1); }
@@ -1325,12 +1165,7 @@ export default function App() {
         
         /* BLOQUE DE IMPRESIÓN COMPACTA */
         @media print {
-          body, html { 
-            background-color: white !important; 
-            margin: 0 !important; 
-            padding: 0 !important;
-            font-size: 10px !important;
-          }
+          body, html { background-color: white !important; margin: 0 !important; padding: 0 !important; font-size: 10px !important; }
           .no-print { display: none !important; }
           * { -webkit-print-color-adjust: exact !important; print-color-adjust: exact !important; }
           .break-inside-avoid { break-inside: avoid !important; page-break-inside: avoid !important; }
@@ -1341,7 +1176,7 @@ export default function App() {
 }
 
 const StatusBadge = ({ status }) => {
-  if(status === 'Alerta') return <span className="px-3 py-1.5 bg-red-100 text-red-700 rounded-lg text-[9px] font-black uppercase tracking-[0.2em] flex items-center gap-1.5 animate-pulse w-fit"><AlertTriangle size={10} /> Alerta</span>;
-  if(status === 'Pendiente') return <span className="px-3 py-1.5 bg-amber-100 text-amber-700 rounded-lg text-[9px] font-black uppercase tracking-[0.2em] flex items-center gap-1.5 w-fit"><Clock size={10} /> Tránsito</span>;
-  return <span className="px-3 py-1.5 bg-emerald-100 text-emerald-700 rounded-lg text-[9px] font-black uppercase tracking-[0.2em] flex items-center gap-1.5 w-fit"><CheckCircle size={10} /> Cerrado</span>;
+  if(status === 'Alerta') return <span className="px-3 py-1.5 bg-red-100 text-red-700 rounded-lg text-[9px] font-black uppercase flex items-center gap-1.5 animate-pulse w-fit"><AlertTriangle size={10} /> Alerta</span>;
+  if(status === 'Pendiente') return <span className="px-3 py-1.5 bg-amber-100 text-amber-700 rounded-lg text-[9px] font-black uppercase flex items-center gap-1.5 w-fit"><Clock size={10} /> Tránsito</span>;
+  return <span className="px-3 py-1.5 bg-emerald-100 text-emerald-700 rounded-lg text-[9px] font-black uppercase flex items-center gap-1.5 w-fit"><CheckCircle size={10} /> Cerrado</span>;
 };
