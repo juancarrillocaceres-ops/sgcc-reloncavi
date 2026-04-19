@@ -457,7 +457,7 @@ export default function App() {
       const url = await getDownloadURL(storageRef);
       setDocForm(prev => ({ 
         ...prev, 
-        archivos: [{ id: Date.now().toString(), nombre: file.name, size: (file.size / 1024 / 1024).toFixed(2) + ' MB', fecha: new Date().toISOString().split('T')[0], url: url }, ...safeArr(prev.archivos)] 
+        archivos: [{ id: Date.now().toString(), nombre: file.name, size: (file.size / 1024 / 1024).toFixed(2) + ' MB', fecha: new DatetoISOString().split('T')[0], url: url }, ...safeArr(prev.archivos)] 
       }));
     } catch (err) {
       console.error(err);
@@ -1097,7 +1097,17 @@ export default function App() {
             <div className="space-y-4">
               <div><Lbl>Nombre</Lbl><Inp value={docForm.nombre} onChange={e=>setDocForm({...docForm, nombre: e.target.value})}/></div>
               <div className="grid grid-cols-2 gap-4">
-                <div><Lbl>Ámbito</Lbl><Inp list="ambitos-list" value={docForm.ambito} onChange={e=>setDocForm({...docForm, ambito: e.target.value})}/></div>
+                <div>
+                  <Lbl>Ámbito</Lbl>
+                  <Inp list="ambitos-list" value={docForm.ambito} onChange={e=>setDocForm({...docForm, ambito: e.target.value})} placeholder="Escriba o seleccione..." />
+                  <datalist id="ambitos-list">
+                    <option value="APS"/>
+                    <option value="Atención Cerrada"/>
+                    <option value="Red Integral"/>
+                    <option value="Hospitalario"/>
+                    {safeArr(centros).map(c=><option key={c} value={c}/>)}
+                  </datalist>
+                </div>
                 <div><Lbl>Fase</Lbl><Sel value={docForm.fase} onChange={e=>setDocForm({...docForm, fase: e.target.value})}><option>Levantamiento</option><option>Validación Técnica</option><option>Resolución Exenta</option><option>Difusión</option></Sel></div>
               </div>
               <div><Lbl>Notas y Observaciones Generales</Lbl><Txt rows="3" value={docForm.notas || ''} onChange={e=>setDocForm({...docForm, notas: e.target.value})} placeholder="Apuntes o ideas principales..." /></div>
