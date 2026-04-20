@@ -5,12 +5,12 @@ import { getFirestore, collection, onSnapshot, doc, setDoc, deleteDoc } from 'fi
 import { getStorage, ref, uploadBytes, getDownloadURL } from 'firebase/storage';
 import { 
   LayoutDashboard, Users, FileText, AlertTriangle, CheckCircle, Clock, Plus, Activity, LogOut,
-  Bell, Copy, Loader2, Edit2, Trash2, ListTodo, MessageSquare, CheckSquare, Square, Calendar,
+  Bell, Copy, Edit2, Trash2, ListTodo, MessageSquare, CheckSquare, Square, Calendar,
   UploadCloud, Paperclip, File as FileIcon, Lock, User, ClipboardCheck, BookOpen, Download,
-  Wand2, Settings, UserPlus, Shield, Key, Timer, TrendingUp, BarChart3, Target, Printer, ExternalLink,
-  BrainCircuit, Sparkles, ShieldAlert
+  Settings, UserPlus, Shield, Key, Timer, TrendingUp, BarChart3, Target, Printer, ExternalLink
 } from 'lucide-react';
 
+// === CONFIGURACIÓN DE FIREBASE ===
 const firebaseConfig = typeof __firebase_config !== 'undefined' ? JSON.parse(__firebase_config) : {
   apiKey: "AIzaSyADlW5WRPWOokJQbVFUF9UuYRxLXa4-MqU",
   authDomain: "sgcc-reloncavi.firebaseapp.com",
@@ -60,52 +60,6 @@ const parseOpciones = (str) => {
   }).filter(o => o.label !== '');
 };
 
-const generateTextWithRetry = async (apiKey, prompt, sys = "", inlineData = null) => {
-  if (!apiKey) throw new Error("Falta Clave API");
-  const parts = [{ text: prompt }];
-  
-  if (inlineData) {
-    let mime = inlineData.mimeType;
-    // Forzamos a reconocer PDF para evitar errores de tipo en proyectos Cloud/Blaze
-    if (!mime || mime === 'application/octet-stream' || mime === '') {
-        mime = 'application/pdf'; 
-    }
-    parts.push({ inlineData: { mimeType: mime, data: inlineData.data } });
-  }
-
-  const payload = { contents: [{ parts }] };
-  if (sys) payload.systemInstruction = { parts: [{ text: sys }] };
-  
-  for (let i = 0; i < 5; i++) {
-    try {
-      // USAMOS GEMINI 1.5 PRO: El modelo oficial más robusto e inteligente, siempre disponible en Google Cloud.
-      const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-pro:generateContent?key=${apiKey}`, { 
-        method: "POST", 
-        headers: { "Content-Type": "application/json" }, 
-        body: JSON.stringify(payload) 
-      });
-
-      if (!res.ok) {
-        if (res.status === 429) {
-            throw new Error("Límite de consultas excedido (Error 429). Por favor, espera 1 minuto.");
-        }
-        if (res.status === 404) {
-            throw new Error("Modelo no encontrado (Error 404). Revisa si habilitaste la Generative Language API en Google Cloud.");
-        }
-        throw new Error(`Error HTTP: ${res.status}`);
-      }
-      
-      const data = await res.json();
-      if (data.candidates?.[0]?.content?.parts?.[0]?.text) return data.candidates[0].content.parts[0].text;
-      throw new Error("Respuesta vacía de la IA.");
-    } catch (e) {
-      if (e.message.includes('429') || e.message.includes('404')) throw e;
-      if (i === 4) throw e;
-      await new Promise(r => setTimeout(r, [1000, 2000, 4000, 8000, 16000][i]));
-    }
-  }
-};
-
 // --- COMPONENTES UI REUTILIZABLES ---
 const clsInp = "w-full border-2 border-slate-200 p-3 rounded-xl text-sm font-bold outline-none focus:border-blue-500 bg-white shadow-sm transition-colors";
 const clsLbl = "block text-[10px] font-black text-slate-500 uppercase tracking-widest mb-1.5 mt-2";
@@ -138,6 +92,7 @@ const ModalWrap = ({ isOpen, children, mw }) => isOpen ? (
 ) : null;
 
 export default function App() {
+  // --- ESTADOS DE LA PLATAFORMA ---
   const [firebaseUser, setFirebaseUser] = useState(null);
   const [currentUser, setCurrentUser] = useState(null);
   const [loginData, setLoginData] = useState({ rut: '', password: '' });
@@ -153,21 +108,18 @@ export default function App() {
   const [directory, setDirectory] = useState([]);
   const [users, setUsers] = useState([]);
   
-  const [appConfig, setAppConfig] = useState({ targetDays: 7, apiKey: '', plazos: {} });
-  const [apiConfigKey, setApiConfigKey] = useState('');
+  const [appConfig, setAppConfig] = useState({ targetDays: 7, plazos: {} });
   const [newCentroName, setNewCentroName] = useState('');
   const [plazoCentroInput, setPlazoCentroInput] = useState('');
   const [plazoDaysInput, setPlazoDaysInput] = useState('');
 
+  // ESTADOS DE FORMULARIOS
   const defaultCaseState = { rut: '', nombre: '', edad: '', origen: '', destino: '', prioridad: 'Media', estado: 'Pendiente', fechaEgreso: new Date().toISOString().split('T')[0], fechaRecepcionRed: '', fechaIngresoEfectivo: '', tutor: { nombre: '', relacion: '', telefono: '' }, referentes: [], bitacora: [], archivos: [], epicrisis: '' };
   const [editingCaseId, setEditingCaseId] = useState(null);
   const [caseForm, setCaseForm] = useState(defaultCaseState);
   const [activeModalTab, setActiveModalTab] = useState('datos');
   const [isCaseModalOpen, setIsCaseModalOpen] = useState(false);
-  
-  // MEJORA PRO: Estado con Barrera incluida
   const [newBitacoraEntry, setNewBitacoraEntry] = useState({ tipo: 'Nota Adm.', descripcion: '', responsable: '', fechaCumplimiento: '', barrera: 'Ninguna' });
-  const [newCaseLink, setNewCaseLink] = useState({ nombre: '', url: '' }); 
 
   const defaultDocState = { nombre: '', ambito: 'Red Integral', fase: 'Levantamiento', avance: 0, prioridad: 'Media', fechaResolucion: '', notas: '', bitacora: [], archivos: [], archivosOficiales: [] };
   const [isDocModalOpen, setIsDocModalOpen] = useState(false);
@@ -175,29 +127,21 @@ export default function App() {
   const [docForm, setDocForm] = useState(defaultDocState);
   const [activeDocModalTab, setActiveDocModalTab] = useState('datos');
   const [newDocBitacoraEntry, setNewDocBitacoraEntry] = useState({ tipo: 'Tarea', descripcion: '', responsable: '', fechaCumplimiento: '' });
-  const [newDocLink, setNewDocLink] = useState({ nombre: '', url: '' }); 
 
   const [isAuditModalOpen, setIsAuditModalOpen] = useState(false);
   const [isTemplateModalOpen, setIsTemplateModalOpen] = useState(false);
   const [editingTemplateId, setEditingTemplateId] = useState(null);
   const [auditForm, setAuditForm] = useState({ centro: '', templateId: '', headerAnswers: {}, answers: {}, tipo: 'Auditoría', observaciones: '', fecha: new Date().toISOString().split('T')[0], estadoManual: '' });
   const [templateForm, setTemplateForm] = useState({ nombre: '', metodoCalculo: 'Suma Automática', instruccionesDiagnostico: '', encabezados: [{ id: 'enc_1', label: 'Centro Evaluado', type: 'text' }, { id: 'enc_2', label: 'Fecha', type: 'date' }], criterios: [{ id: 'crit_1', pregunta: '', opciones: 'SÍ=1, NO=0' }], rangos: [], tipo: 'Ambos' });
-  
   const [printingAudit, setPrintingAudit] = useState(null);
-  const [rawTextForAI, setRawTextForAI] = useState('');
-  
-  // ESTADOS IA PRO
-  const [aiFileContext, setAiFileContext] = useState(null);
-  const [aiPrompt, setAiPrompt] = useState('');
-  const [aiResponse, setAiResponse] = useState('');
-  const [isAnalyzingFile, setIsAnalyzingFile] = useState(false);
 
+  // ESTADOS DE FILTROS Y BÚSQUEDA
   const [centroFilterAuditorias, setCentroFilterAuditorias] = useState('Todos');
   const [centroFilterConsultorias, setCentroFilterConsultorias] = useState('Todos');
   const [caseFilterCentro, setCaseFilterCentro] = useState('Todos');
   const [caseSearch, setCaseSearch] = useState('');
   
-  const [isDigitizing, setIsDigitizing] = useState(false);
+  // ESTADOS DE CARGA DE ARCHIVOS
   const [isUploadingCaseFile, setIsUploadingCaseFile] = useState(false);
   const [isUploadingDocFile, setIsUploadingDocFile] = useState(false);
   
@@ -214,11 +158,7 @@ export default function App() {
   const [passwordForm, setPasswordForm] = useState({ current: '', new: '', confirm: '' });
   const [isNotificationsOpen, setIsNotificationsOpen] = useState(false);
 
-  const [isGeneratingReport, setIsGeneratingReport] = useState(false);
-  const [reportContent, setReportContent] = useState('');
-  const [isGeneratingCaseSummary, setIsGeneratingCaseSummary] = useState(false);
-  const [caseSummary, setCaseSummary] = useState('');
-
+  // --- EFECTOS Y CONEXIÓN A FIREBASE ---
   useEffect(() => {
     const initAuth = async () => {
       try {
@@ -252,7 +192,7 @@ export default function App() {
     const unsubUsers = onSnapshot(collection(db, 'artifacts', appId, 'public', 'data', 'users'), snap => setUsers(safeArr(snap.docs.map(d => d.data()))), errH);
     const unsubCentros = onSnapshot(doc(db, 'artifacts', appId, 'public', 'data', 'settings', 'centros'), snap => { if (snap.exists() && safeArr(snap.data().list).length > 0) setCentros(snap.data().list); }, errH);
     const unsubConfig = onSnapshot(doc(db, 'artifacts', appId, 'public', 'data', 'settings', 'config'), snap => { 
-      if (snap.exists()) { const data = snap.data(); setAppConfig({ targetDays: 7, plazos: {}, ...data }); if (data?.apiKey) setApiConfigKey(data.apiKey); } 
+      if (snap.exists()) { const data = snap.data(); setAppConfig({ targetDays: 7, plazos: {}, ...data }); } 
     }, errH);
 
     return () => { unsubCases(); unsubDocs(); unsubAudits(); unsubTemplates(); unsubDir(); unsubUsers(); unsubCentros(); unsubConfig(); };
@@ -261,6 +201,7 @@ export default function App() {
   const saveToCloud = async (coll, id, data) => { if (firebaseUser) await setDoc(doc(db, 'artifacts', appId, 'public', 'data', coll, id.toString()), data); };
   const deleteFromCloud = async (coll, id) => { if (firebaseUser) await deleteDoc(doc(db, 'artifacts', appId, 'public', 'data', coll, id.toString())); };
 
+  // --- LÓGICA DE DATOS ---
   const getTargetDaysForCase = (destino) => {
     if (!destino) return Number(appConfig?.targetDays || 7);
     if (appConfig?.plazos && appConfig.plazos[destino] !== undefined) return Number(appConfig.plazos[destino]);
@@ -349,7 +290,6 @@ export default function App() {
 
   const handleExportCSV = () => {
     const BOM = '\uFEFF';
-    // MEJORA PRO: Inclusión de columna Barrera Detectada
     const headers = ['ID_Seguimiento', 'RUT', 'Paciente', 'Edad', 'Origen', 'Destino', 'Estado', 'Fecha_Egreso', 'Fecha_Recepcion', 'Fecha_Ingreso_Efectivo', 'Plazo_Meta_Dias', 'Brecha_Dias', 'Ultimo_Hito_Fecha', 'Ultimo_Hito_Tipo', 'Responsable_Hito', 'Barrera_Detectada'];
     const rows = filteredCases.map(c => {
        const target = getTargetDaysForCase(c.destino);
@@ -360,10 +300,8 @@ export default function App() {
     const csvContent = BOM + [headers.join(';'), ...rows.map(r => r.join(';'))].join('\n');
     const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
     const link = document.createElement("a");
-    link.href = URL.createObjectURL(blob); link.download = `Reporte_Red_PRO_${new Date().toISOString().split('T')[0]}.csv`; link.click();
+    link.href = URL.createObjectURL(blob); link.download = `Reporte_Red_Estructural_${new Date().toISOString().split('T')[0]}.csv`; link.click();
   };
-
-  const copyToClipboard = (text) => { navigator.clipboard.writeText(text); alert("Copiado al portapapeles"); };
 
   const handleWipeDirectory = async () => {
     if(window.confirm('⚠️ ¿Estás seguro de eliminar TODO el directorio?')) {
@@ -372,103 +310,17 @@ export default function App() {
     }
   };
 
-  // --- MEJORA PRO: CHAT IA CON DOCUMENTOS ---
-  const handleAskAiAboutFile = async () => {
-    if (!appConfig.apiKey) return alert("Falta Clave API de IA en la Configuración.");
-    if (!aiPrompt.trim()) return;
-    setIsAnalyzingFile(true); setAiResponse('');
-    try {
-      const res = await fetch(aiFileContext.url);
-      if (!res.ok) throw new Error("Acceso bloqueado por seguridad del servidor (CORS).");
-      const blob = await res.blob();
-      const reader = new FileReader();
-      reader.readAsDataURL(blob);
-      reader.onloadend = async () => {
-        try {
-          const result = await generateTextWithRetry(
-            appConfig.apiKey, 
-            `${aiPrompt}\n\n[Analiza este documento: ${aiFileContext.nombre}]`, 
-            "Eres un analista clínico experto. Responde basándote estrictamente en el PDF proporcionado.", 
-            { mimeType: 'application/pdf', data: reader.result.split(',')[1] }
-          );
-          setAiResponse(result);
-        } catch (err) { setAiResponse(`⚠️ Error IA: ${err.message}`); }
-        setIsAnalyzingFile(false);
-      };
-    } catch (e) {
-      setAiResponse(`⚠️ Error: ${e.message}. Asegúrate de habilitar CORS en tu consola de Google Cloud.`);
-      setIsAnalyzingFile(false);
-    }
-  };
-
-  // --- IA Y GENERACIÓN ---
-  const extractFormFromAI = async (prompt, inlineData = null) => {
-    if (!appConfig.apiKey) return alert("Falta configurar la Clave API de IA en Configuración.");
-    setIsDigitizing(true);
-    const fullPrompt = `${prompt}\n\nERES UN ANALISTA CLÍNICO. Analiza el documento y devuelve ÚNICAMENTE un objeto JSON válido con este formato exacto:\n{ \n  "nombre": "TÍTULO COMPLETO DEL DOCUMENTO", \n  "metodoCalculo": "Elige 'Suma Automática' si se calcula sumando puntos, o 'Juicio Clínico' si requiere interpretación del profesional o es un árbol de decisión", \n  "instruccionesDiagnostico": "Si elegiste Juicio Clínico, redacta cómo el evaluador debe interpretar las respuestas para dar el diagnóstico", \n  "encabezados": [ {"id": "enc_1", "label": "Nombre del campo (Ej: Servicio, Fecha)", "type": "text"} ], \n  "criterios": [ {"id": "crit_1", "pregunta": "Criterio", "opciones": "Estructura opciones con puntaje numérico. Ej: SÍ=1, NO=0. O escala: Siempre=3, A veces=2, Nunca=1"} ] \n}`;
-    try {
-      const result = await generateTextWithRetry(appConfig.apiKey, fullPrompt, "", inlineData);
-      const jsonMatch = result.match(/\{[\s\S]*\}/);
-      if (!jsonMatch) throw new Error("Formato inválido.");
-      const parsedData = JSON.parse(jsonMatch[0]);
-      setTemplateForm({
-        ...templateForm,
-        nombre: parsedData.nombre || 'Pauta Extraída',
-        metodoCalculo: parsedData.metodoCalculo === 'Juicio Clínico' ? 'Juicio Clínico' : 'Suma Automática',
-        instruccionesDiagnostico: parsedData.instruccionesDiagnostico || '',
-        encabezados: safeArr(parsedData.encabezados),
-        criterios: safeArr(parsedData.criterios)
-      });
-      alert(`¡Pauta digitalizada!\nTítulo: ${parsedData.nombre}\nRevisa el Diseñador para ajustar detalles.`);
-    } catch (err) { alert(`Error IA: ${err.message}\n\nRevisa tu Llave API o comprueba si llegaste al límite gratuito (Error 429).`); } 
-    finally { setIsDigitizing(false); setRawTextForAI(''); }
-  };
-
-  const handleProcessRawTextForAI = () => { if (!rawTextForAI.trim()) return; extractFormFromAI(`Analiza este texto correspondiente a un instrumento de evaluación: \n\n${rawTextForAI}`); };
-  const handlePdfUploadForAI = (e) => {
-    const file = e.target.files[0];
-    if (!file) return;
-    const reader = new FileReader();
-    reader.onloadend = () => extractFormFromAI(`Analiza el documento PDF adjunto.`, { mimeType: file.type || 'application/pdf', data: reader.result.split(',')[1] });
-    reader.onerror = () => alert("Error al leer el archivo.");
-    reader.readAsDataURL(file);
-  };
-
-  const handleGenerateReport = async (type) => { 
-    if (!appConfig.apiKey) return alert("Falta Clave API de IA.");
-    setIsGeneratingReport(true); setReportContent('');
-    let prompt = "";
-    if (type === 'stats') {
-      const delayCases = visibleCases.filter(c => diffInDays(c.fechaEgreso, c.fechaIngresoEfectivo) > getTargetDaysForCase(c.destino));
-      if (delayCases.length === 0) { setIsGeneratingReport(false); return alert("No hay casos fuera de plazo."); }
-      prompt = `Actúa como clínico experto. Redacta un reporte breve sobre estos ${delayCases.length} casos fuera de plazo: ${JSON.stringify(delayCases.map(c => ({ paciente: c.nombre, destino: c.destino })))}$. Identifica nudos críticos.`;
-    } else {
-      if (alertCases.length === 0) { setIsGeneratingReport(false); return alert("No hay casos en alerta."); }
-      prompt = `Redacta correo urgente para rescatar pacientes en alerta: ${JSON.stringify(alertCases.map(c => ({ paciente: c.nombre, destino: c.destino })))}$.`;
-    }
-    try { setReportContent(await generateTextWithRetry(appConfig.apiKey, prompt)); } catch (e) { setReportContent(`⚠️ Error IA: ${e.message}`); } finally { setIsGeneratingReport(false); }
-  };
-
-  const handleGenerateCaseSummary = async () => {
-    if (!appConfig.apiKey) return alert("Falta Clave API.");
-    setIsGeneratingCaseSummary(true); setCaseSummary('');
-    const epicrisisText = caseForm.epicrisis ? `\nEpicrisis: ${caseForm.epicrisis}` : '';
-    const prompt = `Actúa como clínico. Genera resumen profesional: Nombre: ${caseForm.nombre}, Origen: ${caseForm.origen}, Destino: ${caseForm.destino}.${epicrisisText} Eventos bitácora: ${safeArr(caseForm.bitacora).map(b => `[${b.fecha}] ${b.tipo}: ${b.descripcion}`).join(' | ')}. Solo resumen directo.`;
-    try { setCaseSummary(await generateTextWithRetry(appConfig.apiKey, prompt)); } catch (e) { setCaseSummary(`⚠️ Error IA: ${e.message}`); } finally { setIsGeneratingCaseSummary(false); }
-  };
-
   // --- GUARDADOS EN NUBE Y MODALES ---
   const handleSaveCase = async () => { 
     if (!caseForm.rut || !caseForm.nombre) return alert("RUT y Nombre obligatorios.");
     const finalId = editingCaseId || `CASO-${String(cases.length + 1).padStart(3, '0')}`;
     await saveToCloud('cases', finalId, { ...caseForm, id: finalId, paciente: caseForm.rut });
-    setIsCaseModalOpen(false); setEditingCaseId(null); setCaseForm(defaultCaseState); setCaseSummary(''); setNewCaseLink({nombre:'', url:''});
+    setIsCaseModalOpen(false); setEditingCaseId(null); setCaseForm(defaultCaseState);
   };
 
   const handleAddBitacora = () => {
     if (!newBitacoraEntry.descripcion) return;
     setCaseForm({ ...caseForm, bitacora: [{ id: Date.now(), ...newBitacoraEntry, fecha: new Date().toISOString().split('T')[0], completada: false }, ...safeArr(caseForm.bitacora)] });
-    // MEJORA: Resetea el valor de la barrera para el próximo ingreso
     setNewBitacoraEntry({ tipo: 'Nota Adm.', descripcion: '', responsable: '', fechaCumplimiento: '', barrera: 'Ninguna' });
   };
   
@@ -489,7 +341,7 @@ export default function App() {
     if(!docForm.nombre) return alert("Nombre obligatorio"); 
     const finalId = editingDocId || `DOC-${String(docs.length + 1).padStart(3, '0')}`;
     await saveToCloud('docs', finalId, { ...docForm, id: finalId, avance: docAvanceActual });
-    setIsDocModalOpen(false); setEditingDocId(null); setNewDocLink({nombre:'', url:''});
+    setIsDocModalOpen(false); setEditingDocId(null);
   };
 
   const handleAddDocBitacora = () => {
@@ -524,7 +376,6 @@ export default function App() {
     }
   };
 
-  // --- CARGA DE ARCHIVOS A FIREBASE STORAGE ---
   const handleCaseFileUpload = async (e) => {
     const file = e.target.files[0];
     if (!file) return;
@@ -542,7 +393,7 @@ export default function App() {
       alert("Error al subir el archivo. Verifica las reglas de Firebase Storage.");
     } finally {
       setIsUploadingCaseFile(false);
-      e.target.value = null; // Limpiar input
+      e.target.value = null;
     }
   };
 
@@ -563,7 +414,7 @@ export default function App() {
       alert("Error al subir el archivo. Verifica las reglas de Firebase Storage.");
     } finally {
       setIsUploadingDocFile(false);
-      e.target.value = null; // Limpiar input
+      e.target.value = null;
     }
   };
 
@@ -705,18 +556,18 @@ export default function App() {
 
   // ================= LOGIN =================
   if (!currentUser) return (
-    <div className="min-h-screen bg-[#0a2540] flex items-center justify-center p-4">
-      <div className="max-w-md w-full bg-white rounded-3xl shadow-2xl p-8 text-center">
-        <div className="w-14 h-14 bg-blue-600 rounded-2xl flex items-center justify-center mx-auto mb-3 shadow-lg shadow-blue-200"><Activity size={28} className="text-white" /></div>
-        <h1 className="text-2xl font-bold text-slate-800">SGCC-SM</h1>
-        <p className="text-[10px] font-black text-blue-500 uppercase tracking-widest mt-1 mb-6">Hospital Puerto Montt</p>
+    <div className="min-h-screen bg-[#0a2540] flex items-center justify-center p-4 text-center">
+      <div className="max-w-md w-full bg-white rounded-3xl shadow-2xl p-8">
+        <Activity size={48} className="text-blue-600 mx-auto mb-4" />
+        <h1 className="text-2xl font-black text-slate-800 uppercase tracking-widest">SGCC Reloncaví</h1>
+        <p className="text-[10px] font-black text-blue-500 uppercase tracking-widest mt-1 mb-8">Hospital Puerto Montt</p>
         <form onSubmit={handleLogin} className="space-y-4 text-left">
-          <div><Lbl><User size={12} className="inline mr-1"/> RUT DE USUARIO</Lbl><Inp type="text" value={loginData.rut} onChange={(e) => setLoginData({...loginData, rut: e.target.value})} placeholder="11.111.111-1" /></div>
-          <div><Lbl><Lock size={12} className="inline mr-1"/> CONTRASEÑA</Lbl><Inp type="password" value={loginData.password} onChange={(e) => setLoginData({...loginData, password: e.target.value})} placeholder="••••••" /></div>
-          {loginError && <p className="text-red-500 text-xs text-center font-black uppercase">{loginError}</p>}
-          <button type="submit" className={clsBtnP + " w-full justify-center py-4"}>INGRESAR AL SISTEMA</button>
+          <div><Lbl>RUT de Usuario</Lbl><Inp type="text" value={loginData.rut} onChange={e=>setLoginData({...loginData, rut: e.target.value})} placeholder="11.222.333-4" /></div>
+          <div><Lbl>Contraseña</Lbl><Inp type="password" value={loginData.password} onChange={e=>setLoginData({...loginData, password: e.target.value})} placeholder="••••" /></div>
+          {loginError && <p className="text-red-500 text-xs font-black uppercase text-center mt-2">{loginError}</p>}
+          <button type="submit" className={clsBtnP + " w-full py-4 mt-4"}>Ingresar al Sistema</button>
         </form>
-        <p className={`text-[9px] font-black uppercase text-center mt-4 ${dbStatus.includes('Error') ? 'text-red-500' : 'text-blue-400'}`}>{dbStatus}</p>
+        <p className={`text-[9px] font-black uppercase text-center mt-6 ${dbStatus.includes('Error') ? 'text-red-500' : 'text-slate-400'}`}>{dbStatus}</p>
       </div>
     </div>
   );
@@ -729,85 +580,76 @@ export default function App() {
           <div className="flex items-start gap-3 mb-1">
              <div className="w-10 h-10 rounded-xl bg-blue-600 flex items-center justify-center font-black text-sm shadow-lg shrink-0 mt-0.5">{String(currentUser?.iniciales || 'U')}</div>
              <div className="flex-1 w-full flex flex-col justify-center min-w-0">
-               <h1 className="text-sm font-black tracking-tight leading-tight text-white whitespace-normal break-words" style={{wordBreak:'break-word'}}>{String(currentUser?.nombre || 'Usuario')}</h1>
-               <p className="text-[9px] text-blue-300 font-black uppercase tracking-widest mt-1.5 leading-snug whitespace-normal break-words" style={{wordBreak:'break-word'}}>{String(currentUser?.cargo || 'SGCC-SM')}</p>
+               <h1 className="text-sm font-black tracking-tight leading-tight text-white whitespace-normal break-words">{String(currentUser?.nombre || 'Usuario')}</h1>
+               <p className="text-[9px] text-blue-300 font-black uppercase tracking-widest mt-1.5 leading-snug">{String(currentUser?.cargo || 'Enlace Red')}</p>
              </div>
           </div>
         </div>
         <nav className="flex-1 p-3 space-y-1">
-          <button onClick={() => setActiveTab('dashboard')} className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl text-xs font-bold uppercase tracking-widest transition-all ${activeTab === 'dashboard' ? 'bg-blue-600 shadow-lg' : 'hover:bg-white/5 opacity-80'}`}><LayoutDashboard size={18}/> Panel Principal</button>
-          <button onClick={() => setActiveTab('stats')} className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl text-xs font-bold uppercase tracking-widest transition-all ${activeTab === 'stats' ? 'bg-blue-600 shadow-lg' : 'hover:bg-white/5 opacity-80'}`}><BarChart3 size={18}/> Plazos Meta</button>
-          <button onClick={() => setActiveTab('cases')} className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl text-xs font-bold uppercase tracking-widest transition-all ${activeTab === 'cases' ? 'bg-blue-600 shadow-lg' : 'hover:bg-white/5 opacity-80'}`}><Users size={18}/> Casos de Red</button>
-          <button onClick={() => setActiveTab('docs')} className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl text-xs font-bold uppercase tracking-widest transition-all ${activeTab === 'docs' ? 'bg-blue-600 shadow-lg' : 'hover:bg-white/5 opacity-80'}`}><FileText size={18}/> Protocolos</button>
-          <div className="pt-5 pb-2 px-4 text-[10px] font-black text-blue-400 uppercase tracking-widest">Evaluación y Red</div>
-          <button onClick={() => setActiveTab('auditorias')} className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl text-xs font-bold uppercase tracking-widest transition-all ${activeTab === 'auditorias' ? 'bg-blue-600 shadow-lg' : 'hover:bg-white/5 opacity-80'}`}><ClipboardCheck size={18}/> Auditorías</button>
-          <button onClick={() => setActiveTab('consultorias')} className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl text-xs font-bold uppercase tracking-widest transition-all ${activeTab === 'consultorias' ? 'bg-blue-600 shadow-lg' : 'hover:bg-white/5 opacity-80'}`}><MessageSquare size={18}/> Consultorías</button>
-          <button onClick={() => setActiveTab('dir')} className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl text-xs font-bold uppercase tracking-widest transition-all ${activeTab === 'dir' ? 'bg-blue-600 shadow-lg' : 'hover:bg-white/5 opacity-80'}`}><BookOpen size={18}/> Directorio</button>
+          <button onClick={() => setActiveTab('dashboard')} className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl text-xs font-bold uppercase transition-all ${activeTab === 'dashboard' ? 'bg-blue-600 shadow-lg' : 'hover:bg-white/5 opacity-80'}`}><LayoutDashboard size={18}/> Panel Principal</button>
+          <button onClick={() => setActiveTab('cases')} className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl text-xs font-bold uppercase transition-all ${activeTab === 'cases' ? 'bg-blue-600 shadow-lg' : 'hover:bg-white/5 opacity-80'}`}><Users size={18}/> Casos de Red</button>
+          <button onClick={() => setActiveTab('docs')} className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl text-xs font-bold uppercase transition-all ${activeTab === 'docs' ? 'bg-blue-600 shadow-lg' : 'hover:bg-white/5 opacity-80'}`}><FileText size={18}/> Protocolos</button>
+          <div className="pt-5 pb-2 px-4 text-[10px] font-black text-blue-400 uppercase tracking-widest">Gestión de Calidad</div>
+          <button onClick={() => setActiveTab('auditorias')} className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl text-xs font-bold uppercase transition-all ${activeTab === 'auditorias' ? 'bg-blue-600 shadow-lg' : 'hover:bg-white/5 opacity-80'}`}><ClipboardCheck size={18}/> Auditorías</button>
+          <button onClick={() => setActiveTab('dir')} className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl text-xs font-bold uppercase transition-all ${activeTab === 'dir' ? 'bg-blue-600 shadow-lg' : 'hover:bg-white/5 opacity-80'}`}><BookOpen size={18}/> Directorio</button>
           {currentUser?.rol === 'Admin' && (
              <>
                <div className="pt-5 pb-2 px-4 text-[10px] font-black text-blue-400 uppercase tracking-widest">Administración</div>
-               <button onClick={() => setActiveTab('users')} className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl text-xs font-bold uppercase tracking-widest transition-all ${activeTab === 'users' ? 'bg-blue-600 shadow-lg' : 'hover:bg-white/5 opacity-80'}`}><UserPlus size={18}/> Usuarios</button>
-               <button onClick={() => setActiveTab('config')} className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl text-xs font-bold uppercase tracking-widest transition-all ${activeTab === 'config' ? 'bg-blue-600 shadow-lg' : 'hover:bg-white/5 opacity-80'}`}><Settings size={18}/> Ajustes</button>
+               <button onClick={() => setActiveTab('stats')} className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl text-xs font-bold uppercase transition-all ${activeTab === 'stats' ? 'bg-blue-600 shadow-lg' : 'hover:bg-white/5 opacity-80'}`}><BarChart3 size={18}/> Estadísticas</button>
+               <button onClick={() => setActiveTab('users')} className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl text-xs font-bold uppercase transition-all ${activeTab === 'users' ? 'bg-blue-600 shadow-lg' : 'hover:bg-white/5 opacity-80'}`}><UserPlus size={18}/> Usuarios</button>
+               <button onClick={() => setActiveTab('config')} className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl text-xs font-bold uppercase transition-all ${activeTab === 'config' ? 'bg-blue-600 shadow-lg' : 'hover:bg-white/5 opacity-80'}`}><Settings size={18}/> Ajustes</button>
              </>
           )}
         </nav>
-        <div className="p-4 border-t border-white/5 shrink-0 bg-[#071c31]">
+        <div className="p-4 border-t border-white/5 bg-[#071c31]">
            <div className="flex gap-2">
-             <button onClick={() => setIsProfileModalOpen(true)} className="flex-1 flex justify-center items-center gap-2 py-2 text-[10px] uppercase font-black tracking-widest text-slate-300 hover:bg-white/10 rounded-lg"><Key size={14}/> Clave</button>
-             <button onClick={() => setCurrentUser(null)} className="flex-1 flex justify-center items-center gap-2 py-2 text-[10px] uppercase font-black tracking-widest text-red-400 hover:bg-red-500/20 rounded-lg"><LogOut size={14}/> Salir</button>
+             <button onClick={() => setIsProfileModalOpen(true)} className="flex-1 flex justify-center items-center gap-2 py-2 text-[10px] uppercase font-black text-slate-300 hover:bg-white/10 rounded-lg"><Key size={14}/> Clave</button>
+             <button onClick={() => setCurrentUser(null)} className="flex-1 flex justify-center items-center gap-2 py-2 text-[10px] uppercase font-black text-red-400 hover:bg-red-500/20 rounded-lg"><LogOut size={14}/> Salir</button>
            </div>
         </div>
       </aside>
 
-      {/* ÁREA PRINCIPAL */}
       <main className="flex-1 p-6 md:p-8 overflow-y-auto relative">
         <div className="absolute top-6 right-6 z-20">
-          <div className="relative">
-            <button onClick={() => setIsNotificationsOpen(!isNotificationsOpen)} className="p-2.5 bg-white rounded-xl border border-slate-200 text-slate-600 hover:bg-slate-50 shadow-sm relative transition-all"><Bell size={20} />{notifications.length > 0 && <span className="absolute top-1.5 right-1.5 h-2.5 w-2.5 bg-red-500 rounded-full border-2 border-white animate-pulse"></span>}</button>
-            {isNotificationsOpen && (
-              <div className="absolute right-0 mt-2 w-80 bg-white rounded-2xl shadow-xl border border-slate-100 overflow-hidden fade-in">
-                <div className="bg-[#0a2540] text-white px-4 py-3 font-bold flex justify-between items-center text-xs">Notificaciones <span className="bg-blue-600 text-[10px] px-2 py-0.5 rounded-full">{notifications.length}</span></div>
-                <div className="max-h-80 overflow-y-auto">
-                  {notifications.length === 0 ? (<div className="p-6 text-center text-xs text-slate-500 font-medium">No hay notificaciones.</div>) : (
-                    <div className="divide-y divide-slate-50">
-                      {notifications.map(n => (
-                        <div key={n.id} className="p-4 hover:bg-slate-50 transition-colors flex gap-3 items-start"><div className="mt-0.5">{n.type === 'alerta' || n.type === 'overdue' ? <AlertTriangle size={14} className="text-red-500"/> : <Bell size={14} className="text-amber-500"/>}</div><div><p className="text-sm font-bold text-slate-800">{String(n.title)}</p><p className="text-xs text-slate-500 mt-1 font-medium">{String(n.desc)}</p></div></div>
-                      ))}
-                    </div>
-                  )}
-                </div>
+          <button onClick={() => setIsNotificationsOpen(!isNotificationsOpen)} className="p-2.5 bg-white rounded-xl border border-slate-200 text-slate-600 hover:bg-slate-50 shadow-sm relative transition-all"><Bell size={20} />{notifications.length > 0 && <span className="absolute top-1.5 right-1.5 h-2.5 w-2.5 bg-red-500 rounded-full border-2 border-white animate-pulse"></span>}</button>
+          {isNotificationsOpen && (
+            <div className="absolute right-0 mt-2 w-80 bg-white rounded-2xl shadow-xl border border-slate-100 overflow-hidden fade-in">
+              <div className="bg-[#0a2540] text-white px-4 py-3 font-bold flex justify-between items-center text-xs">Alertas de Red <span className="bg-blue-600 text-[10px] px-2 py-0.5 rounded-full">{notifications.length}</span></div>
+              <div className="max-h-80 overflow-y-auto">
+                {notifications.map(n => (
+                  <div key={n.id} className="p-4 hover:bg-slate-50 transition-colors flex gap-3 items-start"><AlertTriangle size={14} className="text-red-500 mt-0.5"/><div><p className="text-sm font-bold text-slate-800">{String(n.title)}</p><p className="text-xs text-slate-500 mt-1 font-medium">{String(n.desc)}</p></div></div>
+                ))}
+                {notifications.length === 0 && <div className="p-6 text-center text-xs text-slate-500 font-medium">No hay notificaciones.</div>}
               </div>
-            )}
-          </div>
+            </div>
+          )}
         </div>
 
-        {/* PESTAÑA 1: DASHBOARD */}
         {activeTab === 'dashboard' && (
           <div className="space-y-6 animate-in fade-in mt-12 md:mt-0">
-            <div><h2 className="text-2xl font-black text-slate-800 tracking-tight">Panel de Gestión Integral</h2><p className="text-xs text-slate-500 font-medium mt-1">Resumen de actividad clínica y normativa</p></div>
+            <div><h2 className="text-2xl font-black text-slate-800 tracking-tight">Panel de Gestión Integral</h2><p className="text-xs text-slate-500 font-medium mt-1">Hospital Puerto Montt</p></div>
 
-            {/* DASHBOARD EJECUTIVO PARA JEFATURA */}
-            <div className="bg-slate-900 rounded-3xl p-6 text-white shadow-xl flex flex-col md:flex-row items-center justify-between gap-6 border border-slate-700 relative overflow-hidden mt-6 mb-6">
+            <div className="bg-slate-900 rounded-3xl p-6 text-white shadow-xl flex flex-col md:flex-row items-center justify-between gap-6 border border-slate-700 relative overflow-hidden">
                <div className="absolute top-0 right-0 -mr-10 -mt-10 w-40 h-40 bg-blue-500/10 rounded-full blur-3xl"></div>
                <div className="flex items-center gap-4 relative z-10">
                  <div className="p-4 bg-white/10 rounded-2xl text-blue-400"><Shield size={32}/></div>
                  <div>
-                   <h3 className="text-sm font-black uppercase tracking-[0.2em] text-blue-400 mb-1">Estatus Normativo y Resolutivo de Red</h3>
+                   <h3 className="text-sm font-black uppercase tracking-[0.2em] text-blue-400 mb-1">Estatus Normativo de Red</h3>
                    <p className="text-xs font-medium text-slate-300 leading-relaxed">Actualmente tenemos <strong className="text-white underline">{safeArr(docs).filter(d => d.fase === 'Validación Técnica').length} protocolos</strong> en Fase de Validación Técnica y <strong className="text-white underline">{safeArr(docs).filter(d => d.prioridad === 'Alta').length} con Prioridad Alta</strong> que requieren sanción directiva.</p>
                  </div>
                </div>
                <button onClick={()=>setActiveTab('docs')} className="bg-blue-600 text-white px-8 py-3 rounded-xl font-black text-[10px] uppercase tracking-widest hover:bg-blue-500 transition-all shadow-lg shrink-0 relative z-10">Gestionar Normas</button>
             </div>
 
-            <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
-              <div className="bg-white p-4 rounded-2xl shadow-sm border-l-[6px] border-l-red-500"><p className="text-[9px] text-slate-400 font-black uppercase tracking-widest">Pérdida Continuidad</p><h3 className="text-2xl font-black text-red-600 mt-1">{alertCases.length}</h3></div>
-              <div className="bg-white p-4 rounded-2xl shadow-sm border-l-[6px] border-l-blue-500"><p className="text-[9px] text-slate-400 font-black uppercase tracking-widest">Pacientes en Tránsito</p><h3 className="text-2xl font-black text-blue-600 mt-1">{safeArr(visibleCases).filter(c => c.estado === 'Pendiente').length}</h3></div>
-              <div className="bg-white p-4 rounded-2xl shadow-sm border-l-[6px] border-l-amber-500"><p className="text-[9px] text-slate-400 font-black uppercase tracking-widest">Tareas Críticas</p><h3 className="text-2xl font-black text-amber-600 mt-1">{tareasCriticas}</h3></div>
-              <div className="bg-white p-4 rounded-2xl shadow-sm border-l-[6px] border-l-indigo-500"><p className="text-[9px] text-slate-400 font-black uppercase tracking-widest">Auditorías</p><h3 className="text-2xl font-black text-indigo-600 mt-1">{safeArr(visibleAudits).filter(a => a.tipo === 'Auditoría').length}</h3></div>
-              <div className="bg-white p-4 rounded-2xl shadow-sm border-l-[6px] border-l-teal-500"><p className="text-[9px] text-slate-400 font-black uppercase tracking-widest">Consultorías</p><h3 className="text-2xl font-black text-teal-600 mt-1">{safeArr(visibleAudits).filter(a => a.tipo === 'Consultoría').length}</h3></div>
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+              <div className="bg-white p-4 rounded-2xl shadow-sm border-l-4 border-red-500"><p className="text-[9px] text-slate-400 font-black uppercase tracking-widest">Pérdida Continuidad</p><h3 className="text-2xl font-black text-red-600 mt-1">{alertCases.length}</h3></div>
+              <div className="bg-white p-4 rounded-2xl shadow-sm border-l-4 border-blue-500"><p className="text-[9px] text-slate-400 font-black uppercase tracking-widest">Pacientes en Tránsito</p><h3 className="text-2xl font-black text-blue-600 mt-1">{safeArr(visibleCases).filter(c => c.estado === 'Pendiente').length}</h3></div>
+              <div className="bg-white p-4 rounded-2xl shadow-sm border-l-4 border-amber-500"><p className="text-[9px] text-slate-400 font-black uppercase tracking-widest">Tareas Críticas</p><h3 className="text-2xl font-black text-amber-600 mt-1">{tareasCriticas}</h3></div>
+              <div className="bg-white p-4 rounded-2xl shadow-sm border-l-4 border-indigo-500"><p className="text-[9px] text-slate-400 font-black uppercase tracking-widest">Auditorías Realizadas</p><h3 className="text-2xl font-black text-indigo-600 mt-1">{audits.length}</h3></div>
             </div>
-            <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-              <div className="bg-white rounded-2xl shadow-sm border border-slate-200 p-5 lg:col-span-2 overflow-hidden">
+
+            <div className="grid grid-cols-1 gap-6">
+              <div className="bg-white rounded-2xl shadow-sm border border-slate-200 p-5 overflow-hidden">
                 <h3 className="text-xs font-black text-slate-800 uppercase tracking-widest mb-4 flex items-center gap-2"><AlertTriangle size={16} className="text-red-500" /> Casos Requiriendo Rescate</h3>
                 <div className="overflow-x-auto">
                   <table className="w-full text-left border-collapse min-w-[500px]">
@@ -819,22 +661,8 @@ export default function App() {
                   </table>
                 </div>
               </div>
-              <div className="bg-indigo-900 rounded-2xl p-5 text-white shadow-xl relative overflow-hidden flex flex-col">
-                <div className="relative z-10 flex-1 flex flex-col">
-                  <h3 className="text-xs font-black uppercase tracking-widest mb-2 flex items-center gap-2"><Wand2 size={16} className="text-blue-300"/> Asistente de Rescate</h3>
-                  <p className="text-[10px] text-indigo-200 font-medium mb-4 leading-relaxed">Genera un correo formal automático para solicitar revisión urgente a los directores de los {alertCases.length} casos perdidos.</p>
-                  {currentUser?.rol === 'Admin' ? (
-                    <button onClick={() => handleGenerateReport('alerts')} disabled={alertCases.length === 0 || isGeneratingReport} className="w-full bg-white text-indigo-900 py-3 rounded-xl text-[10px] font-black uppercase tracking-widest flex justify-center items-center gap-2 shadow-lg disabled:opacity-50 transition-transform hover:-translate-y-1 mt-auto">
-                      {isGeneratingReport ? <Loader2 size={14} className="animate-spin"/> : <MessageSquare size={14}/>} Redactar Correo
-                    </button>
-                  ) : (<div className="mt-auto p-3 bg-white/10 rounded-xl text-center text-[9px] font-black uppercase tracking-widest text-indigo-300">Exclusivo Administradores</div>)}
-                </div>
-                {reportContent && activeTab === 'dashboard' && currentUser?.rol === 'Admin' && (
-                  <div className="mt-4 bg-[#081b30] p-4 rounded-xl border border-white/10 relative z-10"><div className="flex justify-between items-center mb-3 pb-2 border-b border-white/10"><span className="text-[9px] font-black uppercase tracking-[0.2em] text-blue-300">Borrador:</span><button onClick={()=>copyToClipboard(reportContent)} className="text-white hover:text-blue-300"><Copy size={12}/></button></div><p className="text-[10px] font-medium text-slate-300 whitespace-pre-wrap leading-relaxed max-h-32 overflow-y-auto">{String(reportContent)}</p></div>
-                )}
-                <div className="absolute top-0 right-0 w-32 h-32 bg-blue-500/20 rounded-full -mr-10 -mt-10 blur-xl"></div>
-              </div>
             </div>
+
             <div className="bg-white rounded-2xl shadow-sm border border-slate-200 p-6">
               <h3 className="text-xs font-black text-slate-800 uppercase tracking-widest mb-4 flex items-center gap-2"><ListTodo size={16} className="text-blue-500" /> Tareas Pendientes</h3>
               <div className="overflow-x-auto">
@@ -861,94 +689,40 @@ export default function App() {
           </div>
         )}
 
-        {/* PESTAÑA 2: ESTADÍSTICAS Y PLAZOS */}
-        {activeTab === 'stats' && (
-          <div className="space-y-6 animate-in fade-in mt-12 md:mt-0">
-            <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
-              <div><h2 className="text-2xl font-black text-slate-800 tracking-tight">Estadísticas y Plazos</h2><p className="text-xs text-slate-500 font-medium mt-1">Análisis de respuesta en red</p></div>
-            </div>
-            <div className="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm">
-               <h3 className="font-black text-slate-800 uppercase text-xs tracking-widest mb-4 flex items-center gap-2"><Target size={16} className="text-blue-600"/> Configuración de Plazos Meta</h3>
-               <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
-                  <div className="bg-slate-50 p-5 rounded-2xl border border-slate-100">
-                    <Lbl>Meta General por Defecto</Lbl>
-                    <p className="text-[10px] text-slate-500 mb-4 font-medium">Aplica para dispositivos sin plazo específico.</p>
-                    <div className="flex items-center gap-2">
-                       {currentUser?.rol === 'Admin' ? (<input type="number" value={appConfig?.targetDays || 7} onChange={(e) => handleUpdateTarget(e.target.value)} className="w-24 p-3 bg-white border border-blue-100 rounded-xl text-center font-black text-blue-600 outline-none focus:border-blue-500 text-sm shadow-sm"/>) : (<span className="px-4 py-3 bg-white border border-slate-200 rounded-xl font-black text-blue-600 text-sm">{String(appConfig?.targetDays || 7)}</span>)}
-                       <span className="text-[10px] font-black text-slate-500 uppercase">Días</span>
-                    </div>
-                  </div>
-                  <div className="bg-blue-50/50 p-5 rounded-2xl border border-blue-100">
-                    <label className="block text-[10px] font-black text-blue-800 uppercase tracking-widest mb-2">Metas por Dispositivo</label>
-                    <p className="text-[10px] text-blue-600 mb-4 font-medium">Asigna plazos distintos según la realidad del centro.</p>
-                    {currentUser?.rol === 'Admin' && (
-                      <div className="flex gap-2 mb-4">
-                        <input type="text" list="centros-list-plazos" value={plazoCentroInput} onChange={e=>setPlazoCentroInput(e.target.value)} placeholder="Centro..." className="flex-1 p-2.5 border border-white rounded-xl text-xs font-bold outline-none"/>
-                        <datalist id="centros-list-plazos">{safeArr(centros).map(c=><option key={c} value={c}/>)}</datalist>
-                        <input type="number" placeholder="Días" value={plazoDaysInput} onChange={e=>setPlazoDaysInput(e.target.value)} className="w-20 p-2.5 border border-white rounded-xl text-xs font-bold text-center outline-none"/>
-                        <button onClick={handleAddPlazoCentro} className="bg-blue-600 text-white p-2.5 rounded-xl hover:bg-blue-700"><Plus size={16}/></button>
-                      </div>
-                    )}
-                    <div className="space-y-2 max-h-32 overflow-y-auto pr-2">
-                      {Object.entries(appConfig?.plazos || {}).map(([centroStr, dias]) => (
-                        <div key={centroStr} className="flex justify-between items-center bg-white p-3 rounded-xl shadow-sm border border-blue-50">
-                           <span className="text-[10px] font-black text-slate-700 uppercase">{String(centroStr)}</span>
-                           <div className="flex items-center gap-3"><span className="text-[10px] font-black text-blue-600 bg-blue-50 px-2 py-1 rounded-md">{String(dias)} Días</span>{currentUser?.rol === 'Admin' && <button onClick={() => handleDeletePlazoCentro(centroStr)} className="text-slate-400 hover:text-red-500"><Trash2 size={14}/></button>}</div>
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-               </div>
-            </div>
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-              <div className="bg-white p-6 rounded-2xl shadow-sm border border-l-[8px] border-l-indigo-500"><div className="flex justify-between mb-3"><div className="p-2 bg-indigo-50 rounded-xl text-indigo-600"><Timer size={18}/></div></div><h3 className="text-[9px] font-black text-slate-400 uppercase tracking-widest">Enlace Administrativo</h3><p className="text-4xl font-black text-slate-800 mt-1">{String(redMetrics.avgEnlace)} <span className="text-xs text-slate-300">Días</span></p></div>
-              <div className="bg-white p-6 rounded-2xl shadow-sm border border-l-[8px] border-l-blue-500"><div className="flex justify-between mb-3"><div className="p-2 bg-blue-50 rounded-xl text-blue-600"><BarChart3 size={18}/></div></div><h3 className="text-[9px] font-black text-slate-400 uppercase tracking-widest">Ingreso Efectivo</h3><p className="text-4xl font-black text-slate-800 mt-1">{String(redMetrics.avgIngreso)} <span className="text-xs text-slate-300">Días</span></p></div>
-              <div className="bg-white p-6 rounded-2xl shadow-sm border border-l-[8px] border-l-red-500"><div className="flex justify-between mb-3"><div className="p-2 bg-red-50 rounded-xl text-red-600"><AlertTriangle size={18}/></div></div><h3 className="text-[9px] font-black text-slate-400 uppercase tracking-widest">Casos sobre meta</h3><p className="text-4xl font-black text-slate-800 mt-1">{String(redMetrics.fueraDePlazo)} <span className="text-xs text-slate-300">Casos</span></p></div>
-            </div>
-          </div>
-        )}
-
-        {/* PESTAÑA 3: CASOS DE RED */}
+        {/* PESTAÑA: CASOS DE RED */}
         {activeTab === 'cases' && (
           <div className="space-y-6 animate-in fade-in mt-12 md:mt-0">
-            <div className="flex justify-between items-end"><div><h2 className="text-2xl font-black text-slate-800">Casos en Red</h2></div>
-              <div className="flex gap-2">
+             <div className="flex justify-between items-end"><div><h2 className="text-2xl font-black text-slate-800">Casos en Red</h2></div>
+             <div className="flex gap-2">
                 <button onClick={handleExportCSV} className={clsBtnS + " bg-emerald-100 hover:bg-emerald-200 text-emerald-700"}><Download size={14} className="inline mr-1"/> Exportar Excel</button>
-                <button onClick={() => { setEditingCaseId(null); setCaseForm(defaultCaseState); setCaseSummary(''); setIsCaseModalOpen(true); }} className={clsBtnP}><Plus size={16}/> Nuevo Seguimiento</button>
+                <button onClick={() => { setEditingCaseId(null); setCaseForm(defaultCaseState); setIsCaseModalOpen(true); }} className={clsBtnP}><Plus size={16}/> Nuevo Seguimiento</button>
               </div>
-            </div>
-            <div className="bg-white p-4 rounded-xl shadow-sm border border-slate-200 flex gap-4 items-center">
+             </div>
+             <div className="bg-white p-4 rounded-xl shadow-sm border border-slate-200 flex gap-4 items-center">
               <div className="flex-1"><Lbl>Buscar Paciente</Lbl><Inp value={caseSearch} onChange={e=>setCaseSearch(e.target.value)} placeholder="RUT o Nombre..." className="py-2" /></div>
               <div className="w-64"><Lbl>Filtrar Dispositivo</Lbl><Sel value={caseFilterCentro} onChange={e=>setCaseFilterCentro(e.target.value)} className="py-2"><option value="Todos">Todos</option>{safeArr(centros).map(c=><option key={c} value={c}>{c}</option>)}</Sel></div>
             </div>
-            <div className="bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden">
-              <div className="overflow-x-auto">
-                <table className="w-full text-left border-collapse min-w-[1000px]">
-                  <thead className="bg-slate-50 border-b border-slate-100"><tr className="text-xs font-bold text-slate-500 uppercase tracking-wider"><th className="p-4">Paciente</th><th className="p-4">Ruta Traslado</th><th className="p-4 text-center">Hitos (A-B-C)</th><th className="p-4 text-center">Estado</th><th className="p-4 text-right">Acción</th></tr></thead>
-                  <tbody className="divide-y divide-slate-50">
-                    {filteredCases.map(c => {
-                      const daysC = diffInDays(c.fechaEgreso, c.fechaIngresoEfectivo);
-                      const target = getTargetDaysForCase(c.destino);
-                      const isOver = daysC !== null && daysC > target;
-                      return (
-                        <tr key={c.id} className={`hover:bg-slate-50/80 transition-colors ${isOver ? 'bg-red-50/20' : ''}`}>
-                          <td className="p-4"><div className="font-bold text-slate-800 text-sm uppercase">{String(c.nombre)}</div><div className="text-xs text-slate-500 mt-1">{String(c.paciente)}</div></td>
-                          <td className="p-4"><div className="text-xs font-bold text-blue-700 bg-blue-50 px-3 py-1.5 rounded-lg w-fit flex items-center gap-2 border border-blue-100">{String(c.origen)} <Timer size={14}/> {String(c.destino)}</div></td>
-                          <td className="p-4"><div className="flex justify-center gap-6"><div className="text-center"><span className="text-[10px] font-bold text-slate-400 block uppercase">Egreso</span><span className="text-sm font-bold text-slate-700">{String(c.fechaEgreso || '---')}</span></div><div className="text-center border-l pl-6"><span className="text-[10px] font-bold text-indigo-400 block uppercase">Recep</span><span className="text-sm font-bold text-indigo-700">{String(c.fechaRecepcionRed || '---')}</span></div><div className="text-center border-l pl-6"><span className="text-[10px] font-bold text-green-500 block uppercase">Ingreso</span><span className={`text-sm font-bold ${isOver ? 'text-red-600' : 'text-green-600'}`}>{String(c.fechaIngresoEfectivo || '---')}</span></div></div></td>
-                          <td className="p-4"><div className="flex justify-center"><StatusBadge status={c.estado}/></div></td>
-                          <td className="p-4 text-right"><button onClick={() => { setEditingCaseId(c.id); setCaseForm({ ...c, rut: c.paciente, edad: c.edad||'', tutor: c.tutor || {nombre:'', relacion:'', telefono:''}, referentes: safeArr(c.referentes), archivos: safeArr(c.archivos), epicrisis: c.epicrisis || '' }); setCaseSummary(''); setIsCaseModalOpen(true); }} className="text-slate-400 hover:text-blue-600 bg-slate-50 p-2.5 rounded-lg border border-slate-100 hover:border-blue-200"><Edit2 size={18}/></button></td>
-                        </tr>
-                      );
-                    })}
-                    {filteredCases.length === 0 && (<tr><td colSpan="5" className="p-12 text-center"><p className="text-slate-400 font-bold text-sm uppercase tracking-widest">No hay registros.</p></td></tr>)}
-                  </tbody>
+             <div className="bg-white rounded-2xl shadow-sm border overflow-hidden">
+                <table className="w-full text-left">
+                   <thead className="bg-slate-50 border-b"><tr className="text-[10px] font-black uppercase text-slate-400"><th className="p-4">Paciente</th><th className="p-4">Ruta</th><th className="p-4 text-center">Estado</th><th className="p-4 text-right">Acción</th></tr></thead>
+                   <tbody>{filteredCases.map(c => (
+                     <tr key={c.id} className="border-b hover:bg-slate-50">
+                        <td className="p-4"><p className="font-bold text-sm uppercase">{c.nombre}</p><p className="text-[10px] text-slate-400">{c.paciente}</p></td>
+                        <td className="p-4 text-xs font-black text-blue-600 uppercase">{c.origen} → {c.destino}</td>
+                        <td className="p-4 text-center">
+                            <StatusBadge status={c.estado}/>
+                        </td>
+                        <td className="p-4 text-right"><button onClick={()=>{setEditingCaseId(c.id); setCaseForm(c); setIsCaseModalOpen(true);}} className="text-slate-300 hover:text-blue-600"><Edit2 size={20}/></button></td>
+                     </tr>
+                   ))}
+                   {filteredCases.length === 0 && (<tr><td colSpan="4" className="p-12 text-center text-slate-400 font-bold text-sm uppercase tracking-widest">No hay registros.</td></tr>)}
+                   </tbody>
                 </table>
-              </div>
-            </div>
+             </div>
           </div>
         )}
 
-        {/* PESTAÑA 4: PROTOCOLOS */}
+        {/* PESTAÑA: PROTOCOLOS */}
         {activeTab === 'docs' && (
           <div className="space-y-6 animate-in fade-in mt-12 md:mt-0">
             <div className="flex justify-between items-end"><div><h2 className="text-2xl font-black text-slate-800 tracking-tight">Normativas y Protocolos</h2></div><button onClick={() => { setEditingDocId(null); setDocForm(defaultDocState); setActiveDocModalTab('datos'); setIsDocModalOpen(true); }} className={clsBtnP}><Plus size={18}/> Nuevo Protocolo</button></div>
@@ -980,7 +754,7 @@ export default function App() {
           </div>
         )}
 
-        {/* PESTAÑA 5 Y 6: AUDITORÍAS */}
+        {/* PESTAÑAS: AUDITORÍAS Y CONSULTORÍAS */}
         {(activeTab === 'auditorias' || activeTab === 'consultorias') && (() => {
           const tipoLabel = activeTab === 'auditorias' ? 'Auditoría' : 'Consultoría';
           const currentFilter = activeTab === 'auditorias' ? centroFilterAuditorias : centroFilterConsultorias;
@@ -1029,7 +803,7 @@ export default function App() {
           );
         })()}
 
-        {/* PESTAÑA 7: DIRECTORIO */}
+        {/* PESTAÑA: DIRECTORIO */}
         {activeTab === 'dir' && (
           <div className="space-y-6 animate-in fade-in mt-12 md:mt-0">
             <div className="flex justify-between items-end">
@@ -1037,7 +811,6 @@ export default function App() {
               <div className="flex gap-3 items-center w-full md:w-auto">
                 <input type="text" value={dirSearch} onChange={e => setDirSearch(e.target.value)} className={clsInp} placeholder="Buscar contacto..."/>
                 <button onClick={() => { setEditingDirId(null); setDirForm({ nombre: '', cargo: '', institucion: '', telefono: '', correo: '' }); setIsDirModalOpen(true); }} className={clsBtnP}><Plus size={16} /> Nuevo</button>
-                {currentUser?.rol === 'Admin' && <button onClick={handleWipeDirectory} className="bg-red-50 text-red-500 px-4 py-2.5 rounded-xl text-[10px] font-black uppercase flex items-center gap-2"><Trash2 size={14}/> Reset BDD</button>}
               </div>
             </div>
             <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
@@ -1060,7 +833,7 @@ export default function App() {
           </div>
         )}
 
-        {/* PESTAÑA 8: USUARIOS */}
+        {/* PESTAÑA: USUARIOS */}
         {activeTab === 'users' && currentUser?.rol === 'Admin' && (
           <div className="space-y-6 animate-in fade-in mt-12 md:mt-0">
             <div className="flex justify-between items-end"><div><h2 className="text-2xl font-black text-slate-800">Gestión de Usuarios</h2></div><button onClick={() => { setEditingUserId(null); setUserForm({ rut: '', nombre: '', iniciales: '', cargo: '', password: '', rol: 'Usuario', centrosAsignados: [] }); setIsUserModalOpen(true); }} className={clsBtnP}><UserPlus size={16} /> Crear Credencial</button></div>
@@ -1082,17 +855,62 @@ export default function App() {
           </div>
         )}
 
-        {/* PESTAÑA 9: CONFIGURACIÓN */}
+        {/* PESTAÑA: ESTADÍSTICAS Y PLAZOS */}
+        {activeTab === 'stats' && currentUser?.rol === 'Admin' && (
+          <div className="space-y-6 animate-in fade-in mt-12 md:mt-0">
+            <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
+              <div><h2 className="text-2xl font-black text-slate-800 tracking-tight">Estadísticas y Plazos</h2><p className="text-xs text-slate-500 font-medium mt-1">Análisis de respuesta en red</p></div>
+            </div>
+            <div className="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm">
+               <h3 className="font-black text-slate-800 uppercase text-xs tracking-widest mb-4 flex items-center gap-2"><Target size={16} className="text-blue-600"/> Configuración de Plazos Meta</h3>
+               <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
+                  <div className="bg-slate-50 p-5 rounded-2xl border border-slate-100">
+                    <Lbl>Meta General por Defecto</Lbl>
+                    <p className="text-[10px] text-slate-500 mb-4 font-medium">Aplica para dispositivos sin plazo específico.</p>
+                    <div className="flex items-center gap-2">
+                       <input type="number" value={appConfig?.targetDays || 7} onChange={(e) => handleUpdateTarget(e.target.value)} className="w-24 p-3 bg-white border border-blue-100 rounded-xl text-center font-black text-blue-600 outline-none focus:border-blue-500 text-sm shadow-sm"/>
+                       <span className="text-[10px] font-black text-slate-500 uppercase">Días</span>
+                    </div>
+                  </div>
+                  <div className="bg-blue-50/50 p-5 rounded-2xl border border-blue-100">
+                    <label className="block text-[10px] font-black text-blue-800 uppercase tracking-widest mb-2">Metas por Dispositivo</label>
+                    <p className="text-[10px] text-blue-600 mb-4 font-medium">Asigna plazos distintos según la realidad del centro.</p>
+                    <div className="flex gap-2 mb-4">
+                      <input type="text" list="centros-list-plazos" value={plazoCentroInput} onChange={e=>setPlazoCentroInput(e.target.value)} placeholder="Centro..." className="flex-1 p-2.5 border border-white rounded-xl text-xs font-bold outline-none"/>
+                      <datalist id="centros-list-plazos">{safeArr(centros).map(c=><option key={c} value={c}/>)}</datalist>
+                      <input type="number" placeholder="Días" value={plazoDaysInput} onChange={e=>setPlazoDaysInput(e.target.value)} className="w-20 p-2.5 border border-white rounded-xl text-xs font-bold text-center outline-none"/>
+                      <button onClick={handleAddPlazoCentro} className="bg-blue-600 text-white p-2.5 rounded-xl hover:bg-blue-700"><Plus size={16}/></button>
+                    </div>
+                    <div className="space-y-2 max-h-32 overflow-y-auto pr-2">
+                      {Object.entries(appConfig?.plazos || {}).map(([centroStr, dias]) => (
+                        <div key={centroStr} className="flex justify-between items-center bg-white p-3 rounded-xl shadow-sm border border-blue-50">
+                           <span className="text-[10px] font-black text-slate-700 uppercase">{String(centroStr)}</span>
+                           <div className="flex items-center gap-3"><span className="text-[10px] font-black text-blue-600 bg-blue-50 px-2 py-1 rounded-md">{String(dias)} Días</span><button onClick={() => handleDeletePlazoCentro(centroStr)} className="text-slate-400 hover:text-red-500"><Trash2 size={14}/></button></div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+               </div>
+            </div>
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+              <div className="bg-white p-6 rounded-2xl shadow-sm border border-l-[8px] border-l-indigo-500"><div className="flex justify-between mb-3"><div className="p-2 bg-indigo-50 rounded-xl text-indigo-600"><Timer size={18}/></div></div><h3 className="text-[9px] font-black text-slate-400 uppercase tracking-widest">Enlace Administrativo</h3><p className="text-4xl font-black text-slate-800 mt-1">{String(redMetrics.avgEnlace)} <span className="text-xs text-slate-300">Días</span></p></div>
+              <div className="bg-white p-6 rounded-2xl shadow-sm border border-l-[8px] border-l-blue-500"><div className="flex justify-between mb-3"><div className="p-2 bg-blue-50 rounded-xl text-blue-600"><BarChart3 size={18}/></div></div><h3 className="text-[9px] font-black text-slate-400 uppercase tracking-widest">Ingreso Efectivo</h3><p className="text-4xl font-black text-slate-800 mt-1">{String(redMetrics.avgIngreso)} <span className="text-xs text-slate-300">Días</span></p></div>
+              <div className="bg-white p-6 rounded-2xl shadow-sm border border-l-[8px] border-l-red-500"><div className="flex justify-between mb-3"><div className="p-2 bg-red-50 rounded-xl text-red-600"><AlertTriangle size={18}/></div></div><h3 className="text-[9px] font-black text-slate-400 uppercase tracking-widest">Casos sobre meta</h3><p className="text-4xl font-black text-slate-800 mt-1">{String(redMetrics.fueraDePlazo)} <span className="text-xs text-slate-300">Casos</span></p></div>
+            </div>
+          </div>
+        )}
+
+        {/* PESTAÑA: CONFIGURACIÓN */}
         {activeTab === 'config' && currentUser?.rol === 'Admin' && (
           <div className="space-y-6 animate-in fade-in mt-12 md:mt-0">
-            <h2 className="text-2xl font-black text-slate-800">Configuración del Sistema</h2>
+            <h2 className="text-2xl font-black text-slate-800">Ajustes del Sistema</h2>
             <div className="bg-white p-8 rounded-2xl shadow-sm border max-w-3xl">
                <h3 className="font-black text-slate-800 text-base mb-2"><Activity size={18} className="inline text-blue-600"/> Catálogo de Dispositivos</h3>
                <div className="flex gap-3 mb-6"><input type="text" value={newCentroName} onChange={e=>setNewCentroName(e.target.value)} className={clsInp}/><button onClick={async ()=>{if(newCentroName.trim()) { await saveToCloud('settings', 'centros', { list: [...safeArr(centros), newCentroName.trim()].sort() }); setNewCentroName(''); }}} className="bg-slate-900 text-white px-6 py-3 rounded-xl text-[9px] font-black uppercase"><Plus size={14}/> Añadir</button></div>
                <div className="grid grid-cols-1 md:grid-cols-2 gap-3">{safeArr(centros).map(c => (<div key={c} className="flex justify-between items-center bg-slate-50 p-4 rounded-xl border group"><span className="text-[10px] font-black text-slate-700 uppercase">{String(c)}</span><button onClick={async ()=>{ if(window.confirm(`¿Eliminar ${c}?`)) await saveToCloud('settings', 'centros', { list: safeArr(centros).filter(x=>x!==c) }); }} className="text-slate-300 hover:text-red-600 p-1.5 bg-white rounded-lg opacity-0 group-hover:opacity-100"><Trash2 size={14}/></button></div>))}</div>
             </div>
             <div className="bg-white p-8 rounded-2xl shadow-sm border max-w-3xl mt-6">
-               <h3 className="font-black text-slate-800 text-base mb-2"><ClipboardCheck size={18} className="inline text-blue-600"/> Pautas Digitalizadas</h3>
+               <h3 className="font-black text-slate-800 text-base mb-2"><ClipboardCheck size={18} className="inline text-blue-600"/> Pautas Manuales</h3>
                <div className="space-y-3">
                  {safeArr(auditTemplates).map(t => (
                    <div key={t.id} className="flex justify-between items-center bg-slate-50 p-4 rounded-xl border">
@@ -1103,27 +921,9 @@ export default function App() {
                </div>
                <button onClick={() => { setEditingTemplateId(null); setTemplateForm({nombre: '', metodoCalculo: 'Suma Automática', instruccionesDiagnostico: '', encabezados: [{ id: 'e1', label: 'Centro Evaluado', type: 'text' }, { id: 'e2', label: 'Fecha', type: 'date' }], criterios: [{ id: 'c1', pregunta: '', opciones: 'SÍ=1, NO=0' }], rangos: [], tipo: 'Ambos'}); setIsTemplateModalOpen(true); }} className={clsBtnP + " mt-4"}><Plus size={14}/> Crear Nueva Pauta</button>
             </div>
-            <div className="mt-8 bg-indigo-50 p-8 rounded-2xl border border-indigo-100 max-w-3xl">
-               <h3 className="font-bold text-indigo-900 text-sm mb-4"><Wand2 size={18} className="inline"/> Llave API de Google IA</h3>
-               <div className="flex gap-4 items-center"><input type="password" value={apiConfigKey} onChange={e=>setApiConfigKey(e.target.value)} className={clsInp} placeholder="AIzaSyB..."/><button onClick={async ()=>{ await saveToCloud('settings', 'config', { ...appConfig, apiKey: apiConfigKey.trim() }); alert("Guardado!"); }} className={clsBtnP}>Guardar</button></div>
-            </div>
           </div>
         )}
       </main>
-
-      {/* ================= MODAL ASISTENTE IA DE DOCUMENTOS ================= */}
-      <ModalWrap isOpen={!!aiFileContext} mw="max-w-2xl">
-         <ModalHdr t={`Asistente IA: ${aiFileContext?.nombre}`} onClose={()=>{setAiFileContext(null); setAiResponse(''); setAiPrompt('');}} icon={BrainCircuit} />
-         <div className="p-6 flex flex-col h-[60vh] bg-slate-50">
-             <div className="flex-1 overflow-y-auto mb-4 bg-white p-5 rounded-2xl border shadow-inner text-sm whitespace-pre-wrap leading-relaxed text-slate-700">
-                 {aiResponse || <span className="text-slate-400 italic">Escribe abajo tu consulta sobre este documento (resumen, fechas, medicamentos detectados)...</span>}
-             </div>
-             <div className="flex gap-3 shrink-0">
-                 <Inp value={aiPrompt} onChange={e=>setAiPrompt(e.target.value)} placeholder="¿Qué necesitas saber del documento?" onKeyDown={e=>e.key==='Enter' && handleAskAiAboutFile()} disabled={isAnalyzingFile} />
-                 <button onClick={handleAskAiAboutFile} disabled={isAnalyzingFile || !aiPrompt.trim()} className={clsBtnP}>{isAnalyzingFile ? <Loader2 size={16} className="animate-spin"/> : <Sparkles size={16}/>}</button>
-             </div>
-         </div>
-      </ModalWrap>
 
       {/* ================= MODALES COMPLETOS ================= */}
       <ModalWrap isOpen={isCaseModalOpen}>
@@ -1229,14 +1029,13 @@ export default function App() {
           {activeModalTab === 'archivos' && (
             <div className="space-y-4">
                <div className="bg-indigo-50 p-6 rounded-2xl text-center border-dashed border-2 border-indigo-200">
-                 <label className="cursor-pointer font-black text-xs text-indigo-700 uppercase"><UploadCloud size={20} className="mx-auto mb-2"/> {isUploadingCaseFile ? 'Subiendo...' : 'Subir Documento (Para IA)'}<input type="file" className="hidden" disabled={isUploadingCaseFile} onChange={handleCaseFileUpload} /></label>
+                 <label className="cursor-pointer font-black text-xs text-indigo-700 uppercase"><UploadCloud size={20} className="mx-auto mb-2"/> {isUploadingCaseFile ? 'Subiendo...' : 'Subir Documento Clínico'}<input type="file" className="hidden" disabled={isUploadingCaseFile} onChange={handleCaseFileUpload} /></label>
                </div>
                <div className="space-y-2">
                  {safeArr(caseForm.archivos).map(f => (
                    <div key={f.id} className="p-3 bg-white border rounded-xl flex justify-between items-center group hover:border-indigo-200 transition-colors">
                       <span className="text-xs font-black">{f.nombre}</span>
                       <div className="flex gap-2">
-                        <button onClick={(e)=>{e.preventDefault(); setAiFileContext(f);}} className="p-2 bg-indigo-50 text-indigo-600 hover:bg-indigo-600 hover:text-white rounded-lg transition-all" title="Analizar con IA"><BrainCircuit size={14}/></button>
                         <a href={f.url} target="_blank" rel="noreferrer" className="p-2 bg-blue-50 text-blue-600 rounded-lg hover:bg-blue-100 transition-colors"><ExternalLink size={14}/></a>
                         <button onClick={()=>setCaseForm(p=>({...p, archivos: p.archivos.filter(a=>a.id!==f.id)}))} className="text-red-400 p-2 hover:bg-red-50 rounded-lg ml-2"><Trash2 size={14}/></button>
                       </div>
@@ -1254,7 +1053,7 @@ export default function App() {
         <div className="flex bg-slate-50 border-b shrink-0 px-6">
           <button onClick={() => setActiveDocModalTab('datos')} className={`px-6 py-4 text-[10px] font-black uppercase tracking-[0.2em] border-b-4 ${activeDocModalTab === 'datos' ? 'border-blue-600 text-blue-600 bg-white' : 'border-transparent text-slate-400'}`}>Datos Generales</button>
           <button onClick={() => setActiveDocModalTab('bitacora')} className={`px-6 py-4 text-[10px] font-black uppercase tracking-[0.2em] border-b-4 ${activeDocModalTab === 'bitacora' ? 'border-blue-600 text-blue-600 bg-white' : 'border-transparent text-slate-400'}`}>Tareas y Fases</button>
-          <button onClick={() => setActiveDocModalTab('archivos')} className={`px-6 py-4 text-[10px] font-black uppercase tracking-[0.2em] border-b-4 ${activeDocModalTab === 'archivos' ? 'border-blue-600 text-blue-600 bg-white' : 'border-transparent text-slate-400'}`}>Archivos e IA</button>
+          <button onClick={() => setActiveDocModalTab('archivos')} className={`px-6 py-4 text-[10px] font-black uppercase tracking-[0.2em] border-b-4 ${activeDocModalTab === 'archivos' ? 'border-blue-600 text-blue-600 bg-white' : 'border-transparent text-slate-400'}`}>Archivos y Borradores</button>
         </div>
         <div className="p-6 overflow-y-auto flex-1 bg-white space-y-6">
           {activeDocModalTab === 'datos' && (
@@ -1319,7 +1118,6 @@ export default function App() {
                      <div key={f.id} className="flex justify-between items-center p-3 bg-white border-2 border-indigo-50 rounded-xl group hover:border-indigo-200 transition-colors">
                         <span className="text-xs font-black text-indigo-900">{f.nombre} <span className="text-[9px] text-slate-400 ml-2 font-medium">{f.size}</span></span>
                         <div className="flex gap-2 items-center">
-                          <button onClick={(e)=>{e.preventDefault(); setAiFileContext(f);}} className="p-2 bg-indigo-50 text-indigo-600 hover:bg-indigo-600 hover:text-white rounded-lg transition-all" title="Analizar con IA"><BrainCircuit size={14}/></button>
                           {f.url && <a href={f.url} target="_blank" rel="noreferrer" className="text-[10px] font-black uppercase text-indigo-600 hover:bg-indigo-50 px-2 py-1 rounded flex items-center gap-1"><ExternalLink size={12}/> Abrir</a>}
                           {currentUser?.rol === 'Admin' && <button onClick={()=>setDocForm(p=>({...p, archivosOficiales: p.archivosOficiales.filter(a=>a.id!==f.id)}))} className="text-red-400 p-1 hover:bg-red-50 rounded"><Trash2 size={14}/></button>}
                         </div>
@@ -1346,7 +1144,6 @@ export default function App() {
                      <div key={f.id} className="flex justify-between items-center p-3 bg-white border border-slate-200 rounded-xl group hover:border-indigo-200 transition-colors">
                         <span className="text-xs font-bold text-slate-700">{f.nombre} <span className="text-[9px] text-slate-400 ml-2">{f.size}</span></span>
                         <div className="flex gap-2 items-center">
-                          <button onClick={(e)=>{e.preventDefault(); setAiFileContext(f);}} className="p-2 bg-indigo-50 text-indigo-600 hover:bg-indigo-600 hover:text-white rounded-lg transition-all" title="Analizar con IA"><BrainCircuit size={14}/></button>
                           {f.url && <a href={f.url} target="_blank" rel="noreferrer" className="text-[10px] font-black uppercase text-blue-600 hover:bg-blue-50 px-2 py-1 rounded flex items-center gap-1"><ExternalLink size={12}/> Abrir</a>}
                           {currentUser?.rol === 'Admin' && <button onClick={()=>setDocForm(p=>({...p, archivos: p.archivos.filter(a=>a.id!==f.id)}))} className="text-red-400 p-1 hover:bg-red-50 rounded ml-2"><Trash2 size={14}/></button>}
                         </div>
@@ -1363,14 +1160,8 @@ export default function App() {
 
       <ModalWrap isOpen={isTemplateModalOpen} mw="max-w-5xl">
         <ModalHdr t={editingTemplateId ? 'Editar Formulario' : 'Diseñador de Pautas'} onClose={()=>setIsTemplateModalOpen(false)} icon={Settings} />
-        <div className="p-6 md:p-8 overflow-y-auto flex-1 bg-slate-50 grid grid-cols-1 lg:grid-cols-5 gap-8">
-            <div className="lg:col-span-2 space-y-6">
-              <div className="bg-indigo-50 p-6 rounded-2xl border border-indigo-100 text-center">
-                <h4 className="text-[11px] font-black text-indigo-900 uppercase tracking-widest mb-3"><Wand2 size={16} className="inline mr-2"/> Carga IA</h4>
-                <label className="flex items-center justify-center w-full h-12 border-2 border-indigo-300 border-dashed rounded-xl cursor-pointer bg-white mb-2"><span className="text-[9px] font-black uppercase text-indigo-700">Subir PDF</span><input type="file" className="hidden" accept=".pdf" onChange={handlePdfUploadForAI} /></label>
-                <Txt value={rawTextForAI} onChange={e=>setRawTextForAI(e.target.value)} className="mb-2 text-xs min-h-[60px]" placeholder="O pega el texto..." />
-                <button onClick={handleProcessRawTextForAI} disabled={!rawTextForAI.trim() || isDigitizing} className="w-full bg-indigo-600 text-white py-3 rounded-xl text-[10px] font-black uppercase">{isDigitizing ? 'Procesando...' : 'Generar'}</button>
-              </div>
+        <div className="p-6 md:p-8 overflow-y-auto flex-1 bg-slate-50 grid grid-cols-1 lg:grid-cols-2 gap-8">
+            <div className="flex flex-col gap-6">
               <div className="bg-white p-5 border border-slate-200 rounded-2xl">
                 <Lbl>Nombre del Instrumento</Lbl><Inp value={templateForm.nombre} onChange={e=>setTemplateForm({...templateForm, nombre: e.target.value})}/>
                 <Lbl className="mt-4">Método de Evaluación</Lbl>
@@ -1381,8 +1172,6 @@ export default function App() {
                   <div className="mt-3"><Lbl className="text-amber-600">Instrucciones</Lbl><Txt value={templateForm.instruccionesDiagnostico || ''} onChange={e=>setTemplateForm({...templateForm, instruccionesDiagnostico: e.target.value})} className="bg-amber-50 border-amber-200 text-xs"/></div>
                 )}
               </div>
-            </div>
-            <div className="lg:col-span-3 flex flex-col gap-6">
               <div className="bg-white p-5 border border-slate-200 rounded-2xl">
                 <Lbl className="bg-slate-50 p-2 rounded-lg">1. Encabezados</Lbl>
                 {safeArr(templateForm.encabezados).map((h, i) => (
@@ -1394,9 +1183,11 @@ export default function App() {
                 ))}
                 <button onClick={()=>setTemplateForm({...templateForm, encabezados: [...safeArr(templateForm.encabezados), {id: `enc_${Date.now()}`, label: '', type: 'text'}]})} className="text-[9px] text-slate-500 font-black uppercase mt-2 hover:bg-slate-50 p-2 rounded-lg"><Plus size={12} className="inline"/> Campo Extra</button>
               </div>
+            </div>
+            <div className="flex flex-col gap-6">
               <div className="bg-white p-5 border border-slate-200 rounded-2xl flex-1">
-                <Lbl className="bg-slate-50 p-2 rounded-lg">2. Criterios</Lbl>
-                <div className="max-h-[300px] overflow-y-auto pr-2 space-y-3">
+                <Lbl className="bg-slate-50 p-2 rounded-lg">2. Criterios Manuales</Lbl>
+                <div className="max-h-[400px] overflow-y-auto pr-2 space-y-3">
                   {safeArr(templateForm.criterios).map((c, i) => (
                     <div key={i} className="p-4 border-2 border-slate-100 rounded-xl bg-slate-50 relative group">
                       <button onClick={()=>{const newC=[...safeArr(templateForm.criterios)]; newC.splice(i,1); setTemplateForm({...templateForm, criterios: newC});}} className="absolute top-2 right-2 text-slate-300 hover:text-red-500"><Trash2 size={14}/></button>
@@ -1405,7 +1196,7 @@ export default function App() {
                     </div>
                   ))}
                 </div>
-                <button onClick={()=>setTemplateForm({...templateForm, criterios: [...safeArr(templateForm.criterios), {id: `crit_${Date.now()}`, pregunta: '', opciones: 'SÍ=1, NO=0'}]})} className="text-[10px] text-indigo-600 font-black uppercase mt-4 hover:bg-indigo-50 p-2 rounded-lg"><Plus size={14} className="inline"/> Fila Manual</button>
+                <button onClick={()=>setTemplateForm({...templateForm, criterios: [...safeArr(templateForm.criterios), {id: `crit_${Date.now()}`, pregunta: '', opciones: 'SÍ=1, NO=0'}]})} className="text-[10px] text-indigo-600 font-black uppercase mt-4 hover:bg-indigo-50 p-2 rounded-lg w-full border-2 border-dashed border-indigo-200"><Plus size={14} className="inline"/> Agregar Fila Manual</button>
               </div>
             </div>
         </div>
