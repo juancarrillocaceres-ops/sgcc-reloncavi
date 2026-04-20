@@ -10,22 +10,22 @@ import {
   Settings, UserPlus, Shield, Key, Timer, TrendingUp, BarChart3, Target, Printer, ExternalLink
 } from 'lucide-react';
 
-// === CONFIGURACIÓN DE FIREBASE ===
-const firebaseConfig = typeof __firebase_config !== 'undefined' ? JSON.parse(__firebase_config) : {
-  apiKey: "AIzaSyADlW5WRPWOokJQbVFUF9UuYRxLXa4-MqU",
-  authDomain: "sgcc-reloncavi.firebaseapp.com",
-  projectId: "sgcc-reloncavi",
-  storageBucket: "sgcc-reloncavi.firebasestorage.app",
-  messagingSenderId: "247963397382",
-  appId: "1:247963397382:web:972ee82f2cc7b8f7760287",
-  measurementId: "G-KCWQ4H964D"
+// === CONFIGURACIÓN DE FIREBASE (LLAVES OFICIALES SGCC PRO) ===
+const firebaseConfig = {
+  apiKey: "AIzaSyC2uJ1l_9bdNvJkarH8nsUEdd2oiU_xsRA",
+  authDomain: "sgcc-pro-reloncavi.firebaseapp.com",
+  projectId: "sgcc-pro-reloncavi",
+  storageBucket: "sgcc-pro-reloncavi.firebasestorage.app",
+  messagingSenderId: "402468407998",
+  appId: "1:402468407998:web:7c089c0b77d315518fecef",
+  measurementId: "G-2NT0LCJDCM"
 };
 
 const app = initializeApp(firebaseConfig);
 const auth = getAuth(app);
 const db = getFirestore(app);
 const storage = getStorage(app);
-const appId = typeof __app_id !== 'undefined' ? __app_id : "sgcc-reloncavi-v1";
+const appId = "sgcc-pro-reloncavi-v1";
 
 // --- UTILIDADES ---
 const safeArr = (arr) => Array.isArray(arr) ? arr : [];
