@@ -66,7 +66,7 @@ const generateTextWithRetry = async (apiKey, prompt, sys = "", inlineData = null
   
   if (inlineData) {
     let mime = inlineData.mimeType;
-    // Forzamos a PDF si Firebase lo guardó como binario genérico o vacío para evitar errores IA
+    // Forzamos a reconocer PDF para evitar errores de tipo en proyectos Cloud/Blaze
     if (!mime || mime === 'application/octet-stream' || mime === '') {
         mime = 'application/pdf'; 
     }
@@ -78,18 +78,28 @@ const generateTextWithRetry = async (apiKey, prompt, sys = "", inlineData = null
   
   for (let i = 0; i < 5; i++) {
     try {
-      // Usamos el modelo más estable y comprobamos errores para no colapsar la app
-      const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${apiKey}`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) });
+      // USAMOS GEMINI 1.5 PRO: El modelo oficial más robusto e inteligente, siempre disponible en Google Cloud.
+      const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-pro:generateContent?key=${apiKey}`, { 
+        method: "POST", 
+        headers: { "Content-Type": "application/json" }, 
+        body: JSON.stringify(payload) 
+      });
+
       if (!res.ok) {
-        if (res.status === 429) throw new Error("Límite de consultas gratuitas de IA alcanzado (Error 429). Por favor, espera 1 minuto e intenta de nuevo.");
-        const errData = await res.json().catch(() => ({}));
-        throw new Error(`API Error ${res.status}: ${errData.error?.message || 'Revisa que la Generative Language API esté habilitada en Google Cloud.'}`);
+        if (res.status === 429) {
+            throw new Error("Límite de consultas excedido (Error 429). Por favor, espera 1 minuto.");
+        }
+        if (res.status === 404) {
+            throw new Error("Modelo no encontrado (Error 404). Revisa si habilitaste la Generative Language API en Google Cloud.");
+        }
+        throw new Error(`Error HTTP: ${res.status}`);
       }
+      
       const data = await res.json();
       if (data.candidates?.[0]?.content?.parts?.[0]?.text) return data.candidates[0].content.parts[0].text;
-      throw new Error("Respuesta vacía");
+      throw new Error("Respuesta vacía de la IA.");
     } catch (e) {
-      if (e.message && (e.message.includes('429') || e.message.includes('API Error'))) throw e; 
+      if (e.message.includes('429') || e.message.includes('404')) throw e;
       if (i === 4) throw e;
       await new Promise(r => setTimeout(r, [1000, 2000, 4000, 8000, 16000][i]));
     }
@@ -155,6 +165,7 @@ export default function App() {
   const [activeModalTab, setActiveModalTab] = useState('datos');
   const [isCaseModalOpen, setIsCaseModalOpen] = useState(false);
   
+  // MEJORA PRO: Estado con Barrera incluida
   const [newBitacoraEntry, setNewBitacoraEntry] = useState({ tipo: 'Nota Adm.', descripcion: '', responsable: '', fechaCumplimiento: '', barrera: 'Ninguna' });
   const [newCaseLink, setNewCaseLink] = useState({ nombre: '', url: '' }); 
 
@@ -174,12 +185,13 @@ export default function App() {
   
   const [printingAudit, setPrintingAudit] = useState(null);
   const [rawTextForAI, setRawTextForAI] = useState('');
-
+  
+  // ESTADOS IA PRO
   const [aiFileContext, setAiFileContext] = useState(null);
   const [aiPrompt, setAiPrompt] = useState('');
   const [aiResponse, setAiResponse] = useState('');
   const [isAnalyzingFile, setIsAnalyzingFile] = useState(false);
-  
+
   const [centroFilterAuditorias, setCentroFilterAuditorias] = useState('Todos');
   const [centroFilterConsultorias, setCentroFilterConsultorias] = useState('Todos');
   const [caseFilterCentro, setCaseFilterCentro] = useState('Todos');
@@ -217,7 +229,7 @@ export default function App() {
         }
       } catch (e) { 
         console.warn("Auth", e.message); 
-        setDbStatus('⚠️ Error: Falta habilitar "Anónimo" en Authentication de Firebase.');
+        setDbStatus('⚠️ Error de Autenticación.');
       }
     };
     initAuth();
@@ -230,7 +242,7 @@ export default function App() {
 
   useEffect(() => {
     if (!firebaseUser) return;
-    const errH = (err) => { console.error(err); setDbStatus('⚠️ Error de Permisos. Revisa las Reglas de Firestore.'); };
+    const errH = (err) => { console.error(err); setDbStatus('⚠️ Error de Permisos Firestore.'); };
     
     const unsubCases = onSnapshot(collection(db, 'artifacts', appId, 'public', 'data', 'cases'), snap => setCases(safeArr(snap.docs.map(d => d.data()))), errH);
     const unsubDocs = onSnapshot(collection(db, 'artifacts', appId, 'public', 'data', 'docs'), snap => setDocs(safeArr(snap.docs.map(d => d.data()))), errH);
@@ -337,6 +349,7 @@ export default function App() {
 
   const handleExportCSV = () => {
     const BOM = '\uFEFF';
+    // MEJORA PRO: Inclusión de columna Barrera Detectada
     const headers = ['ID_Seguimiento', 'RUT', 'Paciente', 'Edad', 'Origen', 'Destino', 'Estado', 'Fecha_Egreso', 'Fecha_Recepcion', 'Fecha_Ingreso_Efectivo', 'Plazo_Meta_Dias', 'Brecha_Dias', 'Ultimo_Hito_Fecha', 'Ultimo_Hito_Tipo', 'Responsable_Hito', 'Barrera_Detectada'];
     const rows = filteredCases.map(c => {
        const target = getTargetDaysForCase(c.destino);
@@ -347,25 +360,26 @@ export default function App() {
     const csvContent = BOM + [headers.join(';'), ...rows.map(r => r.join(';'))].join('\n');
     const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
     const link = document.createElement("a");
-    link.href = URL.createObjectURL(blob); link.download = `Reporte_Red_${new Date().toISOString().split('T')[0]}.csv`; link.click();
+    link.href = URL.createObjectURL(blob); link.download = `Reporte_Red_PRO_${new Date().toISOString().split('T')[0]}.csv`; link.click();
   };
 
   const copyToClipboard = (text) => { navigator.clipboard.writeText(text); alert("Copiado al portapapeles"); };
 
   const handleWipeDirectory = async () => {
-    if(window.confirm('⚠️ ¿Estás seguro de eliminar TODO el directorio para empezar de cero?')) {
+    if(window.confirm('⚠️ ¿Estás seguro de eliminar TODO el directorio?')) {
        safeArr(directory).forEach(async (d) => { if (d && d.id) await deleteFromCloud('directory', d.id); });
        alert('Directorio limpiado.');
     }
   };
 
+  // --- MEJORA PRO: CHAT IA CON DOCUMENTOS ---
   const handleAskAiAboutFile = async () => {
     if (!appConfig.apiKey) return alert("Falta Clave API de IA en la Configuración.");
     if (!aiPrompt.trim()) return;
     setIsAnalyzingFile(true); setAiResponse('');
     try {
       const res = await fetch(aiFileContext.url);
-      if (!res.ok) throw new Error("CORS");
+      if (!res.ok) throw new Error("Acceso bloqueado por seguridad del servidor (CORS).");
       const blob = await res.blob();
       const reader = new FileReader();
       reader.readAsDataURL(blob);
@@ -373,20 +387,21 @@ export default function App() {
         try {
           const result = await generateTextWithRetry(
             appConfig.apiKey, 
-            `${aiPrompt}\n\n[Documento: ${aiFileContext.nombre}]`, 
-            "Responde basándote estrictamente en el documento proporcionado.", 
-            { mimeType: blob.type || 'application/pdf', data: reader.result.split(',')[1] }
+            `${aiPrompt}\n\n[Analiza este documento: ${aiFileContext.nombre}]`, 
+            "Eres un analista clínico experto. Responde basándote estrictamente en el PDF proporcionado.", 
+            { mimeType: 'application/pdf', data: reader.result.split(',')[1] }
           );
           setAiResponse(result);
         } catch (err) { setAiResponse(`⚠️ Error IA: ${err.message}`); }
         setIsAnalyzingFile(false);
       };
     } catch (e) {
-      setAiResponse("⚠️ Error de acceso al archivo (CORS). Firebase está bloqueando la descarga para la IA. Por favor, aplica las reglas CORS mediante Google Cloud Shell.");
+      setAiResponse(`⚠️ Error: ${e.message}. Asegúrate de habilitar CORS en tu consola de Google Cloud.`);
       setIsAnalyzingFile(false);
     }
   };
 
+  // --- IA Y GENERACIÓN ---
   const extractFormFromAI = async (prompt, inlineData = null) => {
     if (!appConfig.apiKey) return alert("Falta configurar la Clave API de IA en Configuración.");
     setIsDigitizing(true);
@@ -405,7 +420,7 @@ export default function App() {
         criterios: safeArr(parsedData.criterios)
       });
       alert(`¡Pauta digitalizada!\nTítulo: ${parsedData.nombre}\nRevisa el Diseñador para ajustar detalles.`);
-    } catch (err) { alert(`Error IA: ${err.message}`); } 
+    } catch (err) { alert(`Error IA: ${err.message}\n\nRevisa tu Llave API o comprueba si llegaste al límite gratuito (Error 429).`); } 
     finally { setIsDigitizing(false); setRawTextForAI(''); }
   };
 
@@ -453,6 +468,7 @@ export default function App() {
   const handleAddBitacora = () => {
     if (!newBitacoraEntry.descripcion) return;
     setCaseForm({ ...caseForm, bitacora: [{ id: Date.now(), ...newBitacoraEntry, fecha: new Date().toISOString().split('T')[0], completada: false }, ...safeArr(caseForm.bitacora)] });
+    // MEJORA: Resetea el valor de la barrera para el próximo ingreso
     setNewBitacoraEntry({ tipo: 'Nota Adm.', descripcion: '', responsable: '', fechaCumplimiento: '', barrera: 'Ninguna' });
   };
   
@@ -508,6 +524,7 @@ export default function App() {
     }
   };
 
+  // --- CARGA DE ARCHIVOS A FIREBASE STORAGE ---
   const handleCaseFileUpload = async (e) => {
     const file = e.target.files[0];
     if (!file) return;
