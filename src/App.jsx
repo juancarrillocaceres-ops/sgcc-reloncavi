@@ -1407,27 +1407,34 @@ export default function App() {
                 
                 {/* MEJORA: RANGOS DE PUNTAJE */}
                 {templateForm.metodoCalculo === 'Suma Automática' && (
-                  <div className="mt-4 p-4 bg-blue-50 rounded-xl border border-blue-100">
-                    <Lbl className="text-blue-800">Definir Rangos de Puntaje (Opcional)</Lbl>
-                    <div className="flex gap-2 mb-2">
-                      <Inp type="number" placeholder="Min" value={newRango.min} onChange={e=>setNewRango({...newRango, min: e.target.value})} className="w-20" />
-                      <Inp type="number" placeholder="Max" value={newRango.max} onChange={e=>setNewRango({...newRango, max: e.target.value})} className="w-20" />
-                      <Inp placeholder="Resultado (Ej: Riesgo Bajo)" value={newRango.resultado} onChange={e=>setNewRango({...newRango, resultado: e.target.value})} className="flex-1" />
-                      <button onClick={()=>{
-                         if(newRango.min !== '' && newRango.max !== '' && newRango.resultado) {
-                            setTemplateForm(p=>({...p, rangos: [...safeArr(p.rangos), { id: Date.now(), min: Number(newRango.min), max: Number(newRango.max), resultado: newRango.resultado }]}));
-                            setNewRango({min:'', max:'', resultado:''});
-                         }
-                      }} className="bg-blue-600 text-white px-3 rounded-xl font-black"><Plus size={14}/></button>
+                  <div className="mt-4 p-5 bg-blue-50/80 rounded-2xl border border-blue-100 shadow-sm">
+                    <Lbl className="text-blue-800 text-xs">Definir Rangos de Puntaje (Opcional)</Lbl>
+                    <p className="text-[10px] text-blue-600 mb-4 font-bold">El sistema asignará el resultado según estos cortes.</p>
+                    
+                    <div className="flex flex-col gap-3 mb-5">
+                      <div className="grid grid-cols-2 gap-3">
+                        <div><Lbl className="mt-0 !text-[10px]">Puntaje Mínimo</Lbl><Inp type="number" placeholder="Ej: 0" value={newRango.min} onChange={e=>setNewRango({...newRango, min: e.target.value})} /></div>
+                        <div><Lbl className="mt-0 !text-[10px]">Puntaje Máximo</Lbl><Inp type="number" placeholder="Ej: 5" value={newRango.max} onChange={e=>setNewRango({...newRango, max: e.target.value})} /></div>
+                      </div>
+                      <div className="flex gap-3 items-end">
+                        <div className="flex-1"><Lbl className="mt-0 !text-[10px]">Diagnóstico / Resultado</Lbl><Inp placeholder="Ej: Riesgo Bajo" value={newRango.resultado} onChange={e=>setNewRango({...newRango, resultado: e.target.value})} /></div>
+                        <button onClick={()=>{
+                           if(newRango.min !== '' && newRango.max !== '' && newRango.resultado) {
+                              setTemplateForm(p=>({...p, rangos: [...safeArr(p.rangos), { id: Date.now(), min: Number(newRango.min), max: Number(newRango.max), resultado: newRango.resultado }]}));
+                              setNewRango({min:'', max:'', resultado:''});
+                           }
+                        }} className="bg-blue-600 text-white px-5 py-3 rounded-xl font-black h-[46px] hover:bg-blue-700 transition-colors shadow-md flex items-center justify-center"><Plus size={18}/></button>
+                      </div>
                     </div>
-                    <div className="space-y-1 max-h-32 overflow-y-auto">
+                    
+                    <div className="space-y-2 max-h-32 overflow-y-auto pr-2">
                       {safeArr(templateForm.rangos).sort((a,b)=>a.min-b.min).map(r => (
-                         <div key={r.id} className="flex justify-between items-center bg-white p-2 rounded-lg border text-[10px] font-bold">
-                            <span>De {r.min} a {r.max} pts ➡️ <span className="text-blue-600">{r.resultado}</span></span>
-                            <button onClick={()=>setTemplateForm(p=>({...p, rangos: p.rangos.filter(x=>x.id!==r.id)}))} className="text-red-500"><Trash2 size={12}/></button>
+                         <div key={r.id} className="flex justify-between items-center bg-white p-3 rounded-xl border text-xs font-bold shadow-sm">
+                            <span>De {r.min} a {r.max} pts ➡️ <span className="text-blue-600 uppercase ml-1">{r.resultado}</span></span>
+                            <button onClick={()=>setTemplateForm(p=>({...p, rangos: p.rangos.filter(x=>x.id!==r.id)}))} className="text-red-400 hover:text-red-600 p-1.5 hover:bg-red-50 rounded-lg transition-colors"><Trash2 size={16}/></button>
                          </div>
                       ))}
-                      {safeArr(templateForm.rangos).length === 0 && <p className="text-[9px] text-slate-400 italic">Si no hay rangos, usará Óptimo (≥75%) por defecto.</p>}
+                      {safeArr(templateForm.rangos).length === 0 && <p className="text-[10px] text-slate-400 italic text-center py-2">Si no hay rangos, usará Óptimo ({'>='}75%) por defecto.</p>}
                     </div>
                   </div>
                 )}
