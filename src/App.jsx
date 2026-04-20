@@ -8,7 +8,7 @@ import {
   Bell, Copy, Loader2, Edit2, Trash2, ListTodo, MessageSquare, CheckSquare, Square, Calendar,
   UploadCloud, Paperclip, File as FileIcon, Lock, User, ClipboardCheck, BookOpen, Download,
   Wand2, Settings, UserPlus, Shield, Key, Timer, TrendingUp, BarChart3, Target, Printer, ExternalLink,
-  BrainCircuit, Sparkles, ShieldAlert
+  BrainCircuit, Sparkles
 } from 'lucide-react';
 
 const firebaseConfig = typeof __firebase_config !== 'undefined' ? JSON.parse(__firebase_config) : {
@@ -66,7 +66,6 @@ const generateTextWithRetry = async (apiKey, prompt, sys = "", inlineData = null
   
   if (inlineData) {
     let mime = inlineData.mimeType;
-    // Forzamos a PDF si Firebase lo guardó como binario genérico o vacío para evitar errores IA
     if (!mime || mime === 'application/octet-stream' || mime === '') {
         mime = 'application/pdf'; 
     }
@@ -78,20 +77,20 @@ const generateTextWithRetry = async (apiKey, prompt, sys = "", inlineData = null
   
   for (let i = 0; i < 5; i++) {
     try {
-      const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${apiKey}`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) });
-      if (!res.ok) throw new Error(`HTTP error! status: ${res.status}`);
+      const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-09-2025:generateContent?key=${apiKey}`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) });
       const data = await res.json();
+      if (data.error) throw new Error(data.error.message);
       if (data.candidates?.[0]?.content?.parts?.[0]?.text) return data.candidates[0].content.parts[0].text;
-      throw new Error("Respuesta vacía");
+      throw new Error("Respuesta vacía de IA");
     } catch (e) {
-      if (i === 4) throw e;
+      if (i === 4 || (!e.message.includes("429") && !e.message.includes("demand"))) throw e;
       await new Promise(r => setTimeout(r, [1000, 2000, 4000, 8000, 16000][i]));
     }
   }
 };
 
 // --- COMPONENTES UI REUTILIZABLES ---
-const clsInp = "w-full border-2 border-slate-200 p-3 rounded-xl text-sm font-bold outline-none focus:border-blue-500 bg-white shadow-sm transition-colors";
+const clsInp = "w-full border-2 border-slate-200 p-3 rounded-xl text-sm font-bold outline-none focus:border-blue-500 bg-white shadow-sm transition-colors disabled:bg-slate-50";
 const clsLbl = "block text-[10px] font-black text-slate-500 uppercase tracking-widest mb-1.5 mt-2";
 const clsBtnP = "bg-blue-600 text-white px-5 py-3 rounded-xl text-[10px] font-black uppercase tracking-widest hover:bg-blue-700 shadow-md transition-all disabled:opacity-50 flex items-center justify-center gap-2 cursor-pointer";
 const clsBtnS = "px-5 py-3 text-slate-500 font-bold text-xs uppercase tracking-widest hover:bg-slate-200 bg-slate-100 rounded-xl transition-colors cursor-pointer";
@@ -149,9 +148,7 @@ export default function App() {
   const [activeModalTab, setActiveModalTab] = useState('datos');
   const [isCaseModalOpen, setIsCaseModalOpen] = useState(false);
   
-  // MEJORA: Estado inicial con 'barrera'
   const [newBitacoraEntry, setNewBitacoraEntry] = useState({ tipo: 'Nota Adm.', descripcion: '', responsable: '', fechaCumplimiento: '', barrera: 'Ninguna' });
-  const [newCaseLink, setNewCaseLink] = useState({ nombre: '', url: '' }); 
 
   const defaultDocState = { nombre: '', ambito: 'Red Integral', fase: 'Levantamiento', avance: 0, prioridad: 'Media', fechaResolucion: '', notas: '', bitacora: [], archivos: [], archivosOficiales: [] };
   const [isDocModalOpen, setIsDocModalOpen] = useState(false);
@@ -159,18 +156,18 @@ export default function App() {
   const [docForm, setDocForm] = useState(defaultDocState);
   const [activeDocModalTab, setActiveDocModalTab] = useState('datos');
   const [newDocBitacoraEntry, setNewDocBitacoraEntry] = useState({ tipo: 'Tarea', descripcion: '', responsable: '', fechaCumplimiento: '' });
-  const [newDocLink, setNewDocLink] = useState({ nombre: '', url: '' }); 
 
   const [isAuditModalOpen, setIsAuditModalOpen] = useState(false);
   const [isTemplateModalOpen, setIsTemplateModalOpen] = useState(false);
   const [editingTemplateId, setEditingTemplateId] = useState(null);
-  const [auditForm, setAuditForm] = useState({ centro: '', templateId: '', headerAnswers: {}, answers: {}, tipo: 'Auditoría', observaciones: '', fecha: new Date().toISOString().split('T')[0], estadoManual: '' });
+  const [auditForm, setAuditForm] = useState({ centro: '', templateId: '', headerAnswers: {}, answers: {}, tipo: 'Auditoría', observaciones: '', fecha: new Date().toISOString().split('T')[0], estadoFinal: '' });
   const [templateForm, setTemplateForm] = useState({ nombre: '', metodoCalculo: 'Suma Automática', instruccionesDiagnostico: '', encabezados: [{ id: 'enc_1', label: 'Centro Evaluado', type: 'text' }, { id: 'enc_2', label: 'Fecha', type: 'date' }], criterios: [{ id: 'crit_1', pregunta: '', opciones: 'SÍ=1, NO=0' }], rangos: [], tipo: 'Ambos' });
+  const [newRango, setNewRango] = useState({ min: '', max: '', resultado: '' });
   
   const [printingAudit, setPrintingAudit] = useState(null);
-  const [rawTextForAI, setRawTextForAI] = useState('');
+  const [aiPautaText, setAiPautaText] = useState('');
+  const [aiPautaFile, setAiPautaFile] = useState(null);
   
-  // MEJORA: Estados para IA Lectura de Documentos
   const [aiFileContext, setAiFileContext] = useState(null);
   const [aiPrompt, setAiPrompt] = useState('');
   const [aiResponse, setAiResponse] = useState('');
@@ -181,7 +178,7 @@ export default function App() {
   const [caseFilterCentro, setCaseFilterCentro] = useState('Todos');
   const [caseSearch, setCaseSearch] = useState('');
   
-  const [isDigitizing, setIsDigitizing] = useState(false);
+  const [isGeneratingPauta, setIsGeneratingPauta] = useState(false);
   const [isUploadingCaseFile, setIsUploadingCaseFile] = useState(false);
   const [isUploadingDocFile, setIsUploadingDocFile] = useState(false);
   
@@ -203,6 +200,7 @@ export default function App() {
   const [isGeneratingCaseSummary, setIsGeneratingCaseSummary] = useState(false);
   const [caseSummary, setCaseSummary] = useState('');
 
+  // --- EFECTOS Y CONEXIÓN A FIREBASE ---
   useEffect(() => {
     const initAuth = async () => {
       try {
@@ -212,7 +210,6 @@ export default function App() {
           await signInAnonymously(auth);
         }
       } catch (e) { 
-        console.warn("Auth", e.message); 
         setDbStatus('⚠️ Error: Falta habilitar "Anónimo" en Authentication de Firebase.');
       }
     };
@@ -226,7 +223,7 @@ export default function App() {
 
   useEffect(() => {
     if (!firebaseUser) return;
-    const errH = (err) => { console.error(err); setDbStatus('⚠️ Error de Permisos. Revisa las Reglas de Firestore.'); };
+    const errH = (err) => { console.error(err); setDbStatus('⚠️ Error de Permisos. Revisa Reglas de Firestore.'); };
     
     const unsubCases = onSnapshot(collection(db, 'artifacts', appId, 'public', 'data', 'cases'), snap => setCases(safeArr(snap.docs.map(d => d.data()))), errH);
     const unsubDocs = onSnapshot(collection(db, 'artifacts', appId, 'public', 'data', 'docs'), snap => setDocs(safeArr(snap.docs.map(d => d.data()))), errH);
@@ -236,7 +233,7 @@ export default function App() {
     const unsubUsers = onSnapshot(collection(db, 'artifacts', appId, 'public', 'data', 'users'), snap => setUsers(safeArr(snap.docs.map(d => d.data()))), errH);
     const unsubCentros = onSnapshot(doc(db, 'artifacts', appId, 'public', 'data', 'settings', 'centros'), snap => { if (snap.exists() && safeArr(snap.data().list).length > 0) setCentros(snap.data().list); }, errH);
     const unsubConfig = onSnapshot(doc(db, 'artifacts', appId, 'public', 'data', 'settings', 'config'), snap => { 
-      if (snap.exists()) { const data = snap.data(); setAppConfig({ targetDays: 7, plazos: {}, ...data }); if (data?.apiKey) setApiConfigKey(data.apiKey); } 
+      if (snap.exists()) { const data = snap.data(); setAppConfig(prev => ({ ...prev, ...data })); if (data?.apiKey) setApiConfigKey(data.apiKey); } 
     }, errH);
 
     return () => { unsubCases(); unsubDocs(); unsubAudits(); unsubTemplates(); unsubDir(); unsubUsers(); unsubCentros(); unsubConfig(); };
@@ -304,7 +301,7 @@ export default function App() {
   const handleLogin = (e) => {
     e.preventDefault();
     if (loginData.rut === 'admin' && loginData.password === 'reloncavi') {
-       setCurrentUser({ rut: 'admin', nombre: 'Admin Emergencia', iniciales: 'ADM', cargo: 'Soporte TI', rol: 'Admin', centrosAsignados: [] });
+       setCurrentUser({ rut: 'admin', nombre: 'Juan Carrillo Cáceres', iniciales: 'JC', cargo: 'Enfermero Supervisor UHCIP', rol: 'Admin', centrosAsignados: [] });
        setLoginError('');
        return;
     }
@@ -333,13 +330,12 @@ export default function App() {
 
   const handleExportCSV = () => {
     const BOM = '\uFEFF';
-    // MEJORA: Incorporación de la columna Barrera_Detectada en la exportación Excel
     const headers = ['ID_Seguimiento', 'RUT', 'Paciente', 'Edad', 'Origen', 'Destino', 'Estado', 'Fecha_Egreso', 'Fecha_Recepcion', 'Fecha_Ingreso_Efectivo', 'Plazo_Meta_Dias', 'Brecha_Dias', 'Ultimo_Hito_Fecha', 'Ultimo_Hito_Tipo', 'Responsable_Hito', 'Barrera_Detectada'];
     const rows = filteredCases.map(c => {
        const target = getTargetDaysForCase(c.destino);
        const brecha = diffInDays(c.fechaEgreso, c.fechaIngresoEfectivo);
        const ultBit = safeArr(c.bitacora)[0] || {};
-       return [c.id, c.paciente, c.nombre, c.edad||'', c.origen, c.destino, c.estado, c.fechaEgreso||'', c.fechaRecepcionRed||'', c.fechaIngresoEfectivo||'', target, brecha||'', ultBit.fecha||'', ultBit.tipo||'', ultBit.responsable||'', ultBit.barrera||'Ninguna'];
+       return [c.id, c.paciente || c.rut, c.nombre, c.edad||'', c.origen, c.destino, c.estado, c.fechaEgreso||'', c.fechaRecepcionRed||'', c.fechaIngresoEfectivo||'', target, brecha||'', ultBit.fecha||'', ultBit.tipo||'', ultBit.responsable||'', ultBit.barrera||'Ninguna'];
     });
     const csvContent = BOM + [headers.join(';'), ...rows.map(r => r.join(';'))].join('\n');
     const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
@@ -356,7 +352,25 @@ export default function App() {
     }
   };
 
-  // --- MEJORA: FUNCIÓN PARA CHAT IA CON DOCUMENTOS ---
+  // --- CARGA DE ARCHIVOS A STORAGE PROFESIONAL (RUTAS ESTRICTAS Y LÍMITE DE PESO) ---
+  const handleUploadFileStrict = async (file, folder, id, setUploadingFlag) => {
+    if (!file) return null;
+    if (file.size > 15 * 1024 * 1024) { alert("⚠️ El archivo es demasiado pesado (máximo 15 MB)."); return null; }
+    setUploadingFlag(true);
+    try {
+      const storageRef = ref(storage, `artifacts/${appId}/public/storage/${folder}/${id}/${Date.now()}_${file.name}`);
+      await uploadBytes(storageRef, file);
+      const url = await getDownloadURL(storageRef);
+      setUploadingFlag(false);
+      return { id: Date.now().toString(), nombre: file.name, url, fecha: new Date().toISOString().split('T')[0], size: (file.size / 1024 / 1024).toFixed(2) + ' MB' };
+    } catch (err) {
+      setUploadingFlag(false);
+      alert(`⚠️ Error de Storage: ${err.message}. Asegúrese de que su cuenta de Firebase esté en Plan Blaze.`);
+      return null;
+    }
+  };
+
+  // --- IA: INTEGRACIÓN GEMINI 2.5 Y CHAT ---
   const handleAskAiAboutFile = async () => {
     if (!appConfig.apiKey) return alert("Falta Clave API de IA en la Configuración.");
     if (!aiPrompt.trim()) return;
@@ -380,42 +394,44 @@ export default function App() {
         setIsAnalyzingFile(false);
       };
     } catch (e) {
-      setAiResponse("⚠️ Error de acceso al archivo (CORS). Firebase está bloqueando la descarga para la IA. Por favor, aplica las reglas CORS mediante Google Cloud Shell.");
+      setAiResponse("⚠️ Error de acceso al archivo (CORS). Firebase está bloqueando la descarga cruzada para la IA.");
       setIsAnalyzingFile(false);
     }
   };
 
-  // --- IA Y GENERACIÓN ---
   const extractFormFromAI = async (prompt, inlineData = null) => {
     if (!appConfig.apiKey) return alert("Falta configurar la Clave API de IA en Configuración.");
     setIsDigitizing(true);
-    const fullPrompt = `${prompt}\n\nERES UN ANALISTA CLÍNICO. Analiza el documento y devuelve ÚNICAMENTE un objeto JSON válido con este formato exacto:\n{ \n  "nombre": "TÍTULO COMPLETO DEL DOCUMENTO", \n  "metodoCalculo": "Elige 'Suma Automática' si se calcula sumando puntos, o 'Juicio Clínico' si requiere interpretación del profesional o es un árbol de decisión", \n  "instruccionesDiagnostico": "Si elegiste Juicio Clínico, redacta cómo el evaluador debe interpretar las respuestas para dar el diagnóstico", \n  "encabezados": [ {"id": "enc_1", "label": "Nombre del campo (Ej: Servicio, Fecha)", "type": "text"} ], \n  "criterios": [ {"id": "crit_1", "pregunta": "Criterio", "opciones": "Estructura opciones con puntaje numérico. Ej: SÍ=1, NO=0. O escala: Siempre=3, A veces=2, Nunca=1"} ] \n}`;
+    const fullPrompt = `${prompt}\n\nERES UN ANALISTA CLÍNICO. Analiza el documento y devuelve ÚNICAMENTE un objeto JSON válido con este formato exacto:\n{ \n  "nombre": "TÍTULO COMPLETO DEL DOCUMENTO", \n  "metodoCalculo": "Suma Automática", \n  "instruccionesDiagnostico": "", \n  "encabezados": [ {"id": "enc_1", "label": "Nombre del campo (Ej: Servicio, Fecha)", "type": "text"} ], \n  "criterios": [ {"id": "crit_1", "pregunta": "Criterio a evaluar", "opciones": "SÍ=1, NO=0"} ] \n}`;
     try {
       const result = await generateTextWithRetry(appConfig.apiKey, fullPrompt, "", inlineData);
       const jsonMatch = result.match(/\{[\s\S]*\}/);
       if (!jsonMatch) throw new Error("Formato inválido.");
       const parsedData = JSON.parse(jsonMatch[0]);
-      setTemplateForm({
-        ...templateForm,
-        nombre: parsedData.nombre || 'Pauta Extraída',
+      setTemplateForm(prev => ({
+        ...prev,
+        nombre: parsedData.nombre || prev.nombre || 'Pauta Extraída',
         metodoCalculo: parsedData.metodoCalculo === 'Juicio Clínico' ? 'Juicio Clínico' : 'Suma Automática',
         instruccionesDiagnostico: parsedData.instruccionesDiagnostico || '',
         encabezados: safeArr(parsedData.encabezados),
-        criterios: safeArr(parsedData.criterios)
-      });
+        criterios: [...safeArr(prev.criterios).filter(c=>c.pregunta.trim()!==''), ...safeArr(parsedData.criterios).map((c, i) => ({ ...c, id: `ai_${Date.now()}_${i}` }))]
+      }));
       alert(`¡Pauta digitalizada!\nTítulo: ${parsedData.nombre}\nRevisa el Diseñador para ajustar detalles.`);
-    } catch (err) { alert("Error IA. Revisa tu Llave API o copia fragmentos de texto."); } 
-    finally { setIsDigitizing(false); setRawTextForAI(''); }
+    } catch (err) { alert("Error IA. Revisa tu Llave API o comprueba que el PDF es legible."); } 
+    finally { setIsDigitizing(false); setRawTextForAI(''); setAiPautaFile(null); }
   };
 
-  const handleProcessRawTextForAI = () => { if (!rawTextForAI.trim()) return; extractFormFromAI(`Analiza este texto correspondiente a un instrumento de evaluación: \n\n${rawTextForAI}`); };
+  const handleProcessRawTextForAI = () => { if (!rawTextForAI.trim()) return; extractFormFromAI(`Analiza este texto de un instrumento de evaluación: \n\n${rawTextForAI}`); };
   const handlePdfUploadForAI = (e) => {
     const file = e.target.files[0];
     if (!file) return;
+    if (file.size > 15 * 1024 * 1024) return alert("⚠️ Archivo muy pesado (>15MB)");
     const reader = new FileReader();
-    reader.onloadend = () => extractFormFromAI(`Analiza el documento PDF adjunto.`, { mimeType: file.type || 'application/pdf', data: reader.result.split(',')[1] });
-    reader.onerror = () => alert("Error al leer el archivo.");
+    reader.onload = (ev) => {
+       setAiPautaFile({ name: file.name, type: file.type || 'application/pdf', data: ev.target.result.split(',')[1] });
+    };
     reader.readAsDataURL(file);
+    e.target.value = null;
   };
 
   const handleGenerateReport = async (type) => { 
@@ -437,7 +453,7 @@ export default function App() {
     if (!appConfig.apiKey) return alert("Falta Clave API.");
     setIsGeneratingCaseSummary(true); setCaseSummary('');
     const epicrisisText = caseForm.epicrisis ? `\nEpicrisis: ${caseForm.epicrisis}` : '';
-    const prompt = `Actúa como clínico. Genera resumen profesional: Nombre: ${caseForm.nombre}, Origen: ${caseForm.origen}, Destino: ${caseForm.destino}.${epicrisisText} Eventos bitácora: ${safeArr(caseForm.bitacora).map(b => `[${b.fecha}] ${b.tipo}: ${b.descripcion}`).join(' | ')}. Solo resumen directo.`;
+    const prompt = `Actúa como clínico. Genera resumen profesional: Nombre: ${caseForm.nombre}, Origen: ${caseForm.origen}, Destino: ${caseForm.destino}.${epicrisisText} Eventos bitácora: ${safeArr(caseForm.bitacora).map(b => `[${b.fecha}] ${b.tipo}: ${b.descripcion}`).join(' | ')}. Solo resumen directo y resolutivo.`;
     try { setCaseSummary(await generateTextWithRetry(appConfig.apiKey, prompt)); } catch (e) { setCaseSummary("Error IA."); } finally { setIsGeneratingCaseSummary(false); }
   };
 
@@ -446,13 +462,12 @@ export default function App() {
     if (!caseForm.rut || !caseForm.nombre) return alert("RUT y Nombre obligatorios.");
     const finalId = editingCaseId || `CASO-${String(cases.length + 1).padStart(3, '0')}`;
     await saveToCloud('cases', finalId, { ...caseForm, id: finalId, paciente: caseForm.rut });
-    setIsCaseModalOpen(false); setEditingCaseId(null); setCaseForm(defaultCaseState); setCaseSummary(''); setNewCaseLink({nombre:'', url:''});
+    setIsCaseModalOpen(false); setEditingCaseId(null); setCaseForm(defaultCaseState); setCaseSummary('');
   };
 
   const handleAddBitacora = () => {
     if (!newBitacoraEntry.descripcion) return;
     setCaseForm({ ...caseForm, bitacora: [{ id: Date.now(), ...newBitacoraEntry, fecha: new Date().toISOString().split('T')[0], completada: false }, ...safeArr(caseForm.bitacora)] });
-    // MEJORA: Resetea el valor de la barrera para el próximo ingreso
     setNewBitacoraEntry({ tipo: 'Nota Adm.', descripcion: '', responsable: '', fechaCumplimiento: '', barrera: 'Ninguna' });
   };
   
@@ -473,7 +488,7 @@ export default function App() {
     if(!docForm.nombre) return alert("Nombre obligatorio"); 
     const finalId = editingDocId || `DOC-${String(docs.length + 1).padStart(3, '0')}`;
     await saveToCloud('docs', finalId, { ...docForm, id: finalId, avance: docAvanceActual });
-    setIsDocModalOpen(false); setEditingDocId(null); setNewDocLink({nombre:'', url:''});
+    setIsDocModalOpen(false); setEditingDocId(null);
   };
 
   const handleAddDocBitacora = () => {
@@ -486,12 +501,9 @@ export default function App() {
      const documento = safeArr(docs).find(d => d.id === docId);
      if (!documento) return;
      const updatedBitacora = safeArr(documento.bitacora).map(entry => entry.id === entryId ? { ...entry, completada: !entry.completada } : entry);
-     
      const tareas = updatedBitacora.filter(b => b.tipo === 'Tarea');
      let nuevoAvance = documento.avance;
-     if(tareas.length > 0) {
-        nuevoAvance = Math.round((tareas.filter(t => t.completada).length / tareas.length) * 100);
-     }
+     if(tareas.length > 0) { nuevoAvance = Math.round((tareas.filter(t => t.completada).length / tareas.length) * 100); }
      await saveToCloud('docs', docId, { ...documento, bitacora: updatedBitacora, avance: nuevoAvance });
   };
 
@@ -505,49 +517,6 @@ export default function App() {
            fase: 'Oficialización',
            avance: 100
        }));
-    }
-  };
-
-  // --- CARGA DE ARCHIVOS A FIREBASE STORAGE ---
-  const handleCaseFileUpload = async (e) => {
-    const file = e.target.files[0];
-    if (!file) return;
-    setIsUploadingCaseFile(true);
-    try {
-      const storageRef = ref(storage, `casos/${editingCaseId || 'nuevo'}/${Date.now()}_${file.name}`);
-      await uploadBytes(storageRef, file);
-      const url = await getDownloadURL(storageRef);
-      setCaseForm(prev => ({ 
-        ...prev, 
-        archivos: [{ id: Date.now().toString(), nombre: file.name, size: (file.size / 1024 / 1024).toFixed(2) + ' MB', fecha: new Date().toISOString().split('T')[0], url: url }, ...safeArr(prev.archivos)] 
-      }));
-    } catch (err) {
-      console.error(err);
-      alert("Error al subir el archivo. Verifica las reglas de Firebase Storage.");
-    } finally {
-      setIsUploadingCaseFile(false);
-      e.target.value = null; // Limpiar input
-    }
-  };
-
-  const handleDocFileUpload = async (e, targetArray = 'archivos') => {
-    const file = e.target.files[0];
-    if (!file) return;
-    setIsUploadingDocFile(true);
-    try {
-      const storageRef = ref(storage, `protocolos/${editingDocId || 'nuevo'}/${Date.now()}_${file.name}`);
-      await uploadBytes(storageRef, file);
-      const url = await getDownloadURL(storageRef);
-      setDocForm(prev => ({ 
-        ...prev, 
-        [targetArray]: [{ id: Date.now().toString(), nombre: file.name, size: (file.size / 1024 / 1024).toFixed(2) + ' MB', fecha: new Date().toISOString().split('T')[0], url: url }, ...safeArr(prev[targetArray])] 
-      }));
-    } catch (err) {
-      console.error(err);
-      alert("Error al subir el archivo. Verifica las reglas de Firebase Storage.");
-    } finally {
-      setIsUploadingDocFile(false);
-      e.target.value = null; // Limpiar input
     }
   };
 
@@ -569,27 +538,38 @@ export default function App() {
   const handleSaveAudit = async () => {
     const selectedTemplate = safeArr(auditTemplates).find(t => t.id === auditForm.templateId);
     if (!selectedTemplate) return;
-    if (selectedTemplate.metodoCalculo === 'Juicio Clínico' && !auditForm.estadoManual) return alert("Seleccione un Resultado Clínico.");
+    if (selectedTemplate.metodoCalculo === 'Juicio Clínico' && !auditForm.estadoFinal) return alert("Ingrese el Diagnóstico Clínico en el Resultado Final.");
     
-    let maxScore = 0; let actualScore = 0;
-    safeArr(selectedTemplate.criterios).forEach((c, idx) => {
-      const opcionesStr = typeof c === 'string' ? 'SÍ=1, NO=0' : (c.opciones || 'SÍ=1, NO=0');
-      const ops = parseOpciones(opcionesStr);
-      maxScore += Math.max(...ops.map(o => o.value));
-      const answer = auditForm.answers[c.id || idx];
-      if (answer && typeof answer === 'object') actualScore += answer.value; 
-      else if (answer === 'si') actualScore += 1;
-    });
-
-    const scorePercentage = maxScore > 0 ? Math.round((actualScore / maxScore) * 100) : 0;
-    let estadoTexto = selectedTemplate.metodoCalculo === 'Juicio Clínico' ? auditForm.estadoManual : (scorePercentage >= 75 ? 'Óptimo' : 'Riesgo');
-    if (selectedTemplate.metodoCalculo !== 'Juicio Clínico' && safeArr(selectedTemplate.rangos).length > 0) {
-       const match = safeArr(selectedTemplate.rangos).find(r => actualScore >= Number(r.min) && actualScore <= Number(r.max));
-       if (match) estadoTexto = match.resultado;
+    let maxScore = 0; let actualScore = 0; let calcPct = 0; let calcStatus = '';
+    if (selectedTemplate.metodoCalculo === 'Suma Automática') {
+       safeArr(selectedTemplate.criterios).forEach((c, idx) => {
+         const opcionesStr = typeof c === 'string' ? 'SÍ=1, NO=0' : (c.opciones || 'SÍ=1, NO=0');
+         const ops = parseOpciones(opcionesStr);
+         maxScore += Math.max(...ops.map(o => o.value));
+         const answer = auditForm.answers[c.id || idx];
+         if (answer && typeof answer === 'object') actualScore += answer.value; 
+         else if (answer === 'si') actualScore += 1;
+       });
+       calcPct = maxScore > 0 ? Math.round((actualScore / maxScore) * 100) : 0;
+       
+       if (safeArr(selectedTemplate.rangos).length > 0) {
+          const match = safeArr(selectedTemplate.rangos).find(r => actualScore >= Number(r.min) && actualScore <= Number(r.max));
+          if (match) calcStatus = match.resultado;
+       } else {
+          calcStatus = calcPct >= 75 ? 'Óptimo' : 'Riesgo';
+       }
     }
 
+    const finalStateText = auditForm.estadoFinal || calcStatus || 'Sin Resultado';
     const finalId = `AUD-${Date.now()}`;
-    await saveToCloud('audits', finalId, { id: finalId, centro: auditForm.centro, tipo: auditForm.tipo, templateId: selectedTemplate.id, headerAnswers: auditForm.headerAnswers || {}, answers: auditForm.answers || {}, cumplimiento: scorePercentage, puntaje: selectedTemplate.metodoCalculo === 'Juicio Clínico' ? 'N/A' : `${actualScore} / ${maxScore}`, estado: estadoTexto, evaluador: currentUser.nombre, fecha: auditForm.fecha || new Date().toISOString().split('T')[0], observaciones: auditForm.observaciones || '' });
+    await saveToCloud('audits', finalId, { 
+       ...auditForm, 
+       id: finalId, 
+       cumplimiento: calcPct, 
+       puntaje: selectedTemplate.metodoCalculo === 'Juicio Clínico' ? 'N/A' : `${actualScore} / ${maxScore}`, 
+       estado: finalStateText, 
+       evaluador: currentUser.nombre 
+    });
     setIsAuditModalOpen(false);
   };
 
@@ -601,7 +581,7 @@ export default function App() {
   };
 
   const handleSaveUser = async () => {
-    if (!userForm.rut || !userForm.password) return alert("RUT y Contraseña obligatorios.");
+    if (!userForm.rut || !userForm.password || !userForm.nombre) return alert("RUT, Nombre y Contraseña obligatorios.");
     const finalId = editingUserId || Date.now().toString();
     await saveToCloud('users', finalId, { ...userForm, id: finalId });
     setIsUserModalOpen(false);
@@ -881,17 +861,17 @@ export default function App() {
         {/* PESTAÑA 3: CASOS DE RED */}
         {activeTab === 'cases' && (
           <div className="space-y-6 animate-in fade-in mt-12 md:mt-0">
-            <div className="flex justify-between items-end"><div><h2 className="text-2xl font-black text-slate-800">Casos en Red</h2></div>
-              <div className="flex gap-2">
+             <div className="flex justify-between items-end"><div><h2 className="text-2xl font-black text-slate-800">Casos en Red</h2></div>
+             <div className="flex gap-2">
                 <button onClick={handleExportCSV} className={clsBtnS + " bg-emerald-100 hover:bg-emerald-200 text-emerald-700"}><Download size={14} className="inline mr-1"/> Exportar Excel</button>
                 <button onClick={() => { setEditingCaseId(null); setCaseForm(defaultCaseState); setCaseSummary(''); setIsCaseModalOpen(true); }} className={clsBtnP}><Plus size={16}/> Nuevo Seguimiento</button>
               </div>
-            </div>
-            <div className="bg-white p-4 rounded-xl shadow-sm border border-slate-200 flex gap-4 items-center">
+             </div>
+             <div className="bg-white p-4 rounded-xl shadow-sm border border-slate-200 flex gap-4 items-center">
               <div className="flex-1"><Lbl>Buscar Paciente</Lbl><Inp value={caseSearch} onChange={e=>setCaseSearch(e.target.value)} placeholder="RUT o Nombre..." className="py-2" /></div>
               <div className="w-64"><Lbl>Filtrar Dispositivo</Lbl><Sel value={caseFilterCentro} onChange={e=>setCaseFilterCentro(e.target.value)} className="py-2"><option value="Todos">Todos</option>{safeArr(centros).map(c=><option key={c} value={c}>{c}</option>)}</Sel></div>
             </div>
-            <div className="bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden">
+             <div className="bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden">
               <div className="overflow-x-auto">
                 <table className="w-full text-left border-collapse min-w-[1000px]">
                   <thead className="bg-slate-50 border-b border-slate-100"><tr className="text-xs font-bold text-slate-500 uppercase tracking-wider"><th className="p-4">Paciente</th><th className="p-4">Ruta Traslado</th><th className="p-4 text-center">Hitos (A-B-C)</th><th className="p-4 text-center">Estado</th><th className="p-4 text-right">Acción</th></tr></thead>
@@ -914,7 +894,7 @@ export default function App() {
                   </tbody>
                 </table>
               </div>
-            </div>
+             </div>
           </div>
         )}
 
@@ -950,7 +930,7 @@ export default function App() {
           </div>
         )}
 
-        {/* PESTAÑA 5 Y 6: AUDITORÍAS */}
+        {/* PESTAÑAS 5 Y 6: AUDITORÍAS Y CONSULTORÍAS */}
         {(activeTab === 'auditorias' || activeTab === 'consultorias') && (() => {
           const tipoLabel = activeTab === 'auditorias' ? 'Auditoría' : 'Consultoría';
           const currentFilter = activeTab === 'auditorias' ? centroFilterAuditorias : centroFilterConsultorias;
@@ -964,7 +944,7 @@ export default function App() {
                 <div className="flex gap-3">
                   <select value={currentFilter} onChange={e => setFilter(e.target.value)} className="px-3 py-2.5 border-2 border-slate-200 rounded-xl text-[10px] font-bold bg-white outline-none"><option value="Todos">Toda la Red</option>{centros.map(c => <option key={c} value={c}>{c}</option>)}</select>
                   {currentUser?.rol === 'Admin' && (<button onClick={() => { setEditingTemplateId(null); setTemplateForm({nombre: '', metodoCalculo: 'Suma Automática', instruccionesDiagnostico: '', encabezados: [{ id: 'enc_1', label: 'Centro Evaluado', type: 'text' }, { id: 'enc_2', label: 'Fecha', type: 'date' }], criterios: [{ id: 'crit_1', pregunta: '', opciones: 'SÍ=1, NO=0' }], rangos: [], tipo: 'Ambos'}); setIsTemplateModalOpen(true); }} className={clsBtnS}><Settings size={14} /> Pautas</button>)}
-                  <button onClick={() => { setAuditForm({ centro: centros[0] || '', templateId: auditTemplates.find(t => t.tipo === 'Ambos' || t.tipo === tipoLabel)?.id || '', headerAnswers: {}, answers: {}, tipo: tipoLabel, observaciones: '', fecha: new Date().toISOString().split('T')[0], estadoManual: '' }); setIsAuditModalOpen(true); }} className={clsBtnP}><ClipboardCheck size={16} /> Evaluar</button>
+                  <button onClick={() => { setAuditForm({ centro: centros[0] || '', templateId: auditTemplates.find(t => t.tipo === 'Ambos' || t.tipo === tipoLabel)?.id || '', headerAnswers: {}, answers: {}, tipo: tipoLabel, observaciones: '', fecha: new Date().toISOString().split('T')[0], estadoFinal: '' }); setIsAuditModalOpen(true); }} className={clsBtnP}><ClipboardCheck size={16} /> Evaluar</button>
                 </div>
               </div>
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -1100,7 +1080,7 @@ export default function App() {
       {/* ================= MODALES COMPLETOS ================= */}
       <ModalWrap isOpen={isCaseModalOpen}>
         <ModalHdr t={editingCaseId ? `Editar: ${caseForm.nombre}` : 'Nuevo Seguimiento'} onClose={()=>setIsCaseModalOpen(false)} icon={Users} />
-        <div className="flex bg-slate-50 border-b shrink-0 px-6">
+        <div className="flex bg-slate-50 border-b px-6 shrink-0">
           <button onClick={() => setActiveModalTab('datos')} className={`px-6 py-4 text-[10px] font-black uppercase tracking-[0.2em] border-b-4 ${activeModalTab === 'datos' ? 'border-blue-600 text-blue-600 bg-white' : 'border-transparent text-slate-400'}`}>Datos Básicos</button>
           <button onClick={() => setActiveModalTab('bitacora')} className={`px-6 py-4 text-[10px] font-black uppercase tracking-[0.2em] border-b-4 ${activeModalTab === 'bitacora' ? 'border-blue-600 text-blue-600 bg-white' : 'border-transparent text-slate-400'}`}>Bitácora y Barreras</button>
           <button onClick={() => setActiveModalTab('archivos')} className={`px-6 py-4 text-[10px] font-black uppercase tracking-[0.2em] border-b-4 ${activeModalTab === 'archivos' ? 'border-blue-600 text-blue-600 bg-white' : 'border-transparent text-slate-400'}`}>Epicrisis y Archivos</button>
@@ -1148,7 +1128,14 @@ export default function App() {
             )}
             {activeModalTab === 'bitacora' && (
               <div className="space-y-4">
-                <div className="bg-slate-50 p-4 rounded-xl grid grid-cols-4 gap-3">
+                <div className="flex justify-between items-center bg-slate-50 p-4 rounded-xl border border-slate-200">
+                   <div>
+                     <h4 className="font-black text-slate-800 text-sm">Historial Clínico</h4>
+                     <p className="text-[10px] text-slate-500 uppercase font-bold mt-0.5">Registro de acciones y barreras</p>
+                   </div>
+                   <button onClick={handleSummarizeCase} disabled={isGeneratingCaseSummary} className={`text-[9px] font-black uppercase tracking-widest text-purple-600 bg-purple-50 px-4 py-2.5 rounded-xl border border-purple-200 hover:bg-purple-100 hover:border-purple-300 transition-colors flex items-center gap-2 shadow-sm ${isGeneratingCaseSummary ? 'opacity-50 cursor-not-allowed' : ''}`}><Activity size={14}/> {isGeneratingCaseSummary ? 'Pensando...' : 'Resumir Caso con IA'}</button>
+                </div>
+                <div className="bg-slate-50 p-6 rounded-2xl grid grid-cols-1 md:grid-cols-4 gap-4">
                    <Sel value={newBitacoraEntry.tipo} onChange={e=>setNewBitacoraEntry({...newBitacoraEntry, tipo: e.target.value})}>
                      <option value="Nota Adm.">📝 Nota Adm.</option>
                      <option value="Intervención">🗣️ Intervención</option>
@@ -1176,24 +1163,26 @@ export default function App() {
                        </optgroup>
                    </select>
 
-                   <Inp value={newBitacoraEntry.responsable} onChange={e=>setNewBitacoraEntry({...newBitacoraEntry, responsable: e.target.value})} placeholder="Resp..." className="col-span-2" />
-                   <Txt rows="2" value={newBitacoraEntry.descripcion} onChange={e=>setNewBitacoraEntry({...newBitacoraEntry, descripcion: e.target.value})} placeholder="Detalle de la acción o acuerdo..." className="col-span-4" />
-                   {newBitacoraEntry.tipo === 'Tarea' && <Inp type="date" value={newBitacoraEntry.fechaCumplimiento} onChange={e=>setNewBitacoraEntry({...newBitacoraEntry, fechaCumplimiento: e.target.value})} className="col-span-4 bg-amber-50" />}
-                   <button onClick={handleAddBitacora} className={clsBtnP + " col-span-4"}>Añadir Registro</button>
+                   <Inp placeholder="Resp..." value={newBitacoraEntry.responsable} onChange={e=>setNewBitacoraEntry({...newBitacoraEntry, responsable: e.target.value})} className="col-span-2" />
+                   <Txt placeholder="Detalle..." value={newBitacoraEntry.descripcion} onChange={e=>setNewBitacoraEntry({...newBitacoraEntry, descripcion: e.target.value})} className="col-span-4" />
+                   {newBitacoraEntry.tipo === 'Tarea' && <Inp type="date" value={newBitacoraEntry.fechaCumplimiento || ''} onChange={e=>setNewBitacoraEntry({...newBitacoraEntry, fechaCumplimiento: e.target.value})} className="col-span-4 bg-amber-50" />}
+                   <button onClick={handleAddBitacora} className={clsBtnP + " md:col-span-4"}>Añadir Registro</button>
                 </div>
-                {safeArr(caseForm.bitacora).map(b => (
-                  <div key={b.id} className="p-4 border rounded-xl flex justify-between items-start group hover:border-blue-200 transition-colors">
-                    <div className="flex-1">
-                       <div className="flex flex-wrap gap-2 items-center mb-1">
+                <div className="space-y-2">
+                  {safeArr(caseForm.bitacora).map(b => (
+                    <div key={b.id} className="p-4 bg-white border rounded-xl flex justify-between items-start group hover:border-blue-200 transition-colors">
+                      <div className="flex-1">
+                        <div className="flex items-center gap-2 mb-1">
                           <span className="text-[10px] font-black uppercase text-blue-600 bg-blue-50 px-2 py-0.5 rounded">{b.tipo}</span>
                           {b.barrera && b.barrera !== 'Ninguna' && <span className="bg-red-100 text-red-700 text-[8px] font-black px-2 py-0.5 rounded uppercase flex items-center gap-1"><AlertTriangle size={10}/> Barrera: {b.barrera}</span>}
                           <span className="text-[9px] text-slate-400 font-bold uppercase">{b.fecha} • Resp: {b.responsable || 'N/A'}</span>
-                       </div>
-                       <p className="text-sm font-medium text-slate-800 whitespace-pre-wrap">{String(b.descripcion)}</p>
+                        </div>
+                        <p className="text-sm font-medium text-slate-800 whitespace-pre-wrap">{String(b.descripcion)}</p>
+                      </div>
+                      <button onClick={()=>setCaseForm({...caseForm, bitacora: caseForm.bitacora.filter(x=>x.id!==b.id)})} className="text-slate-200 hover:text-red-500 opacity-0 group-hover:opacity-100 transition-opacity"><Trash2 size={16}/></button>
                     </div>
-                    <button onClick={() => setCaseForm({ ...caseForm, bitacora: safeArr(caseForm.bitacora).filter(x => x.id !== b.id) })} className="text-red-400 hover:text-red-600 opacity-0 group-hover:opacity-100 transition-opacity"><Trash2 size={16}/></button>
-                  </div>
-                ))}
+                  ))}
+                </div>
               </div>
             )}
             {activeModalTab === 'archivos' && (
@@ -1227,7 +1216,7 @@ export default function App() {
         <div className="flex bg-slate-50 border-b shrink-0 px-6">
           <button onClick={() => setActiveDocModalTab('datos')} className={`px-6 py-4 text-[10px] font-black uppercase tracking-[0.2em] border-b-4 ${activeDocModalTab === 'datos' ? 'border-blue-600 text-blue-600 bg-white' : 'border-transparent text-slate-400'}`}>Datos Generales</button>
           <button onClick={() => setActiveDocModalTab('bitacora')} className={`px-6 py-4 text-[10px] font-black uppercase tracking-[0.2em] border-b-4 ${activeDocModalTab === 'bitacora' ? 'border-blue-600 text-blue-600 bg-white' : 'border-transparent text-slate-400'}`}>Tareas y Fases</button>
-          <button onClick={() => setActiveDocModalTab('archivos')} className={`px-6 py-4 text-[10px] font-black uppercase tracking-[0.2em] border-b-4 ${activeDocModalTab === 'archivos' ? 'border-blue-600 text-blue-600 bg-white' : 'border-transparent text-slate-400'}`}>Archivos e IA</button>
+          <button onClick={() => setActiveDocModalTab('archivos')} className={`px-6 py-4 text-[10px] font-black uppercase tracking-[0.2em] border-b-4 ${activeDocModalTab === 'archivos' ? 'border-blue-600 text-blue-600 bg-white' : 'border-transparent text-slate-400'}`}>Archivos y Borradores</button>
         </div>
         <div className="p-6 overflow-y-auto flex-1 bg-white space-y-6">
           {activeDocModalTab === 'datos' && (
@@ -1292,7 +1281,6 @@ export default function App() {
                      <div key={f.id} className="flex justify-between items-center p-3 bg-white border-2 border-indigo-50 rounded-xl group hover:border-indigo-200 transition-colors">
                         <span className="text-xs font-black text-indigo-900">{f.nombre} <span className="text-[9px] text-slate-400 ml-2 font-medium">{f.size}</span></span>
                         <div className="flex gap-2 items-center">
-                          <button onClick={(e)=>{e.preventDefault(); setAiFileContext(f);}} className="p-2 bg-indigo-50 text-indigo-600 hover:bg-indigo-600 hover:text-white rounded-lg transition-all" title="Analizar con IA"><BrainCircuit size={14}/></button>
                           {f.url && <a href={f.url} target="_blank" rel="noreferrer" className="text-[10px] font-black uppercase text-indigo-600 hover:bg-indigo-50 px-2 py-1 rounded flex items-center gap-1"><ExternalLink size={12}/> Abrir</a>}
                           {currentUser?.rol === 'Admin' && <button onClick={()=>setDocForm(p=>({...p, archivosOficiales: p.archivosOficiales.filter(a=>a.id!==f.id)}))} className="text-red-400 p-1 hover:bg-red-50 rounded"><Trash2 size={14}/></button>}
                         </div>
@@ -1301,7 +1289,8 @@ export default function App() {
                    {safeArr(docForm.archivosOficiales).length === 0 && <p className="text-[10px] text-slate-400 italic">No hay documento oficial publicado.</p>}
                  </div>
                  {currentUser?.rol === 'Admin' && (
-                   <label className="cursor-pointer inline-block text-[10px] font-black uppercase text-indigo-600 bg-indigo-50 hover:bg-indigo-100 px-4 py-2 rounded-lg transition-colors"><UploadCloud size={14} className="inline mr-2"/> Subir Oficial Manualmente
+                   <label className={`cursor-pointer inline-block text-[10px] font-black uppercase text-indigo-600 bg-indigo-50 hover:bg-indigo-100 px-4 py-2 rounded-lg transition-colors ${isUploadingDocFile ? 'opacity-50 pointer-events-none' : ''}`}>
+                     <UploadCloud size={14} className="inline mr-2"/> {isUploadingDocFile ? 'Subiendo...' : 'Subir Oficial Manualmente'}
                      <input type="file" className="hidden" disabled={isUploadingDocFile} onChange={(e) => handleDocFileUpload(e, 'archivosOficiales')} />
                    </label>
                  )}
@@ -1310,8 +1299,10 @@ export default function App() {
                <div className="border-t border-slate-100 pt-6">
                  <Lbl className="bg-slate-100 text-slate-600 px-3 py-2 rounded-lg border border-slate-200 inline-block mb-3">2. Borradores e Insumos (Mesa Técnica)</Lbl>
                  <div className="bg-slate-50 p-4 rounded-xl text-center mb-4 border border-dashed border-slate-300">
-                   <label className="cursor-pointer block text-slate-600 font-black text-xs uppercase"><UploadCloud size={20} className="mx-auto mb-1 text-slate-400"/> {isUploadingDocFile ? 'Subiendo...' : 'Subir Borrador / Insumo'}
-                     <input type="file" className="hidden" disabled={isUploadingDocFile} onChange={(e) => handleDocFileUpload(e, 'archivos')} />
+                   <label className={`cursor-pointer block text-slate-600 font-black text-xs uppercase ${isUploadingDocFile ? 'text-slate-400 pointer-events-none' : 'text-slate-600'}`}>
+                      <UploadCloud size={20} className="mx-auto mb-1 text-slate-400"/> 
+                      {isUploadingDocFile ? 'Subiendo Documento...' : 'Subir Borrador / Insumo'}
+                      <input type="file" className="hidden" disabled={isUploadingDocFile} onChange={(e) => handleDocFileUpload(e, 'archivos')} />
                    </label>
                  </div>
                  <div className="space-y-2">
@@ -1321,7 +1312,7 @@ export default function App() {
                         <div className="flex gap-2 items-center">
                           <button onClick={(e)=>{e.preventDefault(); setAiFileContext(f);}} className="p-2 bg-indigo-50 text-indigo-600 hover:bg-indigo-600 hover:text-white rounded-lg transition-all" title="Analizar con IA"><BrainCircuit size={14}/></button>
                           {f.url && <a href={f.url} target="_blank" rel="noreferrer" className="text-[10px] font-black uppercase text-blue-600 hover:bg-blue-50 px-2 py-1 rounded flex items-center gap-1"><ExternalLink size={12}/> Abrir</a>}
-                          {currentUser?.rol === 'Admin' && <button onClick={()=>setDocForm(p=>({...p, archivos: p.archivos.filter(a=>a.id!==f.id)}))} className="text-red-400 p-1 hover:bg-red-50 rounded"><Trash2 size={14}/></button>}
+                          {currentUser?.rol === 'Admin' && <button onClick={()=>setDocForm(p=>({...p, archivos: p.archivos.filter(a=>a.id!==f.id)}))} className="text-red-400 p-1 hover:bg-red-50 rounded ml-2"><Trash2 size={14}/></button>}
                         </div>
                      </div>
                    ))}
@@ -1350,8 +1341,36 @@ export default function App() {
                 <Sel value={templateForm.metodoCalculo || 'Suma Automática'} onChange={e=>setTemplateForm({...templateForm, metodoCalculo: e.target.value})}>
                   <option value="Suma Automática">Suma Automática</option><option value="Juicio Clínico">Juicio Clínico</option>
                 </Sel>
+                
+                {/* MEJORA: RANGOS DE PUNTAJE */}
+                {templateForm.metodoCalculo === 'Suma Automática' && (
+                  <div className="mt-4 p-4 bg-blue-50 rounded-xl border border-blue-100">
+                    <Lbl className="text-blue-800">Definir Rangos de Puntaje (Opcional)</Lbl>
+                    <div className="flex gap-2 mb-2">
+                      <Inp type="number" placeholder="Min" value={newRango.min} onChange={e=>setNewRango({...newRango, min: e.target.value})} className="w-20" />
+                      <Inp type="number" placeholder="Max" value={newRango.max} onChange={e=>setNewRango({...newRango, max: e.target.value})} className="w-20" />
+                      <Inp placeholder="Resultado (Ej: Riesgo Bajo)" value={newRango.resultado} onChange={e=>setNewRango({...newRango, resultado: e.target.value})} className="flex-1" />
+                      <button onClick={()=>{
+                         if(newRango.min !== '' && newRango.max !== '' && newRango.resultado) {
+                            setTemplateForm(p=>({...p, rangos: [...safeArr(p.rangos), { id: Date.now(), min: Number(newRango.min), max: Number(newRango.max), resultado: newRango.resultado }]}));
+                            setNewRango({min:'', max:'', resultado:''});
+                         }
+                      }} className="bg-blue-600 text-white px-3 rounded-xl font-black"><Plus size={14}/></button>
+                    </div>
+                    <div className="space-y-1 max-h-32 overflow-y-auto">
+                      {safeArr(templateForm.rangos).sort((a,b)=>a.min-b.min).map(r => (
+                         <div key={r.id} className="flex justify-between items-center bg-white p-2 rounded-lg border text-[10px] font-bold">
+                            <span>De {r.min} a {r.max} pts ➡️ <span className="text-blue-600">{r.resultado}</span></span>
+                            <button onClick={()=>setTemplateForm(p=>({...p, rangos: p.rangos.filter(x=>x.id!==r.id)}))} className="text-red-500"><Trash2 size={12}/></button>
+                         </div>
+                      ))}
+                      {safeArr(templateForm.rangos).length === 0 && <p className="text-[9px] text-slate-400 italic">Si no hay rangos, usará Óptimo (≥75%) por defecto.</p>}
+                    </div>
+                  </div>
+                )}
+
                 {templateForm.metodoCalculo === 'Juicio Clínico' && (
-                  <div className="mt-3"><Lbl className="text-amber-600">Instrucciones</Lbl><Txt value={templateForm.instruccionesDiagnostico || ''} onChange={e=>setTemplateForm({...templateForm, instruccionesDiagnostico: e.target.value})} className="bg-amber-50 border-amber-200 text-xs"/></div>
+                  <div className="mt-3"><Lbl className="text-amber-600">Instrucciones Clínicas</Lbl><Txt value={templateForm.instruccionesDiagnostico || ''} onChange={e=>setTemplateForm({...templateForm, instruccionesDiagnostico: e.target.value})} className="bg-amber-50 border-amber-200 text-xs"/></div>
                 )}
               </div>
             </div>
@@ -1388,13 +1407,34 @@ export default function App() {
       <ModalWrap isOpen={isAuditModalOpen}>
          <ModalHdr t="Evaluar" onClose={()=>setIsAuditModalOpen(false)} icon={ClipboardCheck} />
          <div className="p-6 md:p-8 overflow-y-auto space-y-6 flex-1 bg-slate-50">
-            <Sel value={auditForm.templateId} onChange={e=>setAuditForm({...auditForm, templateId: e.target.value, answers: {}, headerAnswers: {}})}>
+            <Sel value={auditForm.templateId} onChange={e=>setAuditForm({...auditForm, templateId: e.target.value, answers: {}, headerAnswers: {}, estadoFinal: ''})}>
               <option value="">Seleccione formulario...</option>
               {safeArr(auditTemplates).map(t => <option key={t.id} value={t.id}>{String(t.nombre)}</option>)}
             </Sel>
             {auditForm.templateId && (() => {
               const tpl = safeArr(auditTemplates).find(t => t.id === auditForm.templateId);
               if (!tpl) return null;
+
+              // CALCULO EN TIEMPO REAL
+              let currentScore = 0; let maxScore = 0; let calcStatus = ''; let calcPct = 0;
+              if (tpl.metodoCalculo === 'Suma Automática') {
+                 safeArr(tpl.criterios).forEach((c, idx) => {
+                    const ops = parseOpciones(c.opciones || 'SÍ=1, NO=0');
+                    maxScore += Math.max(...ops.map(o => o.value));
+                    const answer = auditForm.answers[c.id || idx];
+                    if (answer && typeof answer === 'object') currentScore += answer.value; 
+                    else if (answer === 'si') currentScore += 1;
+                 });
+                 calcPct = maxScore > 0 ? Math.round((currentScore / maxScore) * 100) : 0;
+                 
+                 if (safeArr(tpl.rangos).length > 0) {
+                    const match = safeArr(tpl.rangos).find(r => currentScore >= Number(r.min) && currentScore <= Number(r.max));
+                    if (match) calcStatus = match.resultado;
+                 } else {
+                    calcStatus = calcPct >= 75 ? 'Óptimo' : 'Riesgo';
+                 }
+              }
+
               return (
                 <div className="space-y-6">
                    {safeArr(tpl.encabezados).length > 0 && (
@@ -1423,15 +1463,32 @@ export default function App() {
                        );
                      })}
                    </div>
-                   {tpl.metodoCalculo === 'Juicio Clínico' && (
-                     <div className="bg-amber-50 p-6 rounded-2xl border border-amber-200">
-                       <Lbl className="text-amber-800">Resultado Clínico Final</Lbl>
-                       <p className="text-xs text-amber-700 mb-4">{tpl.instruccionesDiagnostico}</p>
-                       <Sel value={auditForm.estadoManual || ''} onChange={e=>setAuditForm({...auditForm, estadoManual: e.target.value})} className="border-amber-300 text-amber-900">
-                          <option value="">Seleccione...</option><option value="Riesgo Bajo">Riesgo Bajo</option><option value="Riesgo Medio">Riesgo Medio</option><option value="Riesgo Alto">Riesgo Alto</option><option value="Óptimo">Óptimo</option>
-                       </Sel>
-                     </div>
-                   )}
+
+                   {/* MEJORA: EVALUACIÓN INTELIGENTE Y EDITABLE */}
+                   <div className={`p-6 rounded-2xl border-2 mt-4 ${tpl.metodoCalculo === 'Juicio Clínico' ? 'bg-amber-50 border-amber-200' : 'bg-emerald-50 border-emerald-200'}`}>
+                      <h3 className="font-black text-lg uppercase mb-2 flex items-center gap-2">
+                        {tpl.metodoCalculo === 'Juicio Clínico' ? <><Activity size={20}/> Juicio Clínico del Profesional</> : <><CheckCircle size={20}/> Resultado: {currentScore}/{maxScore} pts ({calcPct}%)</>}
+                      </h3>
+                      
+                      {tpl.metodoCalculo === 'Juicio Clínico' && (
+                         <div className="mb-4 bg-white p-4 rounded-xl border border-amber-100 shadow-sm">
+                            <p className="text-[10px] font-black text-amber-800 uppercase mb-1">Instrucciones de Clasificación</p>
+                            <p className="text-xs text-slate-700 whitespace-pre-wrap">{tpl.instruccionesDiagnostico || 'Sin instrucciones.'}</p>
+                         </div>
+                      )}
+
+                      <div className="bg-white p-4 rounded-xl border shadow-sm">
+                         <Lbl>Estado o Resultado Final (Editable)</Lbl>
+                         <p className="text-[9px] text-slate-500 mb-2">El sistema sugiere el resultado, pero puede modificarlo según su criterio clínico.</p>
+                         <Inp 
+                            type="text" 
+                            className="text-sm py-3 border-slate-300 font-black text-slate-800 uppercase tracking-widest"
+                            value={auditForm.estadoFinal !== undefined ? auditForm.estadoFinal : (tpl.metodoCalculo === 'Suma Automática' ? calcStatus : '')} 
+                            onChange={e => setAuditForm({...auditForm, estadoFinal: e.target.value})}
+                            placeholder="Ej: Riesgo Bajo, Cumple Norma..."
+                         />
+                      </div>
+                   </div>
                 </div>
               );
             })()}
@@ -1451,12 +1508,16 @@ export default function App() {
         <ModalFtr onCancel={()=>setIsDirModalOpen(false)} onSave={handleSaveDir} />
       </ModalWrap>
 
+      {/* MEJORA: MODAL USUARIO CON CARGO */}
       <ModalWrap isOpen={isUserModalOpen} mw="max-w-lg">
-        <ModalHdr t="Usuario" onClose={()=>setIsUserModalOpen(false)} icon={UserPlus}/>
-        <div className="p-6 space-y-4">
-          <div className="grid grid-cols-2 gap-4"><Inp value={userForm.rut} onChange={e=>setUserForm({...userForm, rut: e.target.value})} placeholder="RUT"/><Inp value={userForm.password} onChange={e=>setUserForm({...userForm, password: e.target.value})} placeholder="Clave"/></div>
-          <div className="grid grid-cols-4 gap-4"><Inp value={userForm.nombre} onChange={e=>setUserForm({...userForm, nombre: e.target.value})} placeholder="Nombre" className="col-span-3"/><Inp value={userForm.iniciales} onChange={e=>setUserForm({...userForm, iniciales: e.target.value.toUpperCase()})} placeholder="INI" maxLength={3}/></div>
-          <div><Lbl>Rol</Lbl><Sel value={userForm.rol} onChange={e=>setUserForm({...userForm, rol: e.target.value})}><option>Usuario</option><option>Admin</option></Sel></div>
+        <ModalHdr t={editingUserId ? "Editar Credencial" : "Nueva Credencial"} onClose={()=>setIsUserModalOpen(false)} icon={UserPlus}/>
+        <div className="p-6 space-y-4 bg-slate-50">
+          <div className="bg-white p-6 rounded-2xl border shadow-sm space-y-4">
+            <div className="grid grid-cols-2 gap-4"><Inp value={userForm.rut} onChange={e=>setUserForm({...userForm, rut: e.target.value})} placeholder="RUT"/><Inp value={userForm.password} onChange={e=>setUserForm({...userForm, password: e.target.value})} placeholder="Clave"/></div>
+            <div className="grid grid-cols-4 gap-4"><Inp value={userForm.nombre} onChange={e=>setUserForm({...userForm, nombre: e.target.value})} placeholder="Nombre Completo" className="col-span-3"/><Inp value={userForm.iniciales} onChange={e=>setUserForm({...userForm, iniciales: e.target.value.toUpperCase()})} placeholder="INI" maxLength={3}/></div>
+            <div><Lbl>Cargo Institucional</Lbl><Inp value={userForm.cargo || ''} onChange={e=>setUserForm({...userForm, cargo: e.target.value})} placeholder="Ej: Enfermero Supervisor UHCIP" /></div>
+            <div><Lbl>Rol en Plataforma</Lbl><Sel value={userForm.rol} onChange={e=>setUserForm({...userForm, rol: e.target.value})}><option value="Usuario">👤 Usuario</option><option value="Admin">⭐ Administrador</option></Sel></div>
+          </div>
         </div>
         <ModalFtr onCancel={()=>setIsUserModalOpen(false)} onSave={handleSaveUser} />
       </ModalWrap>
