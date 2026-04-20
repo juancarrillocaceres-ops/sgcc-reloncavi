@@ -108,10 +108,15 @@ export default function App() {
   const [directory, setDirectory] = useState([]);
   const [users, setUsers] = useState([]);
   
-  const [appConfig, setAppConfig] = useState({ targetDays: 7, plazos: {} });
+  const [appConfig, setAppConfig] = useState({ targetDays: 7, plazos: {}, geminiKey: '' });
   const [newCentroName, setNewCentroName] = useState('');
   const [plazoCentroInput, setPlazoCentroInput] = useState('');
   const [plazoDaysInput, setPlazoDaysInput] = useState('');
+  
+  const [isAiLoading, setIsAiLoading] = useState(false);
+  const [aiPautaText, setAiPautaText] = useState('');
+  const [aiPautaFile, setAiPautaFile] = useState(null); // Nuevo estado para PDF
+  const [isGeneratingPauta, setIsGeneratingPauta] = useState(false);
 
   // ESTADOS DE FORMULARIOS
   const defaultCaseState = { rut: '', nombre: '', edad: '', origen: '', destino: '', prioridad: 'Media', estado: 'Pendiente', fechaEgreso: new Date().toISOString().split('T')[0], fechaRecepcionRed: '', fechaIngresoEfectivo: '', tutor: { nombre: '', relacion: '', telefono: '' }, referentes: [], bitacora: [], archivos: [], epicrisis: '' };
@@ -192,7 +197,7 @@ export default function App() {
     const unsubUsers = onSnapshot(collection(db, 'artifacts', appId, 'public', 'data', 'users'), snap => setUsers(safeArr(snap.docs.map(d => d.data()))), errH);
     const unsubCentros = onSnapshot(doc(db, 'artifacts', appId, 'public', 'data', 'settings', 'centros'), snap => { if (snap.exists() && safeArr(snap.data().list).length > 0) setCentros(snap.data().list); }, errH);
     const unsubConfig = onSnapshot(doc(db, 'artifacts', appId, 'public', 'data', 'settings', 'config'), snap => { 
-      if (snap.exists()) { const data = snap.data(); setAppConfig({ targetDays: 7, plazos: {}, ...data }); } 
+      if (snap.exists()) { const data = snap.data(); setAppConfig({ targetDays: 7, plazos: {}, geminiKey: '', ...data }); } 
     }, errH);
 
     return () => { unsubCases(); unsubDocs(); unsubAudits(); unsubTemplates(); unsubDir(); unsubUsers(); unsubCentros(); unsubConfig(); };
@@ -287,6 +292,11 @@ export default function App() {
     delete newPlazos[centroStr];
     await saveToCloud('settings', 'config', { ...appConfig, plazos: newPlazos });
   };
+  
+  const handleSaveGeminiKey = async (key) => {
+    await saveToCloud('settings', 'config', { ...appConfig, geminiKey: key });
+    alert('Llave de IA guardada correctamente en la plataforma.');
+  };
 
   const handleExportCSV = () => {
     const BOM = '\uFEFF';
@@ -307,6 +317,151 @@ export default function App() {
     if(window.confirm('⚠️ ¿Estás seguro de eliminar TODO el directorio?')) {
        safeArr(directory).forEach(async (d) => { if (d && d.id) await deleteFromCloud('directory', d.id); });
        alert('Directorio limpiado.');
+    }
+  };
+
+  // --- IA: INTEGRACIÓN GEMINI ---
+  const handleSummarizeCase = async () => {
+    if (!appConfig?.geminiKey) return alert("Falta configurar la API Key de Gemini en Ajustes.");
+    if (safeArr(caseForm.bitacora).length === 0) return alert("No hay registros en la bitácora para resumir.");
+
+    setIsAiLoading(true);
+    try {
+      const historialText = safeArr(caseForm.bitacora).map(b => `Fecha: ${b.fecha}, Tipo: ${b.tipo}, Barrera: ${b.barrera}, Detalle: ${b.descripcion}`).join('\n');
+      const prompt = `Eres un asistente clínico experto en psiquiatría y enlace de red. Resume el siguiente historial clínico de derivación de un paciente en 3 o 4 viñetas breves, destacando los nudos críticos, demoras y barreras de red. Sé profesional, estructurado y muy conciso.\n\nHistorial:\n${historialText}`;
+
+      let data;
+      const delays = [1000, 2000, 4000, 8000, 16000];
+
+      for (let attempt = 0; attempt <= 5; attempt++) {
+        try {
+          const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${appConfig.geminiKey}`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ contents: [{ parts: [{ text: prompt }] }] })
+          });
+          data = await response.json();
+          if (data.error) throw new Error(data.error.message);
+          break; // ¡Éxito! Salimos del bucle de intentos
+        } catch (err) {
+          if (attempt < 5) await new Promise(res => setTimeout(res, delays[attempt]));
+          else throw new Error("El servidor de IA de Google está saturado por alta demanda mundial. Por favor, intenta de nuevo en un par de minutos.");
+        }
+      }
+
+      const iaText = data?.candidates?.[0]?.content?.parts?.[0]?.text;
+      
+      if (iaText) {
+        setCaseForm(prev => ({
+          ...prev,
+          bitacora: [{
+            id: Date.now(),
+            tipo: 'Nota Adm.',
+            descripcion: `🤖 [ANÁLISIS IA]:\n${iaText}`,
+            responsable: 'Gemini (Asistente IA)',
+            fecha: new Date().toISOString().split('T')[0],
+            barrera: 'Ninguna',
+            completada: false
+          }, ...safeArr(prev.bitacora)]
+        }));
+      }
+    } catch (err) {
+      console.error(err);
+      alert("⚠️ " + err.message);
+    } finally {
+      setIsAiLoading(false);
+    }
+  };
+
+  // Función para manejar el PDF seleccionado
+  const handleAiFileUpload = (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+
+    if (file.type !== 'application/pdf' && file.type !== 'text/plain') {
+      return alert("Por favor, sube un archivo PDF o de texto (.txt). Si tienes un documento Word, guárdalo como PDF primero.");
+    }
+
+    const reader = new FileReader();
+    reader.onload = (event) => {
+      const base64String = event.target.result.split(',')[1];
+      setAiPautaFile({
+        name: file.name,
+        mimeType: file.type,
+        data: base64String
+      });
+      setAiPautaText(''); // Limpiamos el texto si sube un archivo para no duplicar
+    };
+    reader.readAsDataURL(file);
+    e.target.value = null; 
+  };
+
+  const handleGeneratePautaWithAI = async () => {
+    if (!appConfig?.geminiKey) return alert("Falta configurar la API Key de Gemini en Ajustes.");
+    if (!aiPautaText.trim() && !aiPautaFile) return alert("Por favor, pega el texto o sube un documento PDF del protocolo.");
+
+    setIsGeneratingPauta(true);
+    try {
+      const prompt = `Eres un experto en calidad hospitalaria y auditoría clínica. Convierte el siguiente documento/texto de un protocolo en una lista de criterios de auditoría evaluables con SÍ o NO.\n\nDevuelve ÚNICAMENTE un arreglo JSON válido con el siguiente formato exacto, sin markdown, sin texto adicional y sin comillas invertidas:\n[\n  { "pregunta": "El profesional realiza X acción descrita en el protocolo", "opciones": "SÍ=1, NO=0" },\n  { "pregunta": "Se registra Y en la ficha clínica", "opciones": "SÍ=1, NO=0" }\n]`;
+
+      const parts = [{ text: prompt }];
+      
+      // Si subió un archivo, lo agregamos a la consulta
+      if (aiPautaFile) {
+         parts.push({
+           inlineData: {
+             mimeType: aiPautaFile.mimeType,
+             data: aiPautaFile.data
+           }
+         });
+      } 
+      // Si pegó texto, lo agregamos
+      else if (aiPautaText) {
+         parts.push({ text: `\n\nEl texto es:\n"${aiPautaText}"` });
+      }
+
+      let data;
+      const delays = [1000, 2000, 4000, 8000, 16000];
+
+      for (let attempt = 0; attempt <= 5; attempt++) {
+        try {
+          const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${appConfig.geminiKey}`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ contents: [{ parts: parts }] })
+          });
+          data = await response.json();
+          if (data.error) throw new Error(data.error.message);
+          break; 
+        } catch (err) {
+          if (attempt < 5) await new Promise(res => setTimeout(res, delays[attempt]));
+          else throw new Error("El servidor de IA está saturado. Intenta nuevamente.");
+        }
+      }
+
+      let rawText = data?.candidates?.[0]?.content?.parts?.[0]?.text || '';
+      rawText = rawText.replace(/```json/g, '').replace(/```/g, '').trim();
+      
+      const generatedCriterios = JSON.parse(rawText);
+
+      if (Array.isArray(generatedCriterios) && generatedCriterios.length > 0) {
+         const newCriterios = generatedCriterios.map((c, i) => ({
+           id: `crit_ai_${Date.now()}_${i}`,
+           pregunta: c.pregunta,
+           opciones: c.opciones || 'SÍ=1, NO=0'
+         }));
+         setTemplateForm(prev => ({
+           ...prev,
+           criterios: [...safeArr(prev.criterios).filter(c => c.pregunta.trim() !== ''), ...newCriterios]
+         }));
+         setAiPautaText('');
+         setAiPautaFile(null);
+      }
+    } catch (err) {
+      console.error(err);
+      alert("⚠️ Error al generar pauta con IA: " + err.message);
+    } finally {
+      setIsGeneratingPauta(false);
     }
   };
 
@@ -904,11 +1059,22 @@ export default function App() {
         {activeTab === 'config' && currentUser?.rol === 'Admin' && (
           <div className="space-y-6 animate-in fade-in mt-12 md:mt-0">
             <h2 className="text-2xl font-black text-slate-800">Ajustes del Sistema</h2>
-            <div className="bg-white p-8 rounded-2xl shadow-sm border max-w-3xl">
+            
+            <div className="bg-white p-8 rounded-2xl shadow-sm border max-w-3xl mt-6 border-l-[8px] border-l-purple-500">
+               <h3 className="font-black text-slate-800 text-base mb-2"><Activity size={18} className="inline text-purple-600 mr-2"/> Motor de Inteligencia Artificial (Gemini)</h3>
+               <p className="text-xs text-slate-500 mb-4 font-medium">Ingresa tu API Key de Google AI Studio para habilitar los resúmenes automáticos y el análisis de bitácoras en la red.</p>
+               <div className="flex gap-3">
+                 <Inp type="password" placeholder="AIzaSy..." value={appConfig?.geminiKey || ''} onChange={e => setAppConfig({...appConfig, geminiKey: e.target.value})} className="border-purple-200 focus:border-purple-500"/>
+                 <button onClick={() => handleSaveGeminiKey(appConfig.geminiKey)} className="bg-purple-600 text-white px-6 py-3 rounded-xl text-[9px] font-black uppercase hover:bg-purple-700 whitespace-nowrap transition-colors">Guardar Llave</button>
+               </div>
+            </div>
+
+            <div className="bg-white p-8 rounded-2xl shadow-sm border max-w-3xl mt-6">
                <h3 className="font-black text-slate-800 text-base mb-2"><Activity size={18} className="inline text-blue-600"/> Catálogo de Dispositivos</h3>
                <div className="flex gap-3 mb-6"><input type="text" value={newCentroName} onChange={e=>setNewCentroName(e.target.value)} className={clsInp}/><button onClick={async ()=>{if(newCentroName.trim()) { await saveToCloud('settings', 'centros', { list: [...safeArr(centros), newCentroName.trim()].sort() }); setNewCentroName(''); }}} className="bg-slate-900 text-white px-6 py-3 rounded-xl text-[9px] font-black uppercase"><Plus size={14}/> Añadir</button></div>
                <div className="grid grid-cols-1 md:grid-cols-2 gap-3">{safeArr(centros).map(c => (<div key={c} className="flex justify-between items-center bg-slate-50 p-4 rounded-xl border group"><span className="text-[10px] font-black text-slate-700 uppercase">{String(c)}</span><button onClick={async ()=>{ if(window.confirm(`¿Eliminar ${c}?`)) await saveToCloud('settings', 'centros', { list: safeArr(centros).filter(x=>x!==c) }); }} className="text-slate-300 hover:text-red-600 p-1.5 bg-white rounded-lg opacity-0 group-hover:opacity-100"><Trash2 size={14}/></button></div>))}</div>
             </div>
+            
             <div className="bg-white p-8 rounded-2xl shadow-sm border max-w-3xl mt-6">
                <h3 className="font-black text-slate-800 text-base mb-2"><ClipboardCheck size={18} className="inline text-blue-600"/> Pautas Manuales</h3>
                <div className="space-y-3">
@@ -976,6 +1142,13 @@ export default function App() {
           )}
           {activeModalTab === 'bitacora' && (
             <div className="space-y-4">
+              <div className="flex justify-between items-center bg-slate-50 p-4 rounded-xl border border-slate-200">
+                 <div>
+                   <h4 className="font-black text-slate-800 text-sm">Historial Clínico</h4>
+                   <p className="text-[10px] text-slate-500 uppercase font-bold mt-0.5">Registro de acciones y barreras</p>
+                 </div>
+                 <button onClick={handleSummarizeCase} disabled={isAiLoading} className={`text-[9px] font-black uppercase tracking-widest text-purple-600 bg-purple-50 px-4 py-2.5 rounded-xl border border-purple-200 hover:bg-purple-100 hover:border-purple-300 transition-colors flex items-center gap-2 shadow-sm ${isAiLoading ? 'opacity-50 cursor-not-allowed' : ''}`}><Activity size={14}/> {isAiLoading ? 'Pensando...' : 'Resumir Caso con IA'}</button>
+              </div>
               <div className="bg-slate-50 p-6 rounded-2xl grid grid-cols-1 md:grid-cols-4 gap-4">
                  <Sel value={newBitacoraEntry.tipo} onChange={e=>setNewBitacoraEntry({...newBitacoraEntry, tipo: e.target.value})}>
                    <option value="Nota Adm.">📝 Nota Adm.</option>
@@ -1185,6 +1358,33 @@ export default function App() {
               </div>
             </div>
             <div className="flex flex-col gap-6">
+              
+              <div className="bg-indigo-50 p-5 border border-indigo-100 rounded-2xl">
+                <h4 className="font-black text-indigo-800 text-sm mb-2 flex items-center gap-2"><Activity size={16}/> IA: Digitalizar Protocolo</h4>
+                <p className="text-[10px] text-indigo-600 mb-3 font-medium leading-relaxed">Sube tu documento en PDF o pega el texto del protocolo. La IA de Google lo analizará y extraerá automáticamente las preguntas de auditoría evaluables.</p>
+                
+                {/* Nueva Zona de Subida de Archivos para la IA */}
+                <div className="mb-3 flex flex-col gap-2">
+                  <label className={`cursor-pointer border-2 border-dashed ${aiPautaFile ? 'border-emerald-400 bg-emerald-50' : 'border-indigo-300 bg-white hover:bg-indigo-50'} p-4 rounded-xl text-center transition-colors`}>
+                    {aiPautaFile ? <CheckCircle size={24} className="mx-auto text-emerald-500 mb-1" /> : <FileIcon size={24} className="mx-auto text-indigo-400 mb-1" />}
+                    <span className={`text-[10px] font-black uppercase ${aiPautaFile ? 'text-emerald-700' : 'text-indigo-600'}`}>
+                      {aiPautaFile ? aiPautaFile.name : 'Subir Documento (PDF)'}
+                    </span>
+                    <input type="file" accept=".pdf, .txt" className="hidden" onChange={handleAiFileUpload} />
+                  </label>
+                  {aiPautaFile && (
+                     <button onClick={() => setAiPautaFile(null)} className="text-[9px] text-red-500 font-bold uppercase hover:underline text-center">Quitar Archivo</button>
+                  )}
+                </div>
+
+                <div className="text-center mb-3 text-[10px] font-black text-indigo-300 uppercase">- O PEGA EL TEXTO -</div>
+
+                <Txt rows="2" value={aiPautaText} disabled={!!aiPautaFile} onChange={e=>setAiPautaText(e.target.value)} placeholder="Ej: Todo paciente que ingrese debe tener control de signos vitales..." className={`text-xs mb-3 border-indigo-200 focus:border-indigo-500 bg-white ${aiPautaFile ? 'opacity-50 cursor-not-allowed' : ''}`} />
+                <button onClick={handleGeneratePautaWithAI} disabled={isGeneratingPauta || (!aiPautaText.trim() && !aiPautaFile)} className={`w-full bg-indigo-600 text-white px-4 py-3 rounded-xl text-[10px] font-black uppercase tracking-widest flex items-center justify-center gap-2 shadow-sm transition-colors ${(isGeneratingPauta || (!aiPautaText.trim() && !aiPautaFile)) ? 'opacity-50 cursor-not-allowed' : 'hover:bg-indigo-700'}`}>
+                   <Activity size={14}/> {isGeneratingPauta ? 'Analizando documento...' : 'Generar Criterios con IA'}
+                </button>
+              </div>
+
               <div className="bg-white p-5 border border-slate-200 rounded-2xl flex-1">
                 <Lbl className="bg-slate-50 p-2 rounded-lg">2. Criterios Manuales</Lbl>
                 <div className="max-h-[400px] overflow-y-auto pr-2 space-y-3">
