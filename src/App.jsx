@@ -115,7 +115,7 @@ export default function App() {
   
   const [isAiLoading, setIsAiLoading] = useState(false);
   const [aiPautaText, setAiPautaText] = useState('');
-  const [aiPautaFile, setAiPautaFile] = useState(null); // Nuevo estado para PDF
+  const [aiPautaFile, setAiPautaFile] = useState(null);
   const [isGeneratingPauta, setIsGeneratingPauta] = useState(false);
 
   // ESTADOS DE FORMULARIOS
@@ -320,7 +320,7 @@ export default function App() {
     }
   };
 
-  // --- IA: INTEGRACIÓN GEMINI ---
+  // --- IA: INTEGRACIÓN GEMINI MEJORADA CON DIAGNÓSTICO DE ERRORES ---
   const handleSummarizeCase = async () => {
     if (!appConfig?.geminiKey) return alert("Falta configurar la API Key de Gemini en Ajustes.");
     if (safeArr(caseForm.bitacora).length === 0) return alert("No hay registros en la bitácora para resumir.");
@@ -330,27 +330,35 @@ export default function App() {
       const historialText = safeArr(caseForm.bitacora).map(b => `Fecha: ${b.fecha}, Tipo: ${b.tipo}, Barrera: ${b.barrera}, Detalle: ${b.descripcion}`).join('\n');
       const prompt = `Eres un asistente clínico experto en psiquiatría y enlace de red. Resume el siguiente historial clínico de derivación de un paciente en 3 o 4 viñetas breves, destacando los nudos críticos, demoras y barreras de red. Sé profesional, estructurado y muy conciso.\n\nHistorial:\n${historialText}`;
 
-      let data;
       const delays = [1000, 2000, 4000, 8000, 16000];
+      let data;
 
       for (let attempt = 0; attempt <= 5; attempt++) {
-        try {
-          const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${appConfig.geminiKey}`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ contents: [{ parts: [{ text: prompt }] }] })
-          });
-          data = await response.json();
-          if (data.error) throw new Error(data.error.message);
-          break; // ¡Éxito! Salimos del bucle de intentos
-        } catch (err) {
-          if (attempt < 5) await new Promise(res => setTimeout(res, delays[attempt]));
-          else throw new Error("El servidor de IA de Google está saturado por alta demanda mundial. Por favor, intenta de nuevo en un par de minutos.");
+        const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${appConfig.geminiKey}`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ contents: [{ parts: [{ text: prompt }] }] })
+        });
+        
+        data = await response.json();
+
+        // Si es un error transitorio (saturación), reintentamos
+        if (response.status === 429 || response.status >= 500) {
+           if (attempt < 5) {
+             await new Promise(res => setTimeout(res, delays[attempt]));
+             continue;
+           }
         }
+        
+        // Si es un error de cliente (como API Key mala o permisos), NO reintentamos y mostramos la verdad
+        if (data.error) {
+          throw new Error(data.error.message || "Error desconocido de Google AI.");
+        }
+        
+        break; // Éxito
       }
 
       const iaText = data?.candidates?.[0]?.content?.parts?.[0]?.text;
-      
       if (iaText) {
         setCaseForm(prev => ({
           ...prev,
@@ -367,30 +375,27 @@ export default function App() {
       }
     } catch (err) {
       console.error(err);
-      alert("⚠️ " + err.message);
+      alert("⚠️ Error de IA: " + err.message);
     } finally {
       setIsAiLoading(false);
     }
   };
 
-  // Función para manejar el PDF seleccionado
   const handleAiFileUpload = (e) => {
     const file = e.target.files[0];
     if (!file) return;
-
     if (file.type !== 'application/pdf' && file.type !== 'text/plain') {
-      return alert("Por favor, sube un archivo PDF o de texto (.txt). Si tienes un documento Word, guárdalo como PDF primero.");
+      return alert("Por favor, sube un archivo PDF o de texto (.txt).");
+    }
+    if (file.size > 15 * 1024 * 1024) {
+      return alert("⚠️ El archivo es demasiado pesado (máximo 15 MB).");
     }
 
     const reader = new FileReader();
     reader.onload = (event) => {
       const base64String = event.target.result.split(',')[1];
-      setAiPautaFile({
-        name: file.name,
-        mimeType: file.type,
-        data: base64String
-      });
-      setAiPautaText(''); // Limpiamos el texto si sube un archivo para no duplicar
+      setAiPautaFile({ name: file.name, mimeType: file.type, data: base64String });
+      setAiPautaText('');
     };
     reader.readAsDataURL(file);
     e.target.value = null; 
@@ -398,45 +403,42 @@ export default function App() {
 
   const handleGeneratePautaWithAI = async () => {
     if (!appConfig?.geminiKey) return alert("Falta configurar la API Key de Gemini en Ajustes.");
-    if (!aiPautaText.trim() && !aiPautaFile) return alert("Por favor, pega el texto o sube un documento PDF del protocolo.");
+    if (!aiPautaText.trim() && !aiPautaFile) return alert("Por favor, pega el texto o sube un documento PDF.");
 
     setIsGeneratingPauta(true);
     try {
-      const prompt = `Eres un experto en calidad hospitalaria y auditoría clínica. Convierte el siguiente documento/texto de un protocolo en una lista de criterios de auditoría evaluables con SÍ o NO.\n\nDevuelve ÚNICAMENTE un arreglo JSON válido con el siguiente formato exacto, sin markdown, sin texto adicional y sin comillas invertidas:\n[\n  { "pregunta": "El profesional realiza X acción descrita en el protocolo", "opciones": "SÍ=1, NO=0" },\n  { "pregunta": "Se registra Y en la ficha clínica", "opciones": "SÍ=1, NO=0" }\n]`;
+      const prompt = `Eres un experto en calidad hospitalaria y auditoría clínica. Convierte el siguiente documento/texto de un protocolo en una lista de criterios de auditoría evaluables con SÍ o NO.\n\nDevuelve ÚNICAMENTE un arreglo JSON válido con el siguiente formato exacto, sin markdown y sin texto adicional:\n[\n  { "pregunta": "Descripción del criterio...", "opciones": "SÍ=1, NO=0" }\n]`;
 
       const parts = [{ text: prompt }];
-      
-      // Si subió un archivo, lo agregamos a la consulta
       if (aiPautaFile) {
-         parts.push({
-           inlineData: {
-             mimeType: aiPautaFile.mimeType,
-             data: aiPautaFile.data
-           }
-         });
-      } 
-      // Si pegó texto, lo agregamos
-      else if (aiPautaText) {
+         parts.push({ inlineData: { mimeType: aiPautaFile.mimeType, data: aiPautaFile.data } });
+      } else {
          parts.push({ text: `\n\nEl texto es:\n"${aiPautaText}"` });
       }
 
-      let data;
       const delays = [1000, 2000, 4000, 8000, 16000];
+      let data;
 
       for (let attempt = 0; attempt <= 5; attempt++) {
-        try {
-          const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${appConfig.geminiKey}`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ contents: [{ parts: parts }] })
-          });
-          data = await response.json();
-          if (data.error) throw new Error(data.error.message);
-          break; 
-        } catch (err) {
-          if (attempt < 5) await new Promise(res => setTimeout(res, delays[attempt]));
-          else throw new Error("El servidor de IA está saturado. Intenta nuevamente.");
+        const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${appConfig.geminiKey}`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ contents: [{ parts: parts }] })
+        });
+        
+        data = await response.json();
+
+        if (response.status === 429 || response.status >= 500) {
+           if (attempt < 5) {
+             await new Promise(res => setTimeout(res, delays[attempt]));
+             continue;
+           }
         }
+        
+        if (data.error) {
+          throw new Error(data.error.message || "Error en la solicitud a la IA.");
+        }
+        break;
       }
 
       let rawText = data?.candidates?.[0]?.content?.parts?.[0]?.text || '';
@@ -444,7 +446,7 @@ export default function App() {
       
       const generatedCriterios = JSON.parse(rawText);
 
-      if (Array.isArray(generatedCriterios) && generatedCriterios.length > 0) {
+      if (Array.isArray(generatedCriterios)) {
          const newCriterios = generatedCriterios.map((c, i) => ({
            id: `crit_ai_${Date.now()}_${i}`,
            pregunta: c.pregunta,
@@ -459,7 +461,7 @@ export default function App() {
       }
     } catch (err) {
       console.error(err);
-      alert("⚠️ Error al generar pauta con IA: " + err.message);
+      alert("⚠️ Error de IA al procesar documento: " + err.message);
     } finally {
       setIsGeneratingPauta(false);
     }
@@ -545,7 +547,7 @@ export default function App() {
       }));
     } catch (err) {
       console.error(err);
-      alert("Error al subir el archivo. Verifica las reglas de Firebase Storage.");
+      alert("Error al subir el archivo.");
     } finally {
       setIsUploadingCaseFile(false);
       e.target.value = null;
@@ -566,7 +568,7 @@ export default function App() {
       }));
     } catch (err) {
       console.error(err);
-      alert("Error al subir el archivo. Verifica las reglas de Firebase Storage.");
+      alert("Error al subir el archivo.");
     } finally {
       setIsUploadingDocFile(false);
       e.target.value = null;
@@ -1363,7 +1365,6 @@ export default function App() {
                 <h4 className="font-black text-indigo-800 text-sm mb-2 flex items-center gap-2"><Activity size={16}/> IA: Digitalizar Protocolo</h4>
                 <p className="text-[10px] text-indigo-600 mb-3 font-medium leading-relaxed">Sube tu documento en PDF o pega el texto del protocolo. La IA de Google lo analizará y extraerá automáticamente las preguntas de auditoría evaluables.</p>
                 
-                {/* Nueva Zona de Subida de Archivos para la IA */}
                 <div className="mb-3 flex flex-col gap-2">
                   <label className={`cursor-pointer border-2 border-dashed ${aiPautaFile ? 'border-emerald-400 bg-emerald-50' : 'border-indigo-300 bg-white hover:bg-indigo-50'} p-4 rounded-xl text-center transition-colors`}>
                     {aiPautaFile ? <CheckCircle size={24} className="mx-auto text-emerald-500 mb-1" /> : <FileIcon size={24} className="mx-auto text-indigo-400 mb-1" />}
