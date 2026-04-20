@@ -7,7 +7,8 @@ import {
   LayoutDashboard, Users, FileText, AlertTriangle, CheckCircle, Clock, Plus, Activity, LogOut,
   Bell, Copy, Loader2, Edit2, Trash2, ListTodo, MessageSquare, CheckSquare, Square, Calendar,
   UploadCloud, Paperclip, File as FileIcon, Lock, User, ClipboardCheck, BookOpen, Download,
-  Wand2, Settings, UserPlus, Shield, Key, Timer, TrendingUp, BarChart3, Target, Printer, ExternalLink
+  Wand2, Settings, UserPlus, Shield, Key, Timer, TrendingUp, BarChart3, Target, Printer, ExternalLink,
+  BrainCircuit, Sparkles, ShieldAlert
 } from 'lucide-react';
 
 const firebaseConfig = typeof __firebase_config !== 'undefined' ? JSON.parse(__firebase_config) : {
@@ -62,18 +63,33 @@ const parseOpciones = (str) => {
 const generateTextWithRetry = async (apiKey, prompt, sys = "", inlineData = null) => {
   if (!apiKey) throw new Error("Falta Clave API");
   const parts = [{ text: prompt }];
-  if (inlineData) parts.push({ inlineData });
+  
+  if (inlineData) {
+    let mime = inlineData.mimeType;
+    // Forzamos a PDF si Firebase lo guardó como binario genérico o vacío para evitar errores IA
+    if (!mime || mime === 'application/octet-stream' || mime === '') {
+        mime = 'application/pdf'; 
+    }
+    parts.push({ inlineData: { mimeType: mime, data: inlineData.data } });
+  }
+
   const payload = { contents: [{ parts }] };
   if (sys) payload.systemInstruction = { parts: [{ text: sys }] };
   
   for (let i = 0; i < 5; i++) {
     try {
-      const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${apiKey}`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) });
-      if (!res.ok) throw new Error(`HTTP error! status: ${res.status}`);
+      const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${apiKey}`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) });
+      if (!res.ok) {
+        if (res.status === 429) {
+            throw new Error("Límite de consultas gratuitas alcanzado (Error 429). Por favor, espera 1 minuto e intenta de nuevo.");
+        }
+        throw new Error(`HTTP error! status: ${res.status}`);
+      }
       const data = await res.json();
       if (data.candidates?.[0]?.content?.parts?.[0]?.text) return data.candidates[0].content.parts[0].text;
       throw new Error("Respuesta vacía");
     } catch (e) {
+      if (e.message && e.message.includes('429')) throw e; 
       if (i === 4) throw e;
       await new Promise(r => setTimeout(r, [1000, 2000, 4000, 8000, 16000][i]));
     }
@@ -133,13 +149,14 @@ export default function App() {
   const [plazoCentroInput, setPlazoCentroInput] = useState('');
   const [plazoDaysInput, setPlazoDaysInput] = useState('');
 
-  // SE MEJORA defaultCaseState PARA INCLUIR barrera
-  const defaultCaseState = { rut: '', nombre: '', edad: '', origen: '', destino: '', prioridad: 'Media', estado: 'Pendiente', barrera: 'Sin barrera', fechaEgreso: new Date().toISOString().split('T')[0], fechaRecepcionRed: '', fechaIngresoEfectivo: '', tutor: { nombre: '', relacion: '', telefono: '' }, referentes: [], bitacora: [], archivos: [], epicrisis: '' };
+  const defaultCaseState = { rut: '', nombre: '', edad: '', origen: '', destino: '', prioridad: 'Media', estado: 'Pendiente', fechaEgreso: new Date().toISOString().split('T')[0], fechaRecepcionRed: '', fechaIngresoEfectivo: '', tutor: { nombre: '', relacion: '', telefono: '' }, referentes: [], bitacora: [], archivos: [], epicrisis: '' };
   const [editingCaseId, setEditingCaseId] = useState(null);
   const [caseForm, setCaseForm] = useState(defaultCaseState);
   const [activeModalTab, setActiveModalTab] = useState('datos');
   const [isCaseModalOpen, setIsCaseModalOpen] = useState(false);
-  const [newBitacoraEntry, setNewBitacoraEntry] = useState({ tipo: 'Nota Adm.', descripcion: '', responsable: '', fechaCumplimiento: '' });
+  
+  // MEJORA: Estado inicial con 'barrera'
+  const [newBitacoraEntry, setNewBitacoraEntry] = useState({ tipo: 'Nota Adm.', descripcion: '', responsable: '', fechaCumplimiento: '', barrera: 'Ninguna' });
   const [newCaseLink, setNewCaseLink] = useState({ nombre: '', url: '' }); 
 
   const defaultDocState = { nombre: '', ambito: 'Red Integral', fase: 'Levantamiento', avance: 0, prioridad: 'Media', fechaResolucion: '', notas: '', bitacora: [], archivos: [], archivosOficiales: [] };
@@ -159,13 +176,18 @@ export default function App() {
   const [printingAudit, setPrintingAudit] = useState(null);
   const [rawTextForAI, setRawTextForAI] = useState('');
   
+  // MEJORA: Estados para IA Lectura de Documentos
+  const [aiFileContext, setAiFileContext] = useState(null);
+  const [aiPrompt, setAiPrompt] = useState('');
+  const [aiResponse, setAiResponse] = useState('');
+  const [isAnalyzingFile, setIsAnalyzingFile] = useState(false);
+
   const [centroFilterAuditorias, setCentroFilterAuditorias] = useState('Todos');
   const [centroFilterConsultorias, setCentroFilterConsultorias] = useState('Todos');
   const [caseFilterCentro, setCaseFilterCentro] = useState('Todos');
   const [caseSearch, setCaseSearch] = useState('');
   
   const [isDigitizing, setIsDigitizing] = useState(false);
-  const [isExtractingEpicrisis, setIsExtractingEpicrisis] = useState(false); // ESTADO PARA EXTRACCIÓN DE EPICRISIS
   const [isUploadingCaseFile, setIsUploadingCaseFile] = useState(false);
   const [isUploadingDocFile, setIsUploadingDocFile] = useState(false);
   
@@ -315,20 +337,17 @@ export default function App() {
     await saveToCloud('settings', 'config', { ...appConfig, plazos: newPlazos });
   };
 
-  // EXPORTACIÓN MEJORADA (ENGLOBADO EN COMILLAS Y CAMPO BARRERA)
   const handleExportCSV = () => {
     const BOM = '\uFEFF';
-    const headers = ['ID_Seguimiento', 'RUT', 'Paciente', 'Edad', 'Origen', 'Destino', 'Estado', 'Barrera_Detectada', 'Fecha_Egreso', 'Fecha_Recepcion', 'Fecha_Ingreso_Efectivo', 'Plazo_Meta_Dias', 'Brecha_Dias', 'Ultimo_Hito_Fecha', 'Ultimo_Hito_Tipo', 'Responsable_Hito'];
-    
-    const esc = (val) => '"' + String(val).replace(/"/g, '""') + '"';
-
+    // MEJORA: Incorporación de la columna Barrera_Detectada en la exportación Excel
+    const headers = ['ID_Seguimiento', 'RUT', 'Paciente', 'Edad', 'Origen', 'Destino', 'Estado', 'Fecha_Egreso', 'Fecha_Recepcion', 'Fecha_Ingreso_Efectivo', 'Plazo_Meta_Dias', 'Brecha_Dias', 'Ultimo_Hito_Fecha', 'Ultimo_Hito_Tipo', 'Responsable_Hito', 'Barrera_Detectada'];
     const rows = filteredCases.map(c => {
        const target = getTargetDaysForCase(c.destino);
        const brecha = diffInDays(c.fechaEgreso, c.fechaIngresoEfectivo);
        const ultBit = safeArr(c.bitacora)[0] || {};
-       return [c.id, c.paciente, c.nombre, c.edad||'', c.origen, c.destino, c.estado, c.barrera||'Sin barrera', c.fechaEgreso||'', c.fechaRecepcionRed||'', c.fechaIngresoEfectivo||'', target, brecha||'', ultBit.fecha||'', ultBit.tipo||'', ultBit.responsable||''].map(esc);
+       return [c.id, c.paciente, c.nombre, c.edad||'', c.origen, c.destino, c.estado, c.fechaEgreso||'', c.fechaRecepcionRed||'', c.fechaIngresoEfectivo||'', target, brecha||'', ultBit.fecha||'', ultBit.tipo||'', ultBit.responsable||'', ultBit.barrera||'Ninguna'];
     });
-    const csvContent = BOM + [headers.map(esc).join(';'), ...rows.map(r => r.join(';'))].join('\n');
+    const csvContent = BOM + [headers.join(';'), ...rows.map(r => r.join(';'))].join('\n');
     const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
     const link = document.createElement("a");
     link.href = URL.createObjectURL(blob); link.download = `Reporte_Red_${new Date().toISOString().split('T')[0]}.csv`; link.click();
@@ -340,6 +359,35 @@ export default function App() {
     if(window.confirm('⚠️ ¿Estás seguro de eliminar TODO el directorio para empezar de cero?')) {
        safeArr(directory).forEach(async (d) => { if (d && d.id) await deleteFromCloud('directory', d.id); });
        alert('Directorio limpiado.');
+    }
+  };
+
+  // --- MEJORA: FUNCIÓN PARA CHAT IA CON DOCUMENTOS ---
+  const handleAskAiAboutFile = async () => {
+    if (!appConfig.apiKey) return alert("Falta Clave API de IA en la Configuración.");
+    if (!aiPrompt.trim()) return;
+    setIsAnalyzingFile(true); setAiResponse('');
+    try {
+      const res = await fetch(aiFileContext.url);
+      if (!res.ok) throw new Error("CORS");
+      const blob = await res.blob();
+      const reader = new FileReader();
+      reader.readAsDataURL(blob);
+      reader.onloadend = async () => {
+        try {
+          const result = await generateTextWithRetry(
+            appConfig.apiKey, 
+            `${aiPrompt}\n\n[Documento: ${aiFileContext.nombre}]`, 
+            "Responde basándote estrictamente en el documento proporcionado.", 
+            { mimeType: blob.type || 'application/pdf', data: reader.result.split(',')[1] }
+          );
+          setAiResponse(result);
+        } catch (err) { setAiResponse(`⚠️ Error IA: ${err.message}`); }
+        setIsAnalyzingFile(false);
+      };
+    } catch (e) {
+      setAiResponse("⚠️ Error de acceso al archivo (CORS). Firebase está bloqueando la descarga para la IA. Por favor, aplica las reglas CORS mediante Google Cloud Shell.");
+      setIsAnalyzingFile(false);
     }
   };
 
@@ -367,41 +415,12 @@ export default function App() {
   };
 
   const handleProcessRawTextForAI = () => { if (!rawTextForAI.trim()) return; extractFormFromAI(`Analiza este texto correspondiente a un instrumento de evaluación: \n\n${rawTextForAI}`); };
-  
   const handlePdfUploadForAI = (e) => {
     const file = e.target.files[0];
     if (!file) return;
     const reader = new FileReader();
     reader.onloadend = () => extractFormFromAI(`Analiza el documento PDF adjunto.`, { mimeType: file.type || 'application/pdf', data: reader.result.split(',')[1] });
     reader.onerror = () => alert("Error al leer el archivo.");
-    reader.readAsDataURL(file);
-  };
-
-  // EXTRACCIÓN DE EPICRISIS MEDIANTE IA
-  const handlePdfUploadForEpicrisis = (e) => {
-    const file = e.target.files[0];
-    if (!file) return;
-    if (!appConfig.apiKey) return alert("Falta configurar la Clave API de IA en Configuración.");
-    
-    setIsExtractingEpicrisis(true);
-    const reader = new FileReader();
-    reader.onloadend = async () => {
-      try {
-        const prompt = `ERES UN CLÍNICO EXPERTO DE UHCIP. Analiza el documento PDF adjunto y extrae un resumen clínico directo y profesional (máximo 2 párrafos) ideal para una epicrisis o resumen de derivación. No uses formato markdown, solo texto plano.`;
-        const result = await generateTextWithRetry(appConfig.apiKey, prompt, "", { mimeType: file.type || 'application/pdf', data: reader.result.split(',')[1] });
-        setCaseForm(prev => ({ ...prev, epicrisis: prev.epicrisis ? prev.epicrisis + '\n\n[IA Extraído]: ' + result : result }));
-        alert("Resumen clínico extraído con éxito.");
-      } catch (err) {
-        alert("Error IA al leer documento. Verifica tu Llave API o el formato del archivo.");
-      } finally {
-        setIsExtractingEpicrisis(false);
-        e.target.value = null;
-      }
-    };
-    reader.onerror = () => {
-      alert("Error al leer el archivo.");
-      setIsExtractingEpicrisis(false);
-    };
     reader.readAsDataURL(file);
   };
 
@@ -439,7 +458,8 @@ export default function App() {
   const handleAddBitacora = () => {
     if (!newBitacoraEntry.descripcion) return;
     setCaseForm({ ...caseForm, bitacora: [{ id: Date.now(), ...newBitacoraEntry, fecha: new Date().toISOString().split('T')[0], completada: false }, ...safeArr(caseForm.bitacora)] });
-    setNewBitacoraEntry({ tipo: 'Nota Adm.', descripcion: '', responsable: '', fechaCumplimiento: '' });
+    // MEJORA: Resetea el valor de la barrera para el próximo ingreso
+    setNewBitacoraEntry({ tipo: 'Nota Adm.', descripcion: '', responsable: '', fechaCumplimiento: '', barrera: 'Ninguna' });
   };
   
   const toggleTaskCompletion = async (caseId, entryId) => {
@@ -755,6 +775,20 @@ export default function App() {
         {activeTab === 'dashboard' && (
           <div className="space-y-6 animate-in fade-in mt-12 md:mt-0">
             <div><h2 className="text-2xl font-black text-slate-800 tracking-tight">Panel de Gestión Integral</h2><p className="text-xs text-slate-500 font-medium mt-1">Resumen de actividad clínica y normativa</p></div>
+
+            {/* DASHBOARD EJECUTIVO PARA JEFATURA */}
+            <div className="bg-slate-900 rounded-3xl p-6 text-white shadow-xl flex flex-col md:flex-row items-center justify-between gap-6 border border-slate-700 relative overflow-hidden mt-6 mb-6">
+               <div className="absolute top-0 right-0 -mr-10 -mt-10 w-40 h-40 bg-blue-500/10 rounded-full blur-3xl"></div>
+               <div className="flex items-center gap-4 relative z-10">
+                 <div className="p-4 bg-white/10 rounded-2xl text-blue-400"><Shield size={32}/></div>
+                 <div>
+                   <h3 className="text-sm font-black uppercase tracking-[0.2em] text-blue-400 mb-1">Estatus Normativo y Resolutivo de Red</h3>
+                   <p className="text-xs font-medium text-slate-300 leading-relaxed">Actualmente tenemos <strong className="text-white underline">{safeArr(docs).filter(d => d.fase === 'Validación Técnica').length} protocolos</strong> en Fase de Validación Técnica y <strong className="text-white underline">{safeArr(docs).filter(d => d.prioridad === 'Alta').length} con Prioridad Alta</strong> que requieren sanción directiva.</p>
+                 </div>
+               </div>
+               <button onClick={()=>setActiveTab('docs')} className="bg-blue-600 text-white px-8 py-3 rounded-xl font-black text-[10px] uppercase tracking-widest hover:bg-blue-500 transition-all shadow-lg shrink-0 relative z-10">Gestionar Normas</button>
+            </div>
+
             <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
               <div className="bg-white p-4 rounded-2xl shadow-sm border-l-[6px] border-l-red-500"><p className="text-[9px] text-slate-400 font-black uppercase tracking-widest">Pérdida Continuidad</p><h3 className="text-2xl font-black text-red-600 mt-1">{alertCases.length}</h3></div>
               <div className="bg-white p-4 rounded-2xl shadow-sm border-l-[6px] border-l-blue-500"><p className="text-[9px] text-slate-400 font-black uppercase tracking-widest">Pacientes en Tránsito</p><h3 className="text-2xl font-black text-blue-600 mt-1">{safeArr(visibleCases).filter(c => c.estado === 'Pendiente').length}</h3></div>
@@ -791,16 +825,6 @@ export default function App() {
                 <div className="absolute top-0 right-0 w-32 h-32 bg-blue-500/20 rounded-full -mr-10 -mt-10 blur-xl"></div>
               </div>
             </div>
-            
-            {/* NUEVA SECCIÓN DASHBOARD: PROTOCOLOS */}
-            <div className="bg-gradient-to-r from-slate-800 to-slate-900 rounded-2xl p-6 text-white shadow-lg mt-6 flex flex-col md:flex-row items-start md:items-center justify-between gap-4">
-               <div>
-                 <h3 className="text-sm font-black uppercase tracking-widest text-blue-400 mb-1 flex items-center gap-2"><FileText size={16}/>Estatus Normativo de Red</h3>
-                 <p className="text-xs font-medium text-slate-300 leading-relaxed">Tenemos <strong className="text-white">{safeArr(docs).filter(d => d.fase === 'Validación Técnica').length} protocolos</strong> en Fase de Validación Técnica y <strong className="text-white">{safeArr(docs).filter(d => d.prioridad === 'Alta').length} con Prioridad Alta</strong> que requieren apoyo.</p>
-               </div>
-               <button onClick={()=>setActiveTab('docs')} className="bg-blue-600 px-6 py-3 rounded-xl text-[10px] font-black uppercase tracking-widest hover:bg-blue-500 transition-colors shadow-lg shrink-0">Ver Protocolos</button>
-            </div>
-
             <div className="bg-white rounded-2xl shadow-sm border border-slate-200 p-6">
               <h3 className="text-xs font-black text-slate-800 uppercase tracking-widest mb-4 flex items-center gap-2"><ListTodo size={16} className="text-blue-500" /> Tareas Pendientes</h3>
               <div className="overflow-x-auto">
@@ -871,12 +895,6 @@ export default function App() {
               <div className="bg-white p-6 rounded-2xl shadow-sm border border-l-[8px] border-l-blue-500"><div className="flex justify-between mb-3"><div className="p-2 bg-blue-50 rounded-xl text-blue-600"><BarChart3 size={18}/></div></div><h3 className="text-[9px] font-black text-slate-400 uppercase tracking-widest">Ingreso Efectivo</h3><p className="text-4xl font-black text-slate-800 mt-1">{String(redMetrics.avgIngreso)} <span className="text-xs text-slate-300">Días</span></p></div>
               <div className="bg-white p-6 rounded-2xl shadow-sm border border-l-[8px] border-l-red-500"><div className="flex justify-between mb-3"><div className="p-2 bg-red-50 rounded-xl text-red-600"><AlertTriangle size={18}/></div></div><h3 className="text-[9px] font-black text-slate-400 uppercase tracking-widest">Casos sobre meta</h3><p className="text-4xl font-black text-slate-800 mt-1">{String(redMetrics.fueraDePlazo)} <span className="text-xs text-slate-300">Casos</span></p></div>
             </div>
-            {redMetrics.fueraDePlazo > 0 && currentUser?.rol === 'Admin' && (
-              <div className="bg-gradient-to-br from-indigo-900 to-[#0a2540] rounded-2xl p-8 text-white shadow-xl">
-                 <div className="flex justify-between items-center"><div className="max-w-2xl"><h3 className="text-lg font-black mb-2"><TrendingUp size={20} className="inline text-blue-400"/> Análisis Estratégico (IA)</h3></div><button onClick={() => handleGenerateReport('stats')} disabled={isGeneratingReport} className={clsBtnP}>{isGeneratingReport ? <Loader2 size={16} className="animate-spin"/> : <FileText size={16}/>} Procesar</button></div>
-                 {reportContent && activeTab === 'stats' && (<div className="mt-6 bg-[#081b30] p-6 rounded-xl border border-white/10"><div className="flex justify-between mb-4"><span className="text-[9px] font-black uppercase text-blue-300">Borrador:</span><button onClick={()=>copyToClipboard(reportContent)} className="text-white hover:text-blue-300"><Copy size={14}/></button></div><p className="text-xs font-medium text-slate-300 whitespace-pre-wrap">{String(reportContent)}</p></div>)}
-              </div>
-            )}
           </div>
         )}
 
@@ -1083,120 +1101,140 @@ export default function App() {
         )}
       </main>
 
+      {/* ================= MODAL ASISTENTE IA DE DOCUMENTOS ================= */}
+      <ModalWrap isOpen={!!aiFileContext} mw="max-w-2xl">
+         <ModalHdr t={`Asistente IA: ${aiFileContext?.nombre}`} onClose={()=>{setAiFileContext(null); setAiResponse(''); setAiPrompt('');}} icon={BrainCircuit} />
+         <div className="p-6 flex flex-col h-[60vh] bg-slate-50">
+             <div className="flex-1 overflow-y-auto mb-4 bg-white p-5 rounded-2xl border shadow-inner text-sm whitespace-pre-wrap leading-relaxed text-slate-700">
+                 {aiResponse || <span className="text-slate-400 italic">Escribe abajo tu consulta sobre este documento (resumen, fechas, medicamentos detectados)...</span>}
+             </div>
+             <div className="flex gap-3 shrink-0">
+                 <Inp value={aiPrompt} onChange={e=>setAiPrompt(e.target.value)} placeholder="¿Qué necesitas saber del documento?" onKeyDown={e=>e.key==='Enter' && handleAskAiAboutFile()} disabled={isAnalyzingFile} />
+                 <button onClick={handleAskAiAboutFile} disabled={isAnalyzingFile || !aiPrompt.trim()} className={clsBtnP}>{isAnalyzingFile ? <Loader2 size={16} className="animate-spin"/> : <Sparkles size={16}/>}</button>
+             </div>
+         </div>
+      </ModalWrap>
+
       {/* ================= MODALES COMPLETOS ================= */}
       <ModalWrap isOpen={isCaseModalOpen}>
         <ModalHdr t={editingCaseId ? `Editar: ${caseForm.nombre}` : 'Nuevo Seguimiento'} onClose={()=>setIsCaseModalOpen(false)} icon={Users} />
-        <div className="flex bg-slate-50 border-b shrink-0 px-6">
+        <div className="flex bg-slate-50 border-b px-6 shrink-0">
           <button onClick={() => setActiveModalTab('datos')} className={`px-6 py-4 text-[10px] font-black uppercase tracking-[0.2em] border-b-4 ${activeModalTab === 'datos' ? 'border-blue-600 text-blue-600 bg-white' : 'border-transparent text-slate-400'}`}>Datos Básicos</button>
-          <button onClick={() => setActiveModalTab('bitacora')} className={`px-6 py-4 text-[10px] font-black uppercase tracking-[0.2em] border-b-4 ${activeModalTab === 'bitacora' ? 'border-blue-600 text-blue-600 bg-white' : 'border-transparent text-slate-400'}`}>Bitácora</button>
+          <button onClick={() => setActiveModalTab('bitacora')} className={`px-6 py-4 text-[10px] font-black uppercase tracking-[0.2em] border-b-4 ${activeModalTab === 'bitacora' ? 'border-blue-600 text-blue-600 bg-white' : 'border-transparent text-slate-400'}`}>Bitácora y Barreras</button>
           <button onClick={() => setActiveModalTab('archivos')} className={`px-6 py-4 text-[10px] font-black uppercase tracking-[0.2em] border-b-4 ${activeModalTab === 'archivos' ? 'border-blue-600 text-blue-600 bg-white' : 'border-transparent text-slate-400'}`}>Epicrisis y Archivos</button>
         </div>
         <div className="p-6 overflow-y-auto flex-1 bg-white">
-            {activeModalTab === 'datos' && (
-              <div className="space-y-6">
-                <div className="grid grid-cols-2 gap-4">
-                  <div><Lbl>RUT</Lbl><Inp type="text" value={caseForm.rut} onChange={e=>setCaseForm({...caseForm, rut: e.target.value})}/></div>
-                  <div><Lbl>Nombre Paciente</Lbl><Inp type="text" value={caseForm.nombre} onChange={e=>setCaseForm({...caseForm, nombre: e.target.value})}/></div>
-                  <div><Lbl>Edad</Lbl><Inp type="number" value={caseForm.edad || ''} onChange={e=>setCaseForm({...caseForm, edad: e.target.value})} placeholder="Ej: 15" /></div>
-                  <div><Lbl>Estado</Lbl><Sel value={caseForm.estado} onChange={e=>setCaseForm({...caseForm, estado: e.target.value})}><option>Pendiente</option><option>Concretado</option><option>Alerta</option></Sel></div>
-                  
-                  {/* NUEVO CAMPO BARRERA */}
-                  <div className="col-span-2 md:col-span-1">
-                     <Lbl>Barrera Detectada</Lbl>
-                     <Sel value={caseForm.barrera || 'Sin barrera'} onChange={e=>setCaseForm({...caseForm, barrera: e.target.value})}>
-                       <option value="Sin barrera">Sin barrera</option>
-                       <option value="Clínica - Descompensación psicopatológica">Clínica - Descompensación psicopatológica</option>
-                       <option value="Clínica - Rechazo a tratamiento/traslado">Clínica - Rechazo a tratamiento/traslado</option>
-                       <option value="Administrativa - Falta de cupo en destino">Administrativa - Falta de cupo en destino</option>
-                       <option value="Administrativa - Demora en ambulancia/traslado">Administrativa - Demora en ambulancia/traslado</option>
-                       <option value="Sociofamiliar - Ausencia de tutor/red">Sociofamiliar - Ausencia de tutor/red</option>
-                       <option value="Otra">Otra</option>
-                     </Sel>
-                  </div>
+          {activeModalTab === 'datos' && (
+            <div className="space-y-6">
+              <div className="grid grid-cols-2 gap-4">
+                <div><Lbl>RUT</Lbl><Inp type="text" value={caseForm.rut} onChange={e=>setCaseForm({...caseForm, rut: e.target.value})}/></div>
+                <div><Lbl>Nombre Paciente</Lbl><Inp type="text" value={caseForm.nombre} onChange={e=>setCaseForm({...caseForm, nombre: e.target.value})}/></div>
+                <div><Lbl>Edad</Lbl><Inp type="number" value={caseForm.edad || ''} onChange={e=>setCaseForm({...caseForm, edad: e.target.value})} placeholder="Ej: 15" /></div>
+                <div><Lbl>Estado</Lbl><Sel value={caseForm.estado} onChange={e=>setCaseForm({...caseForm, estado: e.target.value})}><option>Pendiente</option><option>Concretado</option><option>Alerta</option></Sel></div>
+                <div><Lbl>Fecha Egreso</Lbl><Inp type="date" value={caseForm.fechaEgreso} onChange={e=>setCaseForm({...caseForm, fechaEgreso: e.target.value})}/></div>
+                <div><Lbl>Ingreso Efectivo</Lbl><Inp type="date" value={caseForm.fechaIngresoEfectivo} onChange={e=>setCaseForm({...caseForm, fechaIngresoEfectivo: e.target.value})}/></div>
+                
+                <div>
+                  <Lbl>Origen</Lbl>
+                  <Inp list="centros-list" value={caseForm.origen} onChange={e=>setCaseForm({...caseForm, origen: e.target.value})} placeholder="Escriba o seleccione..."/>
+                </div>
+                <div>
+                  <Lbl>Destino</Lbl>
+                  <Inp list="centros-list" value={caseForm.destino} onChange={e=>setCaseForm({...caseForm, destino: e.target.value})} placeholder="Escriba o seleccione..."/>
+                </div>
+                <datalist id="centros-list">{safeArr(centros).map(c => <option key={c} value={c} />)}</datalist>
+              </div>
+              <div className="mt-4 border-t pt-4">
+                <Lbl>Tutor Legal / Familiar</Lbl>
+                <div className="grid grid-cols-3 gap-2 mb-4">
+                  <Inp value={caseForm.tutor?.nombre||''} onChange={e=>setCaseForm({...caseForm, tutor: {...caseForm.tutor, nombre: e.target.value}})} placeholder="Nombre"/>
+                  <Inp value={caseForm.tutor?.relacion||''} onChange={e=>setCaseForm({...caseForm, tutor: {...caseForm.tutor, relacion: e.target.value}})} placeholder="Parentesco"/>
+                  <Inp value={caseForm.tutor?.telefono||''} onChange={e=>setCaseForm({...caseForm, tutor: {...caseForm.tutor, telefono: e.target.value}})} placeholder="Teléfono"/>
+                </div>
+                <Lbl>Referentes Clínicos</Lbl>
+                {safeArr(caseForm.referentes).map((ref, i) => (
+                   <div key={i} className="flex gap-2 mb-2">
+                     <Inp value={ref.nombre} onChange={e=>{const r=[...safeArr(caseForm.referentes)]; r[i].nombre=e.target.value; setCaseForm({...caseForm, referentes: r})}} placeholder="Nombre"/>
+                     <Inp value={ref.dispositivo} onChange={e=>{const r=[...safeArr(caseForm.referentes)]; r[i].dispositivo=e.target.value; setCaseForm({...caseForm, referentes: r})}} placeholder="Dispositivo"/>
+                     <Inp value={ref.contacto} onChange={e=>{const r=[...safeArr(caseForm.referentes)]; r[i].contacto=e.target.value; setCaseForm({...caseForm, referentes: r})}} placeholder="Contacto"/>
+                     <button onClick={()=>{const r=[...safeArr(caseForm.referentes)]; r.splice(i,1); setCaseForm({...caseForm, referentes: r})}} className="p-3 text-red-500 bg-red-50 hover:bg-red-100 rounded-xl transition-colors"><Trash2 size={16}/></button>
+                   </div>
+                ))}
+                <button onClick={()=>setCaseForm({...caseForm, referentes: [...safeArr(caseForm.referentes), {nombre:'', dispositivo:'', contacto:''}]})} className="text-[10px] text-blue-600 font-black uppercase mt-2 p-2 hover:bg-blue-50 rounded-lg"><Plus size={12} className="inline"/> Añadir Referente</button>
+              </div>
+            </div>
+          )}
+          {activeModalTab === 'bitacora' && (
+            <div className="space-y-4">
+              <div className="bg-slate-50 p-6 rounded-2xl grid grid-cols-1 md:grid-cols-4 gap-4">
+                 <Sel value={newBitacoraEntry.tipo} onChange={e=>setNewBitacoraEntry({...newBitacoraEntry, tipo: e.target.value})}>
+                   <option value="Nota Adm.">📝 Nota Adm.</option>
+                   <option value="Intervención">🗣️ Intervención</option>
+                   <option value="Reunión">🤝 Reunión de Red</option>
+                   <option value="Tarea">🎯 Tarea Enlace</option>
+                 </Sel>
+                 
+                 <select value={newBitacoraEntry.barrera} onChange={e=>setNewBitacoraEntry({...newBitacoraEntry, barrera: e.target.value})} className={newBitacoraEntry.barrera !== 'Ninguna' ? `${clsInp} bg-red-50 text-red-700 border-red-200` : clsInp}>
+                     <option value="Ninguna">✅ Sin Barrera (Gestión Exitosa)</option>
+                     <optgroup label="Dispositivo / Red">
+                         <option value="Falta Cupo Médico">⚠️ Falta Cupo Médico (Psiquiatra)</option>
+                         <option value="Falta Cupo Psicosocial">⚠️ Falta Cupo Equipo Psicosocial</option>
+                         <option value="Rechazo Derivación">⚠️ Rechazo de Derivación</option>
+                         <option value="Error Documentación">⚠️ Error en Documentación / Trámite</option>
+                     </optgroup>
+                     <optgroup label="Usuario / Familia">
+                         <option value="Inasistencia Usuario">🚨 Inasistencia Usuario</option>
+                         <option value="Inaccesibilidad/Traslado">🚨 Inaccesibilidad Geográfica/Traslado</option>
+                         <option value="Rechazo Tratamiento">🚨 Rechazo Tratamiento (Tutor/Pte)</option>
+                         <option value="Crisis Social/Familiar">🚨 Crisis Social/Familiar Aguda</option>
+                     </optgroup>
+                     <optgroup label="Intersectorial">
+                         <option value="Espera Resolución Judicial">⚖️ Espera Resolución Judicial</option>
+                         <option value="Falta Plaza Residencia">🏠 Falta Plaza Residencia (Mejor Niñez)</option>
+                     </optgroup>
+                 </select>
 
-                  <div className="col-span-2 md:col-span-1"><Lbl>Fecha Egreso</Lbl><Inp type="date" value={caseForm.fechaEgreso} onChange={e=>setCaseForm({...caseForm, fechaEgreso: e.target.value})}/></div>
-                  <div><Lbl>Ingreso Efectivo</Lbl><Inp type="date" value={caseForm.fechaIngresoEfectivo} onChange={e=>setCaseForm({...caseForm, fechaIngresoEfectivo: e.target.value})}/></div>
-                  <div><Lbl>Prioridad</Lbl><Sel value={caseForm.prioridad} onChange={e=>setCaseForm({...caseForm, prioridad: e.target.value})}><option>Alta</option><option>Media</option><option>Baja</option></Sel></div>
-                  
-                  <div>
-                    <Lbl>Origen</Lbl>
-                    <Inp list="centros-list" value={caseForm.origen} onChange={e=>setCaseForm({...caseForm, origen: e.target.value})} placeholder="Escriba o seleccione..."/>
-                  </div>
-                  <div>
-                    <Lbl>Destino</Lbl>
-                    <Inp list="centros-list" value={caseForm.destino} onChange={e=>setCaseForm({...caseForm, destino: e.target.value})} placeholder="Escriba o seleccione..."/>
-                  </div>
-                  <datalist id="centros-list">{safeArr(centros).map(c => <option key={c} value={c} />)}</datalist>
-                </div>
-                <div className="mt-4 border-t pt-4">
-                  <Lbl>Tutor Legal / Familiar</Lbl>
-                  <div className="grid grid-cols-3 gap-2 mb-4">
-                    <Inp value={caseForm.tutor?.nombre||''} onChange={e=>setCaseForm({...caseForm, tutor: {...caseForm.tutor, nombre: e.target.value}})} placeholder="Nombre"/>
-                    <Inp value={caseForm.tutor?.relacion||''} onChange={e=>setCaseForm({...caseForm, tutor: {...caseForm.tutor, relacion: e.target.value}})} placeholder="Parentesco"/>
-                    <Inp value={caseForm.tutor?.telefono||''} onChange={e=>setCaseForm({...caseForm, tutor: {...caseForm.tutor, telefono: e.target.value}})} placeholder="Teléfono"/>
-                  </div>
-                  <Lbl>Referentes Clínicos</Lbl>
-                  {safeArr(caseForm.referentes).map((ref, i) => (
-                     <div key={i} className="flex gap-2 mb-2">
-                       <Inp value={ref.nombre} onChange={e=>{const r=[...safeArr(caseForm.referentes)]; r[i].nombre=e.target.value; setCaseForm({...caseForm, referentes: r})}} placeholder="Nombre"/>
-                       <Inp value={ref.dispositivo} onChange={e=>{const r=[...safeArr(caseForm.referentes)]; r[i].dispositivo=e.target.value; setCaseForm({...caseForm, referentes: r})}} placeholder="Dispositivo"/>
-                       <Inp value={ref.contacto} onChange={e=>{const r=[...safeArr(caseForm.referentes)]; r[i].contacto=e.target.value; setCaseForm({...caseForm, referentes: r})}} placeholder="Contacto"/>
-                       <button onClick={()=>{const r=[...safeArr(caseForm.referentes)]; r.splice(i,1); setCaseForm({...caseForm, referentes: r})}} className="p-3 text-red-500 bg-red-50 hover:bg-red-100 rounded-xl transition-colors"><Trash2 size={16}/></button>
-                     </div>
-                  ))}
-                  <button onClick={()=>setCaseForm({...caseForm, referentes: [...safeArr(caseForm.referentes), {nombre:'', dispositivo:'', contacto:''}]})} className="text-[10px] text-blue-600 font-black uppercase mt-2 p-2 hover:bg-blue-50 rounded-lg"><Plus size={12} className="inline"/> Añadir Referente</button>
-                </div>
+                 <Inp placeholder="Resp..." value={newBitacoraEntry.responsable} onChange={e=>setNewBitacoraEntry({...newBitacoraEntry, responsable: e.target.value})} className="col-span-2" />
+                 <Txt placeholder="Detalle..." value={newBitacoraEntry.descripcion} onChange={e=>setNewBitacoraEntry({...newBitacoraEntry, descripcion: e.target.value})} className="col-span-4" />
+                 {newBitacoraEntry.tipo === 'Tarea' && <Inp type="date" value={newBitacoraEntry.fechaCumplimiento || ''} onChange={e=>setNewBitacoraEntry({...newBitacoraEntry, fechaCumplimiento: e.target.value})} className="col-span-4 bg-amber-50" />}
+                 <button onClick={handleAddBitacora} className={clsBtnP + " md:col-span-4"}>Añadir Registro</button>
               </div>
-            )}
-            {activeModalTab === 'bitacora' && (
-              <div className="space-y-4">
-                <div className="bg-slate-50 p-4 rounded-xl grid grid-cols-4 gap-3">
-                   <Sel value={newBitacoraEntry.tipo} onChange={e=>setNewBitacoraEntry({...newBitacoraEntry, tipo: e.target.value})}>
-                     <option value="Nota Adm.">📝 Nota Adm.</option>
-                     <option value="Intervención">🗣️ Intervención</option>
-                     <option value="Reunión">🤝 Reunión de Red</option>
-                     <option value="Tarea">🎯 Tarea Enlace</option>
-                   </Sel>
-                   <Inp value={newBitacoraEntry.responsable} onChange={e=>setNewBitacoraEntry({...newBitacoraEntry, responsable: e.target.value})} placeholder="Resp..." />
-                   <Txt rows="2" value={newBitacoraEntry.descripcion} onChange={e=>setNewBitacoraEntry({...newBitacoraEntry, descripcion: e.target.value})} placeholder="Detalle de la acción o acuerdo..." className="col-span-2" />
-                   {newBitacoraEntry.tipo === 'Tarea' && <Inp type="date" value={newBitacoraEntry.fechaCumplimiento} onChange={e=>setNewBitacoraEntry({...newBitacoraEntry, fechaCumplimiento: e.target.value})} className="col-span-4 bg-amber-50" />}
-                   <button onClick={handleAddBitacora} className={clsBtnP + " col-span-4"}>Añadir Registro</button>
-                </div>
-                {safeArr(caseForm.bitacora).map(b => <div key={b.id} className="p-4 border rounded-xl flex justify-between"><div className="flex-1"><p className="text-sm font-bold whitespace-pre-wrap">{String(b.descripcion)}</p><p className="text-[10px] text-slate-400 mt-1 uppercase">{String(b.tipo)} | {String(b.fecha)} | Resp: {String(b.responsable)}</p></div><button onClick={() => setCaseForm({ ...caseForm, bitacora: safeArr(caseForm.bitacora).filter(x => x.id !== b.id) })} className="text-red-400 hover:text-red-600"><Trash2 size={16}/></button></div>)}
+              <div className="space-y-2">
+                {safeArr(caseForm.bitacora).map(b => (
+                  <div key={b.id} className="p-4 bg-white border rounded-xl flex justify-between items-start group hover:border-blue-200 transition-colors">
+                    <div className="flex-1">
+                      <div className="flex items-center gap-2 mb-1">
+                        <span className="text-[10px] font-black uppercase text-blue-600 bg-blue-50 px-2 py-0.5 rounded">{b.tipo}</span>
+                        {b.barrera && b.barrera !== 'Ninguna' && <span className="bg-red-100 text-red-700 text-[8px] font-black px-2 py-0.5 rounded uppercase flex items-center gap-1"><AlertTriangle size={10}/> Barrera: {b.barrera}</span>}
+                        <span className="text-[9px] text-slate-400 font-bold uppercase">{b.fecha} • Resp: {b.responsable || 'N/A'}</span>
+                      </div>
+                      <p className="text-sm font-medium text-slate-800 whitespace-pre-wrap">{String(b.descripcion)}</p>
+                    </div>
+                    <button onClick={()=>setCaseForm({...caseForm, bitacora: caseForm.bitacora.filter(x=>x.id!==b.id)})} className="text-slate-200 hover:text-red-500 opacity-0 group-hover:opacity-100 transition-opacity"><Trash2 size={16}/></button>
+                  </div>
+                ))}
               </div>
-            )}
-            {activeModalTab === 'archivos' && (
-              <div className="space-y-4">
-                 <div className="bg-indigo-50 p-4 rounded-xl text-center mb-4">
-                   <label className="cursor-pointer block text-indigo-700 font-black text-xs uppercase"><UploadCloud size={20} className="mx-auto mb-1"/> {isUploadingCaseFile ? 'Subiendo...' : 'Subir Archivo de Respaldo'}
-                   <input type="file" className="hidden" disabled={isUploadingCaseFile} onChange={handleCaseFileUpload} />
-                   </label>
-                 </div>
+            </div>
+          )}
+          {activeModalTab === 'archivos' && (
+            <div className="space-y-4">
+               <div className="bg-indigo-50 p-6 rounded-2xl text-center border-dashed border-2 border-indigo-200">
+                 <label className="cursor-pointer font-black text-xs text-indigo-700 uppercase"><UploadCloud size={20} className="mx-auto mb-2"/> {isUploadingCaseFile ? 'Subiendo...' : 'Subir Documento (Para IA)'}<input type="file" className="hidden" disabled={isUploadingCaseFile} onChange={handleCaseFileUpload} /></label>
+               </div>
+               <div className="space-y-2">
                  {safeArr(caseForm.archivos).map(f => (
-                   <div key={f.id} className="flex justify-between items-center p-3 bg-white border rounded-xl">
-                      <span className="text-xs font-bold">{f.nombre} <span className="text-[9px] text-slate-400 ml-2">{f.size}</span></span>
-                      <div className="flex gap-2 items-center">
-                        {f.url && <a href={f.url} target="_blank" rel="noreferrer" className="text-[10px] font-black uppercase text-blue-600 hover:bg-blue-50 px-2 py-1 rounded flex items-center gap-1"><ExternalLink size={12}/> Abrir</a>}
-                        {currentUser?.rol === 'Admin' && <button onClick={()=>setCaseForm(p=>({...p, archivos: p.archivos.filter(a=>a.id!==f.id)}))} className="text-red-400 p-1 hover:bg-red-50 rounded"><Trash2 size={14}/></button>}
+                   <div key={f.id} className="p-3 bg-white border rounded-xl flex justify-between items-center group hover:border-indigo-200 transition-colors">
+                      <span className="text-xs font-black">{f.nombre}</span>
+                      <div className="flex gap-2">
+                        <button onClick={(e)=>{e.preventDefault(); setAiFileContext(f);}} className="p-2 bg-indigo-50 text-indigo-600 hover:bg-indigo-600 hover:text-white rounded-lg transition-all" title="Analizar con IA"><BrainCircuit size={14}/></button>
+                        <a href={f.url} target="_blank" rel="noreferrer" className="p-2 bg-blue-50 text-blue-600 rounded-lg hover:bg-blue-100 transition-colors"><ExternalLink size={14}/></a>
+                        <button onClick={()=>setCaseForm(p=>({...p, archivos: p.archivos.filter(a=>a.id!==f.id)}))} className="text-red-400 p-2 hover:bg-red-50 rounded-lg ml-2"><Trash2 size={14}/></button>
                       </div>
                    </div>
                  ))}
-                 
-                 {/* ZONA DE LECTURA DE ARCHIVOS IA */}
-                 <div className="flex justify-between items-center mt-6">
-                    <Lbl>Epicrisis / Resumen General</Lbl>
-                    <label className={`cursor-pointer text-[9px] font-black uppercase tracking-widest text-indigo-600 bg-indigo-50 hover:bg-indigo-100 px-3 py-1.5 rounded-lg transition-colors flex items-center gap-1 ${isExtractingEpicrisis ? 'opacity-50 cursor-not-allowed' : ''}`}>
-                       {isExtractingEpicrisis ? <Loader2 size={12} className="animate-spin"/> : <Wand2 size={12}/>}
-                       {isExtractingEpicrisis ? 'Extrayendo...' : 'Extraer de PDF (IA)'}
-                       <input type="file" className="hidden" accept=".pdf" disabled={isExtractingEpicrisis} onChange={handlePdfUploadForEpicrisis} />
-                    </label>
-                 </div>
-                 <Txt value={caseForm.epicrisis || ''} onChange={e=>setCaseForm({...caseForm, epicrisis: e.target.value})} className="min-h-[140px]" placeholder="Redacta el resumen clínico aquí o utiliza el botón superior para extraerlo automáticamente de un archivo..."/>
-                 
-                 <div className="flex justify-between items-center mt-4"><Lbl>Generar Resumen Breve de Caso</Lbl>{currentUser?.rol === 'Admin' && <button onClick={handleGenerateCaseSummary} disabled={isGeneratingCaseSummary} className={clsBtnP}>Sintetizar Caso</button>}</div>
-                 {caseSummary && currentUser?.rol === 'Admin' && <div className="p-4 bg-indigo-50 rounded-xl whitespace-pre-wrap text-sm">{String(caseSummary)}</div>}
-              </div>
-            )}
+               </div>
+            </div>
+          )}
         </div>
         <ModalFtr onCancel={()=>setIsCaseModalOpen(false)} onSave={handleSaveCase} />
       </ModalWrap>
@@ -1206,7 +1244,7 @@ export default function App() {
         <div className="flex bg-slate-50 border-b shrink-0 px-6">
           <button onClick={() => setActiveDocModalTab('datos')} className={`px-6 py-4 text-[10px] font-black uppercase tracking-[0.2em] border-b-4 ${activeDocModalTab === 'datos' ? 'border-blue-600 text-blue-600 bg-white' : 'border-transparent text-slate-400'}`}>Datos Generales</button>
           <button onClick={() => setActiveDocModalTab('bitacora')} className={`px-6 py-4 text-[10px] font-black uppercase tracking-[0.2em] border-b-4 ${activeDocModalTab === 'bitacora' ? 'border-blue-600 text-blue-600 bg-white' : 'border-transparent text-slate-400'}`}>Tareas y Fases</button>
-          <button onClick={() => setActiveDocModalTab('archivos')} className={`px-6 py-4 text-[10px] font-black uppercase tracking-[0.2em] border-b-4 ${activeDocModalTab === 'archivos' ? 'border-blue-600 text-blue-600 bg-white' : 'border-transparent text-slate-400'}`}>Archivos</button>
+          <button onClick={() => setActiveDocModalTab('archivos')} className={`px-6 py-4 text-[10px] font-black uppercase tracking-[0.2em] border-b-4 ${activeDocModalTab === 'archivos' ? 'border-blue-600 text-blue-600 bg-white' : 'border-transparent text-slate-400'}`}>Archivos e IA</button>
         </div>
         <div className="p-6 overflow-y-auto flex-1 bg-white space-y-6">
           {activeDocModalTab === 'datos' && (
@@ -1240,9 +1278,9 @@ export default function App() {
                   <div className="flex flex-col"><span className="text-[10px] font-black uppercase text-blue-800 tracking-widest">Avance Automatizado</span><span className="text-xs text-blue-600 font-medium">Calculado por tareas cumplidas</span></div>
                   <span className="text-2xl font-black text-blue-600">{docAvanceTemp}%</span>
                 </div>
-                <div className="bg-slate-50 p-4 rounded-xl grid grid-cols-2 gap-3"><Inp value={newDocBitacoraEntry.responsable} onChange={e=>setNewDocBitacoraEntry({...newDocBitacoraEntry, responsable: e.target.value})} placeholder="Resp..." /><Inp type="date" value={newDocBitacoraEntry.fechaCumplimiento} onChange={e=>setNewDocBitacoraEntry({...newDocBitacoraEntry, fechaCumplimiento: e.target.value})} /><Txt rows="1" value={newDocBitacoraEntry.descripcion} onChange={e=>setNewDocBitacoraEntry({...newDocBitacoraEntry, descripcion: e.target.value})} placeholder="Ej: Revisión Jurídica..." className="col-span-2"/><button onClick={handleAddDocBitacora} className={clsBtnP + " col-span-2"}>Añadir Tarea</button></div>
+                <div className="bg-slate-50 p-4 rounded-xl grid grid-cols-2 gap-3"><Inp value={newDocBitacoraEntry.responsable} onChange={e=>setNewDocBitacoraEntry({...newDocBitacoraEntry, responsable: e.target.value})} placeholder="Resp..." /><Inp type="date" value={newDocBitacoraEntry.fechaCumplimiento} onChange={e=>setNewDocBitacoraEntry({...newDocBitacoraEntry, fechaCumplimiento: e.target.value})} /><Txt rows="1" value={newDocBitacoraEntry.descripcion} onChange={e=>setNewDocBitacoraEntry({...newDocBitacoraEntry, descripcion: e.target.value})} placeholder="Tarea..." className="col-span-2"/><button onClick={handleAddDocBitacora} className={clsBtnP + " col-span-2"}>Añadir Tarea</button></div>
                 {safeArr(docForm.bitacora).map(b => (
-                  <div key={b.id} className="p-4 border rounded-xl flex items-start gap-4">
+                  <div key={b.id} className="p-4 border rounded-xl flex items-start gap-4 hover:border-blue-200 transition-colors">
                     <button onClick={() => setDocForm(p => ({...p, bitacora: p.bitacora.map(x => x.id === b.id ? {...x, completada: !x.completada} : x)}))} className={b.completada ? "text-emerald-500" : "text-amber-500"}><CheckSquare size={20}/></button>
                     <div className="flex-1"><p className={`text-sm font-bold ${b.completada ? 'line-through text-slate-400' : 'text-slate-800'}`}>{String(b.descripcion)}</p><p className="text-[10px] text-slate-400 mt-1 uppercase">Resp: {String(b.responsable)} | Vence: {String(b.fechaCumplimiento)}</p></div>
                     <button onClick={() => setDocForm({ ...docForm, bitacora: safeArr(docForm.bitacora).filter(x => x.id !== b.id) })} className="text-red-400 hover:text-red-600"><Trash2 size={16}/></button>
@@ -1268,9 +1306,10 @@ export default function App() {
                  <Lbl className="bg-indigo-50 text-indigo-800 px-3 py-2 rounded-lg border border-indigo-100 inline-block mb-3">1. Documento Oficial Vigente</Lbl>
                  <div className="space-y-2 mb-4">
                    {safeArr(docForm.archivosOficiales).map(f => (
-                     <div key={f.id} className="flex justify-between items-center p-3 bg-white border-2 border-indigo-50 rounded-xl">
+                     <div key={f.id} className="flex justify-between items-center p-3 bg-white border-2 border-indigo-50 rounded-xl group hover:border-indigo-200 transition-colors">
                         <span className="text-xs font-black text-indigo-900">{f.nombre} <span className="text-[9px] text-slate-400 ml-2 font-medium">{f.size}</span></span>
                         <div className="flex gap-2 items-center">
+                          <button onClick={(e)=>{e.preventDefault(); setAiFileContext(f);}} className="p-2 bg-indigo-50 text-indigo-600 hover:bg-indigo-600 hover:text-white rounded-lg transition-all" title="Analizar con IA"><BrainCircuit size={14}/></button>
                           {f.url && <a href={f.url} target="_blank" rel="noreferrer" className="text-[10px] font-black uppercase text-indigo-600 hover:bg-indigo-50 px-2 py-1 rounded flex items-center gap-1"><ExternalLink size={12}/> Abrir</a>}
                           {currentUser?.rol === 'Admin' && <button onClick={()=>setDocForm(p=>({...p, archivosOficiales: p.archivosOficiales.filter(a=>a.id!==f.id)}))} className="text-red-400 p-1 hover:bg-red-50 rounded"><Trash2 size={14}/></button>}
                         </div>
@@ -1294,11 +1333,12 @@ export default function App() {
                  </div>
                  <div className="space-y-2">
                    {safeArr(docForm.archivos).map(f => (
-                     <div key={f.id} className="flex justify-between items-center p-3 bg-white border rounded-xl">
+                     <div key={f.id} className="flex justify-between items-center p-3 bg-white border border-slate-200 rounded-xl group hover:border-indigo-200 transition-colors">
                         <span className="text-xs font-bold text-slate-700">{f.nombre} <span className="text-[9px] text-slate-400 ml-2">{f.size}</span></span>
                         <div className="flex gap-2 items-center">
+                          <button onClick={(e)=>{e.preventDefault(); setAiFileContext(f);}} className="p-2 bg-indigo-50 text-indigo-600 hover:bg-indigo-600 hover:text-white rounded-lg transition-all" title="Analizar con IA"><BrainCircuit size={14}/></button>
                           {f.url && <a href={f.url} target="_blank" rel="noreferrer" className="text-[10px] font-black uppercase text-blue-600 hover:bg-blue-50 px-2 py-1 rounded flex items-center gap-1"><ExternalLink size={12}/> Abrir</a>}
-                          {currentUser?.rol === 'Admin' && <button onClick={()=>setDocForm(p=>({...p, archivos: p.archivos.filter(a=>a.id!==f.id)}))} className="text-red-400 p-1 hover:bg-red-50 rounded"><Trash2 size={14}/></button>}
+                          {currentUser?.rol === 'Admin' && <button onClick={()=>setDocForm(p=>({...p, archivos: p.archivos.filter(a=>a.id!==f.id)}))} className="text-red-400 p-1 hover:bg-red-50 rounded ml-2"><Trash2 size={14}/></button>}
                         </div>
                      </div>
                    ))}
