@@ -78,12 +78,18 @@ const generateTextWithRetry = async (apiKey, prompt, sys = "", inlineData = null
   
   for (let i = 0; i < 5; i++) {
     try {
-      const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${apiKey}`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) });
-      if (!res.ok) throw new Error(`HTTP error! status: ${res.status}`);
+      const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${apiKey}`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) });
+      if (!res.ok) {
+        if (res.status === 429) {
+            throw new Error("Límite de consultas gratuitas alcanzado (Error 429). Por favor, espera 1 minuto e intenta de nuevo.");
+        }
+        throw new Error(`HTTP error! status: ${res.status}`);
+      }
       const data = await res.json();
       if (data.candidates?.[0]?.content?.parts?.[0]?.text) return data.candidates[0].content.parts[0].text;
       throw new Error("Respuesta vacía");
     } catch (e) {
+      if (e.message && e.message.includes('429')) throw e; 
       if (i === 4) throw e;
       await new Promise(r => setTimeout(r, [1000, 2000, 4000, 8000, 16000][i]));
     }
@@ -769,6 +775,20 @@ export default function App() {
         {activeTab === 'dashboard' && (
           <div className="space-y-6 animate-in fade-in mt-12 md:mt-0">
             <div><h2 className="text-2xl font-black text-slate-800 tracking-tight">Panel de Gestión Integral</h2><p className="text-xs text-slate-500 font-medium mt-1">Resumen de actividad clínica y normativa</p></div>
+
+            {/* DASHBOARD EJECUTIVO PARA JEFATURA */}
+            <div className="bg-slate-900 rounded-3xl p-6 text-white shadow-xl flex flex-col md:flex-row items-center justify-between gap-6 border border-slate-700 relative overflow-hidden mt-6 mb-6">
+               <div className="absolute top-0 right-0 -mr-10 -mt-10 w-40 h-40 bg-blue-500/10 rounded-full blur-3xl"></div>
+               <div className="flex items-center gap-4 relative z-10">
+                 <div className="p-4 bg-white/10 rounded-2xl text-blue-400"><Shield size={32}/></div>
+                 <div>
+                   <h3 className="text-sm font-black uppercase tracking-[0.2em] text-blue-400 mb-1">Estatus Normativo y Resolutivo de Red</h3>
+                   <p className="text-xs font-medium text-slate-300 leading-relaxed">Actualmente tenemos <strong className="text-white underline">{safeArr(docs).filter(d => d.fase === 'Validación Técnica').length} protocolos</strong> en Fase de Validación Técnica y <strong className="text-white underline">{safeArr(docs).filter(d => d.prioridad === 'Alta').length} con Prioridad Alta</strong> que requieren sanción directiva.</p>
+                 </div>
+               </div>
+               <button onClick={()=>setActiveTab('docs')} className="bg-blue-600 text-white px-8 py-3 rounded-xl font-black text-[10px] uppercase tracking-widest hover:bg-blue-500 transition-all shadow-lg shrink-0 relative z-10">Gestionar Normas</button>
+            </div>
+
             <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
               <div className="bg-white p-4 rounded-2xl shadow-sm border-l-[6px] border-l-red-500"><p className="text-[9px] text-slate-400 font-black uppercase tracking-widest">Pérdida Continuidad</p><h3 className="text-2xl font-black text-red-600 mt-1">{alertCases.length}</h3></div>
               <div className="bg-white p-4 rounded-2xl shadow-sm border-l-[6px] border-l-blue-500"><p className="text-[9px] text-slate-400 font-black uppercase tracking-widest">Pacientes en Tránsito</p><h3 className="text-2xl font-black text-blue-600 mt-1">{safeArr(visibleCases).filter(c => c.estado === 'Pendiente').length}</h3></div>
@@ -1081,18 +1101,16 @@ export default function App() {
         )}
       </main>
 
-      {/* ================= MODAL ASISTENTE IA DE DOCUMENTO ================= */}
+      {/* ================= MODAL ASISTENTE IA DE DOCUMENTOS ================= */}
       <ModalWrap isOpen={!!aiFileContext} mw="max-w-2xl">
          <ModalHdr t={`Asistente IA: ${aiFileContext?.nombre}`} onClose={()=>{setAiFileContext(null); setAiResponse(''); setAiPrompt('');}} icon={BrainCircuit} />
          <div className="p-6 flex flex-col h-[60vh] bg-slate-50">
-             <div className="flex-1 overflow-y-auto mb-4 bg-white p-5 rounded-2xl border border-slate-200 shadow-inner text-sm whitespace-pre-wrap leading-relaxed text-slate-700">
-                 {aiResponse ? aiResponse : <span className="text-slate-400 italic">Escribe abajo tu consulta sobre este documento (resumen, diagnósticos, fechas)...</span>}
+             <div className="flex-1 overflow-y-auto mb-4 bg-white p-5 rounded-2xl border shadow-inner text-sm whitespace-pre-wrap leading-relaxed text-slate-700">
+                 {aiResponse || <span className="text-slate-400 italic">Escribe abajo tu consulta sobre este documento (resumen, fechas, medicamentos detectados)...</span>}
              </div>
              <div className="flex gap-3 shrink-0">
-                 <Inp value={aiPrompt} onChange={e=>setAiPrompt(e.target.value)} placeholder="Ej: Haz un resumen clínico de este PDF..." onKeyDown={e=>e.key==='Enter' && handleAskAiAboutFile()} disabled={isAnalyzingFile} />
-                 <button onClick={handleAskAiAboutFile} disabled={isAnalyzingFile || !aiPrompt.trim()} className={clsBtnP}>
-                     {isAnalyzingFile ? <Loader2 size={16} className="animate-spin"/> : <Sparkles size={16}/>}
-                 </button>
+                 <Inp value={aiPrompt} onChange={e=>setAiPrompt(e.target.value)} placeholder="¿Qué necesitas saber del documento?" onKeyDown={e=>e.key==='Enter' && handleAskAiAboutFile()} disabled={isAnalyzingFile} />
+                 <button onClick={handleAskAiAboutFile} disabled={isAnalyzingFile || !aiPrompt.trim()} className={clsBtnP}>{isAnalyzingFile ? <Loader2 size={16} className="animate-spin"/> : <Sparkles size={16}/>}</button>
              </div>
          </div>
       </ModalWrap>
@@ -1100,124 +1118,123 @@ export default function App() {
       {/* ================= MODALES COMPLETOS ================= */}
       <ModalWrap isOpen={isCaseModalOpen}>
         <ModalHdr t={editingCaseId ? `Editar: ${caseForm.nombre}` : 'Nuevo Seguimiento'} onClose={()=>setIsCaseModalOpen(false)} icon={Users} />
-        <div className="flex bg-slate-50 border-b shrink-0 px-6">
+        <div className="flex bg-slate-50 border-b px-6 shrink-0">
           <button onClick={() => setActiveModalTab('datos')} className={`px-6 py-4 text-[10px] font-black uppercase tracking-[0.2em] border-b-4 ${activeModalTab === 'datos' ? 'border-blue-600 text-blue-600 bg-white' : 'border-transparent text-slate-400'}`}>Datos Básicos</button>
           <button onClick={() => setActiveModalTab('bitacora')} className={`px-6 py-4 text-[10px] font-black uppercase tracking-[0.2em] border-b-4 ${activeModalTab === 'bitacora' ? 'border-blue-600 text-blue-600 bg-white' : 'border-transparent text-slate-400'}`}>Bitácora y Barreras</button>
           <button onClick={() => setActiveModalTab('archivos')} className={`px-6 py-4 text-[10px] font-black uppercase tracking-[0.2em] border-b-4 ${activeModalTab === 'archivos' ? 'border-blue-600 text-blue-600 bg-white' : 'border-transparent text-slate-400'}`}>Epicrisis y Archivos</button>
         </div>
         <div className="p-6 overflow-y-auto flex-1 bg-white">
-            {activeModalTab === 'datos' && (
-              <div className="space-y-6">
-                <div className="grid grid-cols-2 gap-4">
-                  <div><Lbl>RUT</Lbl><Inp type="text" value={caseForm.rut} onChange={e=>setCaseForm({...caseForm, rut: e.target.value})}/></div>
-                  <div><Lbl>Nombre Paciente</Lbl><Inp type="text" value={caseForm.nombre} onChange={e=>setCaseForm({...caseForm, nombre: e.target.value})}/></div>
-                  <div><Lbl>Edad</Lbl><Inp type="number" value={caseForm.edad || ''} onChange={e=>setCaseForm({...caseForm, edad: e.target.value})} placeholder="Ej: 15" /></div>
-                  <div><Lbl>Estado</Lbl><Sel value={caseForm.estado} onChange={e=>setCaseForm({...caseForm, estado: e.target.value})}><option>Pendiente</option><option>Concretado</option><option>Alerta</option></Sel></div>
-                  <div><Lbl>Fecha Egreso</Lbl><Inp type="date" value={caseForm.fechaEgreso} onChange={e=>setCaseForm({...caseForm, fechaEgreso: e.target.value})}/></div>
-                  <div><Lbl>Ingreso Efectivo</Lbl><Inp type="date" value={caseForm.fechaIngresoEfectivo} onChange={e=>setCaseForm({...caseForm, fechaIngresoEfectivo: e.target.value})}/></div>
-                  
-                  <div>
-                    <Lbl>Origen</Lbl>
-                    <Inp list="centros-list" value={caseForm.origen} onChange={e=>setCaseForm({...caseForm, origen: e.target.value})} placeholder="Escriba o seleccione..."/>
-                  </div>
-                  <div>
-                    <Lbl>Destino</Lbl>
-                    <Inp list="centros-list" value={caseForm.destino} onChange={e=>setCaseForm({...caseForm, destino: e.target.value})} placeholder="Escriba o seleccione..."/>
-                  </div>
-                  <datalist id="centros-list">{safeArr(centros).map(c => <option key={c} value={c} />)}</datalist>
+          {activeModalTab === 'datos' && (
+            <div className="space-y-6">
+              <div className="grid grid-cols-2 gap-4">
+                <div><Lbl>RUT</Lbl><Inp type="text" value={caseForm.rut} onChange={e=>setCaseForm({...caseForm, rut: e.target.value})}/></div>
+                <div><Lbl>Nombre Paciente</Lbl><Inp type="text" value={caseForm.nombre} onChange={e=>setCaseForm({...caseForm, nombre: e.target.value})}/></div>
+                <div><Lbl>Edad</Lbl><Inp type="number" value={caseForm.edad || ''} onChange={e=>setCaseForm({...caseForm, edad: e.target.value})} placeholder="Ej: 15" /></div>
+                <div><Lbl>Estado</Lbl><Sel value={caseForm.estado} onChange={e=>setCaseForm({...caseForm, estado: e.target.value})}><option>Pendiente</option><option>Concretado</option><option>Alerta</option></Sel></div>
+                <div><Lbl>Fecha Egreso</Lbl><Inp type="date" value={caseForm.fechaEgreso} onChange={e=>setCaseForm({...caseForm, fechaEgreso: e.target.value})}/></div>
+                <div><Lbl>Ingreso Efectivo</Lbl><Inp type="date" value={caseForm.fechaIngresoEfectivo} onChange={e=>setCaseForm({...caseForm, fechaIngresoEfectivo: e.target.value})}/></div>
+                
+                <div>
+                  <Lbl>Origen</Lbl>
+                  <Inp list="centros-list" value={caseForm.origen} onChange={e=>setCaseForm({...caseForm, origen: e.target.value})} placeholder="Escriba o seleccione..."/>
                 </div>
-                <div className="mt-4 border-t pt-4">
-                  <Lbl>Tutor Legal / Familiar</Lbl>
-                  <div className="grid grid-cols-3 gap-2 mb-4">
-                    <Inp value={caseForm.tutor?.nombre||''} onChange={e=>setCaseForm({...caseForm, tutor: {...caseForm.tutor, nombre: e.target.value}})} placeholder="Nombre"/>
-                    <Inp value={caseForm.tutor?.relacion||''} onChange={e=>setCaseForm({...caseForm, tutor: {...caseForm.tutor, relacion: e.target.value}})} placeholder="Parentesco"/>
-                    <Inp value={caseForm.tutor?.telefono||''} onChange={e=>setCaseForm({...caseForm, tutor: {...caseForm.tutor, telefono: e.target.value}})} placeholder="Teléfono"/>
-                  </div>
-                  <Lbl>Referentes Clínicos</Lbl>
-                  {safeArr(caseForm.referentes).map((ref, i) => (
-                     <div key={i} className="flex gap-2 mb-2">
-                       <Inp value={ref.nombre} onChange={e=>{const r=[...safeArr(caseForm.referentes)]; r[i].nombre=e.target.value; setCaseForm({...caseForm, referentes: r})}} placeholder="Nombre"/>
-                       <Inp value={ref.dispositivo} onChange={e=>{const r=[...safeArr(caseForm.referentes)]; r[i].dispositivo=e.target.value; setCaseForm({...caseForm, referentes: r})}} placeholder="Dispositivo"/>
-                       <Inp value={ref.contacto} onChange={e=>{const r=[...safeArr(caseForm.referentes)]; r[i].contacto=e.target.value; setCaseForm({...caseForm, referentes: r})}} placeholder="Contacto"/>
-                       <button onClick={()=>{const r=[...safeArr(caseForm.referentes)]; r.splice(i,1); setCaseForm({...caseForm, referentes: r})}} className="p-3 text-red-500 bg-red-50 hover:bg-red-100 rounded-xl transition-colors"><Trash2 size={16}/></button>
-                     </div>
-                  ))}
-                  <button onClick={()=>setCaseForm({...caseForm, referentes: [...safeArr(caseForm.referentes), {nombre:'', dispositivo:'', contacto:''}]})} className="text-[10px] text-blue-600 font-black uppercase mt-2 p-2 hover:bg-blue-50 rounded-lg"><Plus size={12} className="inline"/> Añadir Referente</button>
+                <div>
+                  <Lbl>Destino</Lbl>
+                  <Inp list="centros-list" value={caseForm.destino} onChange={e=>setCaseForm({...caseForm, destino: e.target.value})} placeholder="Escriba o seleccione..."/>
                 </div>
+                <datalist id="centros-list">{safeArr(centros).map(c => <option key={c} value={c} />)}</datalist>
               </div>
-            )}
-            {activeModalTab === 'bitacora' && (
-              <div className="space-y-4">
-                <div className="bg-slate-50 p-4 rounded-xl grid grid-cols-4 gap-3">
-                   <Sel value={newBitacoraEntry.tipo} onChange={e=>setNewBitacoraEntry({...newBitacoraEntry, tipo: e.target.value})}>
-                     <option value="Nota Adm.">📝 Nota Adm.</option>
-                     <option value="Intervención">🗣️ Intervención</option>
-                     <option value="Reunión">🤝 Reunión de Red</option>
-                     <option value="Tarea">🎯 Tarea Enlace</option>
-                   </Sel>
-                   
-                   <select value={newBitacoraEntry.barrera} onChange={e=>setNewBitacoraEntry({...newBitacoraEntry, barrera: e.target.value})} className={newBitacoraEntry.barrera !== 'Ninguna' ? `${clsInp} bg-red-50 text-red-700 border-red-200` : clsInp}>
-                       <option value="Ninguna">✅ Sin Barrera (Gestión Exitosa)</option>
-                       <optgroup label="Dispositivo / Red">
-                           <option value="Falta Cupo Médico">⚠️ Falta Cupo Médico (Psiquiatra)</option>
-                           <option value="Falta Cupo Psicosocial">⚠️ Falta Cupo Equipo Psicosocial</option>
-                           <option value="Rechazo Derivación">⚠️ Rechazo de Derivación</option>
-                           <option value="Error Documentación">⚠️ Error en Documentación / Trámite</option>
-                       </optgroup>
-                       <optgroup label="Usuario / Familia">
-                           <option value="Inasistencia Usuario">🚨 Inasistencia Usuario</option>
-                           <option value="Inaccesibilidad/Traslado">🚨 Inaccesibilidad Geográfica/Traslado</option>
-                           <option value="Rechazo Tratamiento">🚨 Rechazo Tratamiento (Tutor/Pte)</option>
-                           <option value="Crisis Social/Familiar">🚨 Crisis Social/Familiar Aguda</option>
-                       </optgroup>
-                       <optgroup label="Intersectorial">
-                           <option value="Espera Resolución Judicial">⚖️ Espera Resolución Judicial</option>
-                           <option value="Falta Plaza Residencia">🏠 Falta Plaza Residencia (Mejor Niñez)</option>
-                       </optgroup>
-                   </select>
-
-                   <Inp value={newBitacoraEntry.responsable} onChange={e=>setNewBitacoraEntry({...newBitacoraEntry, responsable: e.target.value})} placeholder="Resp..." className="col-span-2" />
-                   <Txt rows="2" value={newBitacoraEntry.descripcion} onChange={e=>setNewBitacoraEntry({...newBitacoraEntry, descripcion: e.target.value})} placeholder="Detalle de la acción o acuerdo..." className="col-span-4" />
-                   {newBitacoraEntry.tipo === 'Tarea' && <Inp type="date" value={newBitacoraEntry.fechaCumplimiento} onChange={e=>setNewBitacoraEntry({...newBitacoraEntry, fechaCumplimiento: e.target.value})} className="col-span-4 bg-amber-50" />}
-                   <button onClick={handleAddBitacora} className={clsBtnP + " col-span-4"}>Añadir Registro</button>
+              <div className="mt-4 border-t pt-4">
+                <Lbl>Tutor Legal / Familiar</Lbl>
+                <div className="grid grid-cols-3 gap-2 mb-4">
+                  <Inp value={caseForm.tutor?.nombre||''} onChange={e=>setCaseForm({...caseForm, tutor: {...caseForm.tutor, nombre: e.target.value}})} placeholder="Nombre"/>
+                  <Inp value={caseForm.tutor?.relacion||''} onChange={e=>setCaseForm({...caseForm, tutor: {...caseForm.tutor, relacion: e.target.value}})} placeholder="Parentesco"/>
+                  <Inp value={caseForm.tutor?.telefono||''} onChange={e=>setCaseForm({...caseForm, tutor: {...caseForm.tutor, telefono: e.target.value}})} placeholder="Teléfono"/>
                 </div>
+                <Lbl>Referentes Clínicos</Lbl>
+                {safeArr(caseForm.referentes).map((ref, i) => (
+                   <div key={i} className="flex gap-2 mb-2">
+                     <Inp value={ref.nombre} onChange={e=>{const r=[...safeArr(caseForm.referentes)]; r[i].nombre=e.target.value; setCaseForm({...caseForm, referentes: r})}} placeholder="Nombre"/>
+                     <Inp value={ref.dispositivo} onChange={e=>{const r=[...safeArr(caseForm.referentes)]; r[i].dispositivo=e.target.value; setCaseForm({...caseForm, referentes: r})}} placeholder="Dispositivo"/>
+                     <Inp value={ref.contacto} onChange={e=>{const r=[...safeArr(caseForm.referentes)]; r[i].contacto=e.target.value; setCaseForm({...caseForm, referentes: r})}} placeholder="Contacto"/>
+                     <button onClick={()=>{const r=[...safeArr(caseForm.referentes)]; r.splice(i,1); setCaseForm({...caseForm, referentes: r})}} className="p-3 text-red-500 bg-red-50 hover:bg-red-100 rounded-xl transition-colors"><Trash2 size={16}/></button>
+                   </div>
+                ))}
+                <button onClick={()=>setCaseForm({...caseForm, referentes: [...safeArr(caseForm.referentes), {nombre:'', dispositivo:'', contacto:''}]})} className="text-[10px] text-blue-600 font-black uppercase mt-2 p-2 hover:bg-blue-50 rounded-lg"><Plus size={12} className="inline"/> Añadir Referente</button>
+              </div>
+            </div>
+          )}
+          {activeModalTab === 'bitacora' && (
+            <div className="space-y-4">
+              <div className="bg-slate-50 p-6 rounded-2xl grid grid-cols-1 md:grid-cols-4 gap-4">
+                 <Sel value={newBitacoraEntry.tipo} onChange={e=>setNewBitacoraEntry({...newBitacoraEntry, tipo: e.target.value})}>
+                   <option value="Nota Adm.">📝 Nota Adm.</option>
+                   <option value="Intervención">🗣️ Intervención</option>
+                   <option value="Reunión">🤝 Reunión de Red</option>
+                   <option value="Tarea">🎯 Tarea Enlace</option>
+                 </Sel>
+                 
+                 <select value={newBitacoraEntry.barrera} onChange={e=>setNewBitacoraEntry({...newBitacoraEntry, barrera: e.target.value})} className={newBitacoraEntry.barrera !== 'Ninguna' ? `${clsInp} bg-red-50 text-red-700 border-red-200` : clsInp}>
+                     <option value="Ninguna">✅ Sin Barrera (Gestión Exitosa)</option>
+                     <optgroup label="Dispositivo / Red">
+                         <option value="Falta Cupo Médico">⚠️ Falta Cupo Médico (Psiquiatra)</option>
+                         <option value="Falta Cupo Psicosocial">⚠️ Falta Cupo Equipo Psicosocial</option>
+                         <option value="Rechazo Derivación">⚠️ Rechazo de Derivación</option>
+                         <option value="Error Documentación">⚠️ Error en Documentación / Trámite</option>
+                     </optgroup>
+                     <optgroup label="Usuario / Familia">
+                         <option value="Inasistencia Usuario">🚨 Inasistencia Usuario</option>
+                         <option value="Inaccesibilidad/Traslado">🚨 Inaccesibilidad Geográfica/Traslado</option>
+                         <option value="Rechazo Tratamiento">🚨 Rechazo Tratamiento (Tutor/Pte)</option>
+                         <option value="Crisis Social/Familiar">🚨 Crisis Social/Familiar Aguda</option>
+                     </optgroup>
+                     <optgroup label="Intersectorial">
+                         <option value="Espera Resolución Judicial">⚖️ Espera Resolución Judicial</option>
+                         <option value="Falta Plaza Residencia">🏠 Falta Plaza Residencia (Mejor Niñez)</option>
+                     </optgroup>
+                 </select>
+
+                 <Inp placeholder="Resp..." value={newBitacoraEntry.responsable} onChange={e=>setNewBitacoraEntry({...newBitacoraEntry, responsable: e.target.value})} className="col-span-2" />
+                 <Txt placeholder="Detalle..." value={newBitacoraEntry.descripcion} onChange={e=>setNewBitacoraEntry({...newBitacoraEntry, descripcion: e.target.value})} className="col-span-4" />
+                 {newBitacoraEntry.tipo === 'Tarea' && <Inp type="date" value={newBitacoraEntry.fechaCumplimiento || ''} onChange={e=>setNewBitacoraEntry({...newBitacoraEntry, fechaCumplimiento: e.target.value})} className="col-span-4 bg-amber-50" />}
+                 <button onClick={handleAddBitacora} className={clsBtnP + " md:col-span-4"}>Añadir Registro</button>
+              </div>
+              <div className="space-y-2">
                 {safeArr(caseForm.bitacora).map(b => (
-                  <div key={b.id} className="p-4 border rounded-xl flex justify-between items-start group hover:border-blue-200 transition-colors">
+                  <div key={b.id} className="p-4 bg-white border rounded-xl flex justify-between items-start group hover:border-blue-200 transition-colors">
                     <div className="flex-1">
-                       <div className="flex flex-wrap gap-2 items-center mb-1">
-                          <span className="text-[10px] font-black uppercase text-blue-600 bg-blue-50 px-2 py-0.5 rounded">{b.tipo}</span>
-                          {b.barrera && b.barrera !== 'Ninguna' && <span className="bg-red-100 text-red-700 text-[8px] font-black px-2 py-0.5 rounded uppercase flex items-center gap-1"><AlertTriangle size={10}/> Barrera: {b.barrera}</span>}
-                          <span className="text-[9px] text-slate-400 font-bold uppercase">{b.fecha} • Resp: {b.responsable || 'N/A'}</span>
-                       </div>
-                       <p className="text-sm font-medium text-slate-800 whitespace-pre-wrap">{String(b.descripcion)}</p>
+                      <div className="flex items-center gap-2 mb-1">
+                        <span className="text-[10px] font-black uppercase text-blue-600 bg-blue-50 px-2 py-0.5 rounded">{b.tipo}</span>
+                        {b.barrera && b.barrera !== 'Ninguna' && <span className="bg-red-100 text-red-700 text-[8px] font-black px-2 py-0.5 rounded uppercase flex items-center gap-1"><AlertTriangle size={10}/> Barrera: {b.barrera}</span>}
+                        <span className="text-[9px] text-slate-400 font-bold uppercase">{b.fecha} • Resp: {b.responsable || 'N/A'}</span>
+                      </div>
+                      <p className="text-sm font-medium text-slate-800 whitespace-pre-wrap">{String(b.descripcion)}</p>
                     </div>
-                    <button onClick={() => setCaseForm({ ...caseForm, bitacora: safeArr(caseForm.bitacora).filter(x => x.id !== b.id) })} className="text-red-400 hover:text-red-600 opacity-0 group-hover:opacity-100 transition-opacity"><Trash2 size={16}/></button>
+                    <button onClick={()=>setCaseForm({...caseForm, bitacora: caseForm.bitacora.filter(x=>x.id!==b.id)})} className="text-slate-200 hover:text-red-500 opacity-0 group-hover:opacity-100 transition-opacity"><Trash2 size={16}/></button>
                   </div>
                 ))}
               </div>
-            )}
-            {activeModalTab === 'archivos' && (
-              <div className="space-y-4">
-                 <div className="bg-indigo-50 p-4 rounded-xl text-center mb-4">
-                   <label className="cursor-pointer block text-indigo-700 font-black text-xs uppercase"><UploadCloud size={20} className="mx-auto mb-1"/> {isUploadingCaseFile ? 'Subiendo...' : 'Subir Archivo de Respaldo'}
-                   <input type="file" className="hidden" disabled={isUploadingCaseFile} onChange={handleCaseFileUpload} />
-                   </label>
-                 </div>
+            </div>
+          )}
+          {activeModalTab === 'archivos' && (
+            <div className="space-y-4">
+               <div className="bg-indigo-50 p-6 rounded-2xl text-center border-dashed border-2 border-indigo-200">
+                 <label className="cursor-pointer font-black text-xs text-indigo-700 uppercase"><UploadCloud size={20} className="mx-auto mb-2"/> {isUploadingCaseFile ? 'Subiendo...' : 'Subir Documento (Para IA)'}<input type="file" className="hidden" disabled={isUploadingCaseFile} onChange={handleCaseFileUpload} /></label>
+               </div>
+               <div className="space-y-2">
                  {safeArr(caseForm.archivos).map(f => (
-                   <div key={f.id} className="flex justify-between items-center p-3 bg-white border rounded-xl group hover:border-indigo-200 transition-colors">
-                      <span className="text-xs font-bold text-slate-700">{f.nombre} <span className="text-[9px] text-slate-400 ml-2">{f.size}</span></span>
-                      <div className="flex gap-2 items-center">
+                   <div key={f.id} className="p-3 bg-white border rounded-xl flex justify-between items-center group hover:border-indigo-200 transition-colors">
+                      <span className="text-xs font-black">{f.nombre}</span>
+                      <div className="flex gap-2">
                         <button onClick={(e)=>{e.preventDefault(); setAiFileContext(f);}} className="p-2 bg-indigo-50 text-indigo-600 hover:bg-indigo-600 hover:text-white rounded-lg transition-all" title="Analizar con IA"><BrainCircuit size={14}/></button>
-                        {f.url && <a href={f.url} target="_blank" rel="noreferrer" className="text-[10px] font-black uppercase text-blue-600 hover:bg-blue-50 px-2 py-1 rounded flex items-center gap-1"><ExternalLink size={12}/> Abrir</a>}
-                        {currentUser?.rol === 'Admin' && <button onClick={()=>setCaseForm(p=>({...p, archivos: p.archivos.filter(a=>a.id!==f.id)}))} className="text-red-400 p-1 hover:bg-red-50 rounded"><Trash2 size={14}/></button>}
+                        <a href={f.url} target="_blank" rel="noreferrer" className="p-2 bg-blue-50 text-blue-600 rounded-lg hover:bg-blue-100 transition-colors"><ExternalLink size={14}/></a>
+                        <button onClick={()=>setCaseForm(p=>({...p, archivos: p.archivos.filter(a=>a.id!==f.id)}))} className="text-red-400 p-2 hover:bg-red-50 rounded-lg ml-2"><Trash2 size={14}/></button>
                       </div>
                    </div>
                  ))}
-                 <Lbl>Epicrisis / Resumen General</Lbl><Txt value={caseForm.epicrisis || ''} onChange={e=>setCaseForm({...caseForm, epicrisis: e.target.value})} className="min-h-[140px]"/>
-                 <div className="flex justify-between items-center"><Lbl>Resumen IA</Lbl>{currentUser?.rol === 'Admin' && <button onClick={handleGenerateCaseSummary} disabled={isGeneratingCaseSummary} className={clsBtnP}>Generar</button>}</div>
-                 {caseSummary && currentUser?.rol === 'Admin' && <div className="p-4 bg-indigo-50 rounded-xl whitespace-pre-wrap text-sm border border-indigo-100">{String(caseSummary)}</div>}
-              </div>
-            )}
+               </div>
+            </div>
+          )}
         </div>
         <ModalFtr onCancel={()=>setIsCaseModalOpen(false)} onSave={handleSaveCase} />
       </ModalWrap>
@@ -1321,7 +1338,7 @@ export default function App() {
                         <div className="flex gap-2 items-center">
                           <button onClick={(e)=>{e.preventDefault(); setAiFileContext(f);}} className="p-2 bg-indigo-50 text-indigo-600 hover:bg-indigo-600 hover:text-white rounded-lg transition-all" title="Analizar con IA"><BrainCircuit size={14}/></button>
                           {f.url && <a href={f.url} target="_blank" rel="noreferrer" className="text-[10px] font-black uppercase text-blue-600 hover:bg-blue-50 px-2 py-1 rounded flex items-center gap-1"><ExternalLink size={12}/> Abrir</a>}
-                          {currentUser?.rol === 'Admin' && <button onClick={()=>setDocForm(p=>({...p, archivos: p.archivos.filter(a=>a.id!==f.id)}))} className="text-red-400 p-1 hover:bg-red-50 rounded"><Trash2 size={14}/></button>}
+                          {currentUser?.rol === 'Admin' && <button onClick={()=>setDocForm(p=>({...p, archivos: p.archivos.filter(a=>a.id!==f.id)}))} className="text-red-400 p-1 hover:bg-red-50 rounded ml-2"><Trash2 size={14}/></button>}
                         </div>
                      </div>
                    ))}
