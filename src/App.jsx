@@ -7,7 +7,7 @@ import {
   LayoutDashboard, Users, FileText, AlertTriangle, CheckCircle, Clock, Plus, Activity, LogOut,
   Bell, Copy, Loader2, Edit2, Trash2, ListTodo, MessageSquare, CheckSquare, Square, Calendar,
   UploadCloud, Paperclip, File as FileIcon, Lock, User, ClipboardCheck, BookOpen, Download,
-  Wand2, Settings, UserPlus, Shield, Key, Timer, TrendingUp, BarChart3, Target, Printer, Search, ExternalLink
+  Wand2, Settings, UserPlus, Shield, Key, Timer, TrendingUp, BarChart3, Target, Printer, ExternalLink
 } from 'lucide-react';
 
 const firebaseConfig = typeof __firebase_config !== 'undefined' ? JSON.parse(__firebase_config) : {
@@ -42,6 +42,13 @@ const getTaskStatus = (fecha) => {
   if (diffDays < 0) return { status: 'overdue', bgClass: 'bg-red-100 text-red-800', showWarning: true };
   if (diffDays <= 10) return { status: 'upcoming', bgClass: 'bg-amber-100 text-amber-800', showWarning: true };
   return { status: 'safe', bgClass: 'bg-emerald-100 text-emerald-800', showWarning: false };
+};
+
+const getSemaforoDoc = (fechaResolucion, oficiales) => {
+  if (!safeArr(oficiales).length) return { color: 'red', label: '🔴 Inexistente / Vacío Normativo' };
+  const days = diffInDays(fechaResolucion, new Date().toISOString().split('T')[0]);
+  if (days === null || days > (3 * 365)) return { color: 'amber', label: '🟡 Desactualizado (> 3 años)' };
+  return { color: 'emerald', label: '🟢 Vigente' };
 };
 
 const parseOpciones = (str) => {
@@ -132,17 +139,19 @@ export default function App() {
   const [activeModalTab, setActiveModalTab] = useState('datos');
   const [isCaseModalOpen, setIsCaseModalOpen] = useState(false);
   const [newBitacoraEntry, setNewBitacoraEntry] = useState({ tipo: 'Nota Adm.', descripcion: '', responsable: '', fechaCumplimiento: '' });
+  const [newCaseLink, setNewCaseLink] = useState({ nombre: '', url: '' }); 
 
+  const defaultDocState = { nombre: '', ambito: 'Red Integral', fase: 'Levantamiento', avance: 0, prioridad: 'Media', fechaResolucion: '', notas: '', bitacora: [], archivos: [], archivosOficiales: [] };
   const [isDocModalOpen, setIsDocModalOpen] = useState(false);
   const [editingDocId, setEditingDocId] = useState(null);
-  const [docForm, setDocForm] = useState({ nombre: '', ambito: 'Red Integral', fase: 'Levantamiento', avance: 10, notas: '', bitacora: [], archivos: [] });
+  const [docForm, setDocForm] = useState(defaultDocState);
   const [activeDocModalTab, setActiveDocModalTab] = useState('datos');
   const [newDocBitacoraEntry, setNewDocBitacoraEntry] = useState({ tipo: 'Tarea', descripcion: '', responsable: '', fechaCumplimiento: '' });
+  const [newDocLink, setNewDocLink] = useState({ nombre: '', url: '' }); 
 
   const [isAuditModalOpen, setIsAuditModalOpen] = useState(false);
   const [isTemplateModalOpen, setIsTemplateModalOpen] = useState(false);
   const [editingTemplateId, setEditingTemplateId] = useState(null);
-  
   const [auditForm, setAuditForm] = useState({ centro: '', templateId: '', headerAnswers: {}, answers: {}, tipo: 'Auditoría', observaciones: '', fecha: new Date().toISOString().split('T')[0], estadoManual: '' });
   const [templateForm, setTemplateForm] = useState({ nombre: '', metodoCalculo: 'Suma Automática', instruccionesDiagnostico: '', encabezados: [{ id: 'enc_1', label: 'Centro Evaluado', type: 'text' }, { id: 'enc_2', label: 'Fecha', type: 'date' }], criterios: [{ id: 'crit_1', pregunta: '', opciones: 'SÍ=1, NO=0' }], rangos: [], tipo: 'Ambos' });
   
@@ -389,7 +398,7 @@ export default function App() {
     if (!caseForm.rut || !caseForm.nombre) return alert("RUT y Nombre obligatorios.");
     const finalId = editingCaseId || `CASO-${String(cases.length + 1).padStart(3, '0')}`;
     await saveToCloud('cases', finalId, { ...caseForm, id: finalId, paciente: caseForm.rut });
-    setIsCaseModalOpen(false); setEditingCaseId(null); setCaseForm(defaultCaseState); setCaseSummary('');
+    setIsCaseModalOpen(false); setEditingCaseId(null); setCaseForm(defaultCaseState); setCaseSummary(''); setNewCaseLink({nombre:'', url:''});
   };
 
   const handleAddBitacora = () => {
@@ -405,11 +414,17 @@ export default function App() {
      await saveToCloud('cases', caseId, { ...caso, bitacora: updatedBitacora });
   };
 
+  // --- CALCULO DINÁMICO DE AVANCE DE PROTOCOLOS ---
+  const docTareas = safeArr(docForm.bitacora).filter(b => b.tipo === 'Tarea');
+  const docAvanceActual = docTareas.length > 0 
+      ? Math.round((docTareas.filter(t => t.completada).length / docTareas.length) * 100) 
+      : (docForm.avance || 0);
+
   const handleSaveDoc = async () => {
     if(!docForm.nombre) return alert("Nombre obligatorio"); 
-    const finalId = editingDocId || `DOC-00${docs.length + 1}`;
-    await saveToCloud('docs', finalId, { ...docForm, id: finalId });
-    setIsDocModalOpen(false); setEditingDocId(null);
+    const finalId = editingDocId || `DOC-${String(docs.length + 1).padStart(3, '0')}`;
+    await saveToCloud('docs', finalId, { ...docForm, id: finalId, avance: docAvanceActual });
+    setIsDocModalOpen(false); setEditingDocId(null); setNewDocLink({nombre:'', url:''});
   };
 
   const handleAddDocBitacora = () => {
@@ -422,7 +437,26 @@ export default function App() {
      const documento = safeArr(docs).find(d => d.id === docId);
      if (!documento) return;
      const updatedBitacora = safeArr(documento.bitacora).map(entry => entry.id === entryId ? { ...entry, completada: !entry.completada } : entry);
-     await saveToCloud('docs', docId, { ...documento, bitacora: updatedBitacora });
+     
+     const tareas = updatedBitacora.filter(b => b.tipo === 'Tarea');
+     let nuevoAvance = documento.avance;
+     if(tareas.length > 0) {
+        nuevoAvance = Math.round((tareas.filter(t => t.completada).length / tareas.length) * 100);
+     }
+     await saveToCloud('docs', docId, { ...documento, bitacora: updatedBitacora, avance: nuevoAvance });
+  };
+
+  const handleOficializarBorrador = () => {
+    if(window.confirm("¿Estás seguro de promover el borrador actual como Documento Oficial? Esto reiniciará el Semáforo de Vigencia a Verde.")){
+       setDocForm(p => ({
+           ...p,
+           archivosOficiales: [...safeArr(p.archivos), ...safeArr(p.archivosOficiales)],
+           archivos: [],
+           fechaResolucion: new Date().toISOString().split('T')[0],
+           fase: 'Oficialización',
+           avance: 100
+       }));
+    }
   };
 
   // --- CARGA DE ARCHIVOS A FIREBASE STORAGE ---
@@ -447,7 +481,7 @@ export default function App() {
     }
   };
 
-  const handleDocFileUpload = async (e) => {
+  const handleDocFileUpload = async (e, targetArray = 'archivos') => {
     const file = e.target.files[0];
     if (!file) return;
     setIsUploadingDocFile(true);
@@ -457,7 +491,7 @@ export default function App() {
       const url = await getDownloadURL(storageRef);
       setDocForm(prev => ({ 
         ...prev, 
-        archivos: [{ id: Date.now().toString(), nombre: file.name, size: (file.size / 1024 / 1024).toFixed(2) + ' MB', fecha: new DatetoISOString().split('T')[0], url: url }, ...safeArr(prev.archivos)] 
+        [targetArray]: [{ id: Date.now().toString(), nombre: file.name, size: (file.size / 1024 / 1024).toFixed(2) + ' MB', fecha: new Date().toISOString().split('T')[0], url: url }, ...safeArr(prev[targetArray])] 
       }));
     } catch (err) {
       console.error(err);
@@ -582,8 +616,6 @@ export default function App() {
                })}
              </tbody>
            </table>
-
-           {/* BLOQUE INQUEBRANTABLE IMPRESIÓN */}
            <div className="print:break-inside-avoid w-full border border-gray-300 p-4 rounded-lg bg-gray-50 mt-4">
               <div className="flex justify-between items-start mb-4">
                   <div className="flex-1 pr-4">
@@ -724,6 +756,16 @@ export default function App() {
                 <div className="absolute top-0 right-0 w-32 h-32 bg-blue-500/20 rounded-full -mr-10 -mt-10 blur-xl"></div>
               </div>
             </div>
+            
+            {/* NUEVA SECCIÓN DASHBOARD: PROTOCOLOS */}
+            <div className="bg-gradient-to-r from-slate-800 to-slate-900 rounded-2xl p-6 text-white shadow-lg mt-6 flex flex-col md:flex-row items-start md:items-center justify-between gap-4">
+               <div>
+                 <h3 className="text-sm font-black uppercase tracking-widest text-blue-400 mb-1 flex items-center gap-2"><FileText size={16}/>Estatus Normativo de Red</h3>
+                 <p className="text-xs font-medium text-slate-300 leading-relaxed">Tenemos <strong className="text-white">{safeArr(docs).filter(d => d.fase === 'Validación Técnica').length} protocolos</strong> en Fase de Validación Técnica y <strong className="text-white">{safeArr(docs).filter(d => d.prioridad === 'Alta').length} con Prioridad Alta</strong> que requieren apoyo.</p>
+               </div>
+               <button onClick={()=>setActiveTab('docs')} className="bg-blue-600 px-6 py-3 rounded-xl text-[10px] font-black uppercase tracking-widest hover:bg-blue-500 transition-colors shadow-lg shrink-0">Ver Protocolos</button>
+            </div>
+
             <div className="bg-white rounded-2xl shadow-sm border border-slate-200 p-6">
               <h3 className="text-xs font-black text-slate-800 uppercase tracking-widest mb-4 flex items-center gap-2"><ListTodo size={16} className="text-blue-500" /> Tareas Pendientes</h3>
               <div className="overflow-x-auto">
@@ -846,19 +888,31 @@ export default function App() {
         {/* PESTAÑA 4: PROTOCOLOS */}
         {activeTab === 'docs' && (
           <div className="space-y-6 animate-in fade-in mt-12 md:mt-0">
-            <div className="flex justify-between items-end"><div><h2 className="text-2xl font-black text-slate-800 tracking-tight">Normativas y Protocolos</h2></div><button onClick={() => { setEditingDocId(null); setDocForm({ nombre: '', ambito: 'Red Integral', fase: 'Levantamiento', avance: 10, notas: '', bitacora: [], archivos: [] }); setActiveDocModalTab('datos'); setIsDocModalOpen(true); }} className={clsBtnP}><Plus size={18}/> Nuevo Protocolo</button></div>
+            <div className="flex justify-between items-end"><div><h2 className="text-2xl font-black text-slate-800 tracking-tight">Normativas y Protocolos</h2></div><button onClick={() => { setEditingDocId(null); setDocForm(defaultDocState); setActiveDocModalTab('datos'); setIsDocModalOpen(true); }} className={clsBtnP}><Plus size={18}/> Nuevo Protocolo</button></div>
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              {safeArr(docs).map((d) => (
-                <div key={d.id} className="bg-white p-6 rounded-2xl shadow-sm border border-slate-200 flex flex-col justify-between">
-                  <div>
-                    <div className="flex justify-between items-start mb-3"><span className="text-[9px] font-black text-blue-600 bg-blue-50 px-2 py-1 rounded-lg">{String(d.id)}</span>
-                      <div className="flex gap-2"><button onClick={() => { setEditingDocId(d.id); setDocForm(d); setActiveDocModalTab('datos'); setIsDocModalOpen(true); }} className="text-slate-400 hover:text-blue-600 p-1.5 bg-slate-50 rounded-lg"><Edit2 size={14} /></button>{currentUser?.rol === 'Admin' && (<button onClick={async () => { if(window.confirm('¿Eliminar protocolo?')) await deleteFromCloud('docs', d.id); }} className="text-slate-400 hover:text-red-500 p-1.5 bg-slate-50 rounded-lg"><Trash2 size={14}/></button>)}</div>
+              {safeArr(docs).map((d) => {
+                 const semaforo = getSemaforoDoc(d.fechaResolucion, d.archivosOficiales);
+                 return (
+                  <div key={d.id} className={`bg-white p-6 rounded-2xl shadow-sm border border-slate-200 border-l-[6px] border-l-${semaforo.color}-500 flex flex-col justify-between`}>
+                    <div>
+                      <div className="flex justify-between items-start mb-3">
+                        <span className="text-[9px] font-black text-blue-600 bg-blue-50 px-2 py-1 rounded-lg">{String(d.id)}</span>
+                        <div className="flex gap-2 items-center">
+                          <span className={`text-[8px] font-black uppercase tracking-widest px-2 py-1 rounded border shadow-sm bg-white ${d.prioridad==='Alta'?'text-red-500 border-red-200':d.prioridad==='Media'?'text-amber-500 border-amber-200':'text-blue-500 border-blue-200'}`}>{d.prioridad==='Alta'?'🔥 Alta':d.prioridad==='Media'?'⚡ Media':'🧊 Baja'}</span>
+                          <button onClick={() => { setEditingDocId(d.id); setDocForm({ ...defaultDocState, ...d }); setActiveDocModalTab('datos'); setIsDocModalOpen(true); }} className="text-slate-400 hover:text-blue-600 p-1.5 bg-slate-50 rounded-lg"><Edit2 size={14} /></button>
+                          {currentUser?.rol === 'Admin' && (<button onClick={async () => { if(window.confirm('¿Eliminar protocolo?')) await deleteFromCloud('docs', d.id); }} className="text-slate-400 hover:text-red-500 p-1.5 bg-slate-50 rounded-lg"><Trash2 size={14}/></button>)}
+                        </div>
+                      </div>
+                      <h3 className="text-lg font-black text-slate-800 mb-1 leading-snug">{String(d.nombre)}</h3>
+                      <div className="flex gap-2 items-center mb-4">
+                         <span className="text-[9px] font-bold text-slate-500 uppercase">{String(d.ambito)} • {String(d.fase)}</span>
+                         <span className={`text-[8px] font-black uppercase px-2 py-0.5 rounded-full ${semaforo.bg}`}>{semaforo.label}</span>
+                      </div>
                     </div>
-                    <h3 className="text-lg font-black text-slate-800 mb-1">{String(d.nombre)}</h3><p className="text-[10px] font-bold text-slate-400 mb-4 uppercase">{String(d.ambito)} • {String(d.fase)}</p>
+                    <div><div className="flex justify-between text-[9px] font-black uppercase mb-1.5 text-slate-400"><span>Avance Técnico</span><span>{String(d.avance || 0)}%</span></div><div className="w-full bg-slate-100 rounded-full h-2.5"><div className="bg-blue-500 h-2.5 rounded-full transition-all" style={{ width: `${d.avance || 0}%` }}></div></div></div>
                   </div>
-                  <div><div className="flex justify-between text-[9px] font-black uppercase mb-1.5 text-slate-400"><span>Avance Técnico</span><span>{String(d.avance)}%</span></div><div className="w-full bg-slate-100 rounded-full h-2.5"><div className="bg-blue-500 h-2.5 rounded-full" style={{ width: `${d.avance}%` }}></div></div></div>
-                </div>
-              ))}
+                 )
+              })}
             </div>
           </div>
         )}
@@ -1088,18 +1142,18 @@ export default function App() {
       <ModalWrap isOpen={isDocModalOpen}>
         <ModalHdr t={editingDocId ? 'Editar Protocolo' : 'Nuevo Protocolo'} onClose={()=>setIsDocModalOpen(false)} icon={FileText} />
         <div className="flex bg-slate-50 border-b shrink-0 px-6">
-          <button onClick={() => setActiveDocModalTab('datos')} className={`px-6 py-4 text-[10px] font-black uppercase tracking-[0.2em] border-b-4 ${activeDocModalTab === 'datos' ? 'border-blue-600 text-blue-600 bg-white' : 'border-transparent text-slate-400'}`}>Datos</button>
-          <button onClick={() => setActiveDocModalTab('bitacora')} className={`px-6 py-4 text-[10px] font-black uppercase tracking-[0.2em] border-b-4 ${activeDocModalTab === 'bitacora' ? 'border-blue-600 text-blue-600 bg-white' : 'border-transparent text-slate-400'}`}>Tareas</button>
+          <button onClick={() => setActiveDocModalTab('datos')} className={`px-6 py-4 text-[10px] font-black uppercase tracking-[0.2em] border-b-4 ${activeDocModalTab === 'datos' ? 'border-blue-600 text-blue-600 bg-white' : 'border-transparent text-slate-400'}`}>Datos Generales</button>
+          <button onClick={() => setActiveDocModalTab('bitacora')} className={`px-6 py-4 text-[10px] font-black uppercase tracking-[0.2em] border-b-4 ${activeDocModalTab === 'bitacora' ? 'border-blue-600 text-blue-600 bg-white' : 'border-transparent text-slate-400'}`}>Tareas y Fases</button>
           <button onClick={() => setActiveDocModalTab('archivos')} className={`px-6 py-4 text-[10px] font-black uppercase tracking-[0.2em] border-b-4 ${activeDocModalTab === 'archivos' ? 'border-blue-600 text-blue-600 bg-white' : 'border-transparent text-slate-400'}`}>Archivos</button>
         </div>
         <div className="p-6 overflow-y-auto flex-1 bg-white space-y-6">
           {activeDocModalTab === 'datos' && (
             <div className="space-y-4">
-              <div><Lbl>Nombre</Lbl><Inp value={docForm.nombre} onChange={e=>setDocForm({...docForm, nombre: e.target.value})}/></div>
+              <div><Lbl>Nombre del Protocolo</Lbl><Inp value={docForm.nombre} onChange={e=>setDocForm({...docForm, nombre: e.target.value})}/></div>
               <div className="grid grid-cols-2 gap-4">
                 <div>
-                  <Lbl>Ámbito</Lbl>
-                  <Inp list="ambitos-list" value={docForm.ambito} onChange={e=>setDocForm({...docForm, ambito: e.target.value})} placeholder="Escriba o seleccione..." />
+                  <Lbl>Ámbito Aplicable</Lbl>
+                  <Inp list="ambitos-list" value={docForm.ambito} onChange={e=>setDocForm({...docForm, ambito: e.target.value})} placeholder="Escriba o seleccione..."/>
                   <datalist id="ambitos-list">
                     <option value="APS"/>
                     <option value="Atención Cerrada"/>
@@ -1108,36 +1162,89 @@ export default function App() {
                     {safeArr(centros).map(c=><option key={c} value={c}/>)}
                   </datalist>
                 </div>
-                <div><Lbl>Fase</Lbl><Sel value={docForm.fase} onChange={e=>setDocForm({...docForm, fase: e.target.value})}><option>Levantamiento</option><option>Validación Técnica</option><option>Resolución Exenta</option><option>Difusión</option></Sel></div>
+                <div><Lbl>Fase de Trabajo</Lbl><Sel value={docForm.fase} onChange={e=>setDocForm({...docForm, fase: e.target.value})}><option>Levantamiento</option><option>Validación Técnica</option><option>Resolución Exenta</option><option>Difusión</option></Sel></div>
+                <div><Lbl>Prioridad de Gestión</Lbl><Sel value={docForm.prioridad} onChange={e=>setDocForm({...docForm, prioridad: e.target.value})}><option>Alta</option><option>Media</option><option>Baja</option></Sel></div>
+                <div><Lbl>Fecha Resolución (Para Semáforo)</Lbl><Inp type="date" value={docForm.fechaResolucion || ''} onChange={e=>setDocForm({...docForm, fechaResolucion: e.target.value})} /></div>
               </div>
               <div><Lbl>Notas y Observaciones Generales</Lbl><Txt rows="3" value={docForm.notas || ''} onChange={e=>setDocForm({...docForm, notas: e.target.value})} placeholder="Apuntes o ideas principales..." /></div>
-              <div><Lbl>Avance: {docForm.avance}%</Lbl><input type="range" min="0" max="100" step="5" value={docForm.avance} onChange={e=>setDocForm({...docForm, avance: e.target.value})} className="w-full" /></div>
             </div>
           )}
-          {activeDocModalTab === 'bitacora' && (
+          {activeDocModalTab === 'bitacora' && (() => {
+             const docTareas = safeArr(docForm.bitacora).filter(b => b.tipo === 'Tarea');
+             const docAvanceTemp = docTareas.length > 0 ? Math.round((docTareas.filter(t => t.completada).length / docTareas.length) * 100) : (docForm.avance || 0);
+             return (
              <div className="space-y-4">
-                <div className="bg-slate-50 p-4 rounded-xl grid grid-cols-2 gap-3"><Inp value={newDocBitacoraEntry.responsable} onChange={e=>setNewDocBitacoraEntry({...newDocBitacoraEntry, responsable: e.target.value})} placeholder="Resp..." /><Inp type="date" value={newDocBitacoraEntry.fechaCumplimiento} onChange={e=>setNewDocBitacoraEntry({...newDocBitacoraEntry, fechaCumplimiento: e.target.value})} /><Txt rows="1" value={newDocBitacoraEntry.descripcion} onChange={e=>setNewDocBitacoraEntry({...newDocBitacoraEntry, descripcion: e.target.value})} placeholder="Tarea..." className="col-span-2"/><button onClick={handleAddDocBitacora} className={clsBtnP + " col-span-2"}>Añadir Tarea</button></div>
-                {safeArr(docForm.bitacora).map(b => <div key={b.id} className="p-4 border rounded-xl flex justify-between"><p className="text-sm font-bold">{String(b.descripcion)}</p><button onClick={() => setDocForm({ ...docForm, bitacora: safeArr(docForm.bitacora).filter(x => x.id !== b.id) })} className="text-red-400 hover:text-red-600"><Trash2 size={16}/></button></div>)}
+                <div className="bg-blue-50/50 p-4 rounded-xl border border-blue-100 flex justify-between items-center">
+                  <div className="flex flex-col"><span className="text-[10px] font-black uppercase text-blue-800 tracking-widest">Avance Automatizado</span><span className="text-xs text-blue-600 font-medium">Calculado por tareas cumplidas</span></div>
+                  <span className="text-2xl font-black text-blue-600">{docAvanceTemp}%</span>
+                </div>
+                <div className="bg-slate-50 p-4 rounded-xl grid grid-cols-2 gap-3"><Inp value={newDocBitacoraEntry.responsable} onChange={e=>setNewDocBitacoraEntry({...newDocBitacoraEntry, responsable: e.target.value})} placeholder="Resp..." /><Inp type="date" value={newDocBitacoraEntry.fechaCumplimiento} onChange={e=>setNewDocBitacoraEntry({...newDocBitacoraEntry, fechaCumplimiento: e.target.value})} /><Txt rows="1" value={newDocBitacoraEntry.descripcion} onChange={e=>setNewDocBitacoraEntry({...newDocBitacoraEntry, descripcion: e.target.value})} placeholder="Ej: Revisión Jurídica..." className="col-span-2"/><button onClick={handleAddDocBitacora} className={clsBtnP + " col-span-2"}>Añadir Tarea</button></div>
+                {safeArr(docForm.bitacora).map(b => (
+                  <div key={b.id} className="p-4 border rounded-xl flex items-start gap-4">
+                    <button onClick={() => setDocForm(p => ({...p, bitacora: p.bitacora.map(x => x.id === b.id ? {...x, completada: !x.completada} : x)}))} className={b.completada ? "text-emerald-500" : "text-amber-500"}><CheckSquare size={20}/></button>
+                    <div className="flex-1"><p className={`text-sm font-bold ${b.completada ? 'line-through text-slate-400' : 'text-slate-800'}`}>{String(b.descripcion)}</p><p className="text-[10px] text-slate-400 mt-1 uppercase">Resp: {String(b.responsable)} | Vence: {String(b.fechaCumplimiento)}</p></div>
+                    <button onClick={() => setDocForm({ ...docForm, bitacora: safeArr(docForm.bitacora).filter(x => x.id !== b.id) })} className="text-red-400 hover:text-red-600"><Trash2 size={16}/></button>
+                  </div>
+                ))}
              </div>
-          )}
-          {activeDocModalTab === 'archivos' && (
-            <div className="space-y-4">
-               <div className="bg-indigo-50 p-4 rounded-xl text-center mb-4">
-                 <label className="cursor-pointer block text-indigo-700 font-black text-xs uppercase"><UploadCloud size={20} className="mx-auto mb-1"/> {isUploadingDocFile ? 'Subiendo...' : 'Subir Insumo o Documento'}
-                   <input type="file" className="hidden" disabled={isUploadingDocFile} onChange={handleDocFileUpload} />
-                 </label>
-               </div>
-               {safeArr(docForm.archivos).map(f => (
-                 <div key={f.id} className="flex justify-between items-center p-3 bg-white border rounded-xl">
-                    <span className="text-xs font-bold">{f.nombre} <span className="text-[9px] text-slate-400 ml-2">{f.size}</span></span>
-                    <div className="flex gap-2 items-center">
-                      {f.url && <a href={f.url} target="_blank" rel="noreferrer" className="text-[10px] font-black uppercase text-blue-600 hover:bg-blue-50 px-2 py-1 rounded flex items-center gap-1"><ExternalLink size={12}/> Abrir</a>}
-                      {currentUser?.rol === 'Admin' && <button onClick={()=>setDocForm(p=>({...p, archivos: p.archivos.filter(a=>a.id!==f.id)}))} className="text-red-400 p-1 hover:bg-red-50 rounded"><Trash2 size={14}/></button>}
-                    </div>
+             );
+          })()}
+          {activeDocModalTab === 'archivos' && (() => {
+             const docTareas = safeArr(docForm.bitacora).filter(b => b.tipo === 'Tarea');
+             const docAvanceTemp = docTareas.length > 0 ? Math.round((docTareas.filter(t => t.completada).length / docTareas.length) * 100) : (docForm.avance || 0);
+             return (
+             <div className="space-y-6">
+               {docAvanceTemp === 100 && safeArr(docForm.archivos).length > 0 && (
+                 <div className="bg-emerald-50 border-2 border-emerald-200 p-6 rounded-2xl flex flex-col items-center justify-center text-center space-y-3">
+                    <div className="w-12 h-12 bg-emerald-100 text-emerald-600 rounded-full flex items-center justify-center"><CheckCircle size={24}/></div>
+                    <div><h4 className="font-black text-emerald-800 uppercase tracking-widest">¡Tareas al 100%!</h4><p className="text-xs text-emerald-700">El borrador está listo para convertirse en oficial.</p></div>
+                    <button onClick={handleOficializarBorrador} className="bg-emerald-600 text-white px-6 py-3 rounded-xl font-black text-[10px] uppercase tracking-widest hover:bg-emerald-700 transition-colors shadow-lg shadow-emerald-200 flex items-center gap-2">🌟 Oficializar Borrador</button>
                  </div>
-               ))}
+               )}
+               
+               <div>
+                 <Lbl className="bg-indigo-50 text-indigo-800 px-3 py-2 rounded-lg border border-indigo-100 inline-block mb-3">1. Documento Oficial Vigente</Lbl>
+                 <div className="space-y-2 mb-4">
+                   {safeArr(docForm.archivosOficiales).map(f => (
+                     <div key={f.id} className="flex justify-between items-center p-3 bg-white border-2 border-indigo-50 rounded-xl">
+                        <span className="text-xs font-black text-indigo-900">{f.nombre} <span className="text-[9px] text-slate-400 ml-2 font-medium">{f.size}</span></span>
+                        <div className="flex gap-2 items-center">
+                          {f.url && <a href={f.url} target="_blank" rel="noreferrer" className="text-[10px] font-black uppercase text-indigo-600 hover:bg-indigo-50 px-2 py-1 rounded flex items-center gap-1"><ExternalLink size={12}/> Abrir</a>}
+                          {currentUser?.rol === 'Admin' && <button onClick={()=>setDocForm(p=>({...p, archivosOficiales: p.archivosOficiales.filter(a=>a.id!==f.id)}))} className="text-red-400 p-1 hover:bg-red-50 rounded"><Trash2 size={14}/></button>}
+                        </div>
+                     </div>
+                   ))}
+                   {safeArr(docForm.archivosOficiales).length === 0 && <p className="text-[10px] text-slate-400 italic">No hay documento oficial publicado.</p>}
+                 </div>
+                 {currentUser?.rol === 'Admin' && (
+                   <label className="cursor-pointer inline-block text-[10px] font-black uppercase text-indigo-600 bg-indigo-50 hover:bg-indigo-100 px-4 py-2 rounded-lg transition-colors"><UploadCloud size={14} className="inline mr-2"/> Subir Oficial Manualmente
+                     <input type="file" className="hidden" disabled={isUploadingDocFile} onChange={(e) => handleDocFileUpload(e, 'archivosOficiales')} />
+                   </label>
+                 )}
+               </div>
+
+               <div className="border-t border-slate-100 pt-6">
+                 <Lbl className="bg-slate-100 text-slate-600 px-3 py-2 rounded-lg border border-slate-200 inline-block mb-3">2. Borradores e Insumos (Mesa Técnica)</Lbl>
+                 <div className="bg-slate-50 p-4 rounded-xl text-center mb-4 border border-dashed border-slate-300">
+                   <label className="cursor-pointer block text-slate-600 font-black text-xs uppercase"><UploadCloud size={20} className="mx-auto mb-1 text-slate-400"/> {isUploadingDocFile ? 'Subiendo...' : 'Subir Borrador / Insumo'}
+                     <input type="file" className="hidden" disabled={isUploadingDocFile} onChange={(e) => handleDocFileUpload(e, 'archivos')} />
+                   </label>
+                 </div>
+                 <div className="space-y-2">
+                   {safeArr(docForm.archivos).map(f => (
+                     <div key={f.id} className="flex justify-between items-center p-3 bg-white border rounded-xl">
+                        <span className="text-xs font-bold text-slate-700">{f.nombre} <span className="text-[9px] text-slate-400 ml-2">{f.size}</span></span>
+                        <div className="flex gap-2 items-center">
+                          {f.url && <a href={f.url} target="_blank" rel="noreferrer" className="text-[10px] font-black uppercase text-blue-600 hover:bg-blue-50 px-2 py-1 rounded flex items-center gap-1"><ExternalLink size={12}/> Abrir</a>}
+                          {currentUser?.rol === 'Admin' && <button onClick={()=>setDocForm(p=>({...p, archivos: p.archivos.filter(a=>a.id!==f.id)}))} className="text-red-400 p-1 hover:bg-red-50 rounded"><Trash2 size={14}/></button>}
+                        </div>
+                     </div>
+                   ))}
+                 </div>
+               </div>
             </div>
-          )}
+             );
+          })()}
         </div>
         <ModalFtr onCancel={()=>setIsDocModalOpen(false)} onSave={handleSaveDoc} />
       </ModalWrap>
